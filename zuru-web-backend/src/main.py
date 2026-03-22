@@ -6,7 +6,7 @@ from flask_cors import CORS
 from config import (
     headers, ACCOUNT_BY_RIOT_ID_URL, MATCHES_BY_PUUID_URL,
     MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
-    SUMMONER_BY_PUUID_URL, LEAGUE_ENTRIES_URL
+    LEAGUE_ENTRIES_BY_PUUID_URL
 )
 
 app = Flask(__name__)
@@ -67,14 +67,9 @@ RANK_THRESHOLDS = {
 
 def get_player_rank(puuid):
     """Obtiene el tier SoloQ actual del jugador (e.g. 'GOLD')."""
-    summoner_res = requests.get(f"{SUMMONER_BY_PUUID_URL}/{puuid}", headers=headers)
-    if summoner_res.status_code != 200:
-        return "GOLD", "IV"  # fallback
-
-    summoner_id = summoner_res.json()["id"]
-    entries_res = requests.get(f"{LEAGUE_ENTRIES_URL}/{summoner_id}", headers=headers)
+    entries_res = requests.get(f"{LEAGUE_ENTRIES_BY_PUUID_URL}/{puuid}", headers=headers)
     if entries_res.status_code != 200:
-        return "GOLD", "IV"
+        return "GOLD", "IV"  # fallback
 
     for entry in entries_res.json():
         if entry["queueType"] == "RANKED_SOLO_5x5":
