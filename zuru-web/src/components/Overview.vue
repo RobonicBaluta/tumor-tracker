@@ -57,6 +57,17 @@
             </div>
           </form>
         </div>
+
+        <!-- Recent searches -->
+        <div v-if="recentSummoners.length" class="mt-4 animate-fade">
+          <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2 text-center">BÚSQUEDAS RECIENTES</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <button v-for="entry in recentSummoners" :key="entry" @click="loadRecent(entry)"
+              class="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-[#c89b3c]/50 text-white/70 hover:text-white text-xs font-mono rounded-lg transition">
+              {{ entry }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -113,6 +124,16 @@
                   class="absolute -bottom-1 -right-1 text-white text-[9px] font-bold px-1 rounded font-mono">
                   {{ match.win ? 'W' : 'L' }}
                 </span>
+                <span v-if="match.best_and_lost"
+                  class="absolute -top-2 -left-2 text-[11px]"
+                  title="Mejor de tu equipo y aun así perdiste">
+                  🫀
+                </span>
+                <span v-if="match.worst_is_me"
+                  class="absolute -top-2 -right-2 text-[13px] animate-spin-slow"
+                  title="Fuiste el peor de tu equipo">
+                  ☢️
+                </span>
               </div>
               <div>
                 <p class="text-white/50 text-[10px] font-mono mb-0.5">TÚ · {{ match.my_champion }}</p>
@@ -120,6 +141,7 @@
                   {{ match.my_kills }}/{{ match.my_deaths }}/{{ match.my_assists }}
                 </p>
                 <p class="text-[#c89b3c] text-xs font-mono">{{ match.my_kda }} KDA</p>
+                <p v-if="match.best_and_lost" class="text-orange-400 text-[10px] font-mono mt-0.5">mejor del equipo</p>
               </div>
             </div>
 
@@ -258,6 +280,8 @@ interface MatchOverview {
   match_id: string
   game_duration: number
   win: boolean
+  best_and_lost: boolean
+  worst_is_me: boolean
   my_champion: string
   my_kills: number
   my_deaths: number
@@ -266,6 +290,9 @@ interface MatchOverview {
   worst: WorstPlayer
 }
 
+const RECENT_KEY = 'tt_recent_summoners'
+const MAX_RECENT = 5
+
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
 const matches = ref<MatchOverview[]>([])
@@ -273,6 +300,19 @@ const topTumor = ref<TopTumor | null>(null)
 const loading = ref(false)
 const scanning = ref(false)
 const error = ref('')
+const recentSummoners = ref<string[]>(JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'))
+
+const saveRecent = (name: string) => {
+  const list = [name, ...recentSummoners.value.filter(s => s !== name)].slice(0, MAX_RECENT)
+  recentSummoners.value = list
+  localStorage.setItem(RECENT_KEY, JSON.stringify(list))
+}
+
+const loadRecent = (entry: string) => {
+  const [gameName, tagLine] = entry.split('#')
+  formData.value = { gameName, tagLine }
+  login()
+}
 
 const wins = computed(() => matches.value.filter(m => m.win).length)
 const losses = computed(() => matches.value.filter(m => !m.win).length)
@@ -307,6 +347,7 @@ const login = async () => {
     summoner.value = data.summoner
     matches.value = data.matches
     topTumor.value = data.top_tumor ?? null
+    saveRecent(data.summoner)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -408,6 +449,15 @@ const logout = () => {
 .corner-tr { top: 20px; right: 20px; border-width: 2px 2px 0 0; }
 .corner-bl { bottom: 20px; left: 20px;  border-width: 0 0 2px 2px; }
 .corner-br { bottom: 20px; right: 20px; border-width: 0 2px 2px 0; }
+
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  display: inline-block;
+  animation: spinSlow 4s linear infinite;
+}
 
 /* Transition */
 .xray-enter-active { transition: opacity 0.3s ease; }

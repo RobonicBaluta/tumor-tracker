@@ -24,8 +24,8 @@ def get_worst_player_in_match(participants, puuid):
     worst_kda = float("inf")
 
     for p in participants:
-        # Solo aliados y no tú
-        if p["teamId"] != my_team_id or p["puuid"] == puuid:
+        # Solo aliados (incluyéndote a ti)
+        if p["teamId"] != my_team_id:
             continue
 
         kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
@@ -141,10 +141,20 @@ def get_overview(game_name, tag_line):
             my_data = next(p for p in participants if p["puuid"] == puuid)
             my_kda = calculate_kda(my_data["kills"], my_data["deaths"], my_data["assists"])
 
+            # ¿Eres el mejor de tu equipo y aun así perdiste?
+            team_kdas = [
+                calculate_kda(p["kills"], p["deaths"], p["assists"])
+                for p in participants if p["teamId"] == my_data["teamId"]
+            ]
+            best_and_lost = not my_data["win"] and my_kda == max(team_kdas)
+            worst_is_me = worst_player["puuid"] == puuid
+
             matches_overview.append({
                 "match_id": match_id,
                 "game_duration": game_duration,
                 "win": my_data["win"],
+                "best_and_lost": best_and_lost,
+                "worst_is_me": worst_is_me,
                 "my_champion": my_data["championName"],
                 "my_kills": my_data["kills"],
                 "my_deaths": my_data["deaths"],
