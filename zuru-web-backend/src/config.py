@@ -18,9 +18,12 @@ headers = {
 
 # Riot API URLs
 RIOT_BASE_URL = "https://europe.api.riotgames.com"
+RIOT_PLATFORM_URL = "https://euw1.api.riotgames.com"
 ACCOUNT_BY_RIOT_ID_URL = f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-riot-id"
 MATCHES_BY_PUUID_URL = f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid"
 MATCH_DETAILS_URL = f"{RIOT_BASE_URL}/lol/match/v5/matches"
+SUMMONER_BY_PUUID_URL = f"{RIOT_PLATFORM_URL}/lol/summoner/v4/summoners/by-puuid"
+LEAGUE_ENTRIES_URL = f"{RIOT_PLATFORM_URL}/lol/league/v4/entries/by-summoner"
 
 # Configuración de query
 MATCHES_COUNT = 20

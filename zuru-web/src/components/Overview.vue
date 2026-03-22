@@ -78,7 +78,12 @@
       <div class="flex items-center justify-between mb-8 animate-fade">
         <div>
           <h1 class="text-white font-mono text-3xl font-bold">Top Tumores</h1>
-          <p class="text-[#c89b3c] font-mono mt-1">{{ summoner }}</p>
+          <div class="flex items-center gap-2 mt-1">
+            <p class="text-[#c89b3c] font-mono">{{ summoner }}</p>
+            <span v-if="tier" :class="tierColor[tier] ?? 'text-white/40'" class="font-mono font-bold text-sm border border-current/30 px-2 py-0.5 rounded">
+              {{ tier }}{{ division ? ' ' + division : '' }}
+            </span>
+          </div>
         </div>
         <button @click="logout"
           class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
@@ -396,6 +401,8 @@ interface MatchOverview {
 
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
+const tier = ref('')
+const division = ref('')
 const matches = ref<MatchOverview[]>([])
 const topTumor = ref<TopTumor | null>(null)
 const personalStats = ref<PersonalStats | null>(null)
@@ -461,6 +468,8 @@ const login = async () => {
     await new Promise(r => setTimeout(r, 2500))
 
     summoner.value = data.summoner
+    tier.value = data.tier ?? ''
+    division.value = data.division ?? ''
     matches.value = data.matches
     topTumor.value = data.top_tumor ?? null
     personalStats.value = data.personal_stats ?? null
@@ -475,10 +484,19 @@ const login = async () => {
 
 const logout = () => {
   summoner.value = ''
+  tier.value = ''
+  division.value = ''
   matches.value = []
   topTumor.value = null
   personalStats.value = null
   formData.value = { gameName: '', tagLine: '' }
+}
+
+const tierColor: Record<string, string> = {
+  IRON: 'text-[#8a7462]', BRONZE: 'text-[#a0522d]', SILVER: 'text-[#a0a9b0]',
+  GOLD: 'text-[#c89b3c]', PLATINUM: 'text-[#4e9e8a]', EMERALD: 'text-[#2ecc71]',
+  DIAMOND: 'text-[#7ec8e3]', MASTER: 'text-[#c45cff]', GRANDMASTER: 'text-[#ff4444]',
+  CHALLENGER: 'text-[#f4c542]', UNRANKED: 'text-white/40',
 }
 
 const tumorColor = (score: number) => {

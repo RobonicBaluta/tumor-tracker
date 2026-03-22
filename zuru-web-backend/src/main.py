@@ -5,7 +5,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import (
     headers, ACCOUNT_BY_RIOT_ID_URL, MATCHES_BY_PUUID_URL,
-    MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD
+    MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
+    SUMMONER_BY_PUUID_URL, LEAGUE_ENTRIES_URL
 )
 
 app = Flask(__name__)
@@ -48,31 +49,69 @@ def calculate_kda(kills, deaths, assists):
     return (kills + assists) / max(1, deaths)
 
 
-def calculate_tumor_score(player, game_duration):
+# Umbrales mínimos aceptables por rango.
+# Por debajo del umbral = contribuye al tumor score.
+RANK_THRESHOLDS = {
+    "IRON":        {"kda": 0.5, "cs_per_min": 2.5, "dmg_per_min": 300, "vision_per_min": 0.4},
+    "BRONZE":      {"kda": 0.6, "cs_per_min": 3.0, "dmg_per_min": 400, "vision_per_min": 0.5},
+    "SILVER":      {"kda": 0.7, "cs_per_min": 3.5, "dmg_per_min": 500, "vision_per_min": 0.6},
+    "GOLD":        {"kda": 0.8, "cs_per_min": 4.0, "dmg_per_min": 650, "vision_per_min": 0.8},
+    "PLATINUM":    {"kda": 1.0, "cs_per_min": 5.0, "dmg_per_min": 800, "vision_per_min": 1.0},
+    "EMERALD":     {"kda": 1.1, "cs_per_min": 5.5, "dmg_per_min": 950, "vision_per_min": 1.1},
+    "DIAMOND":     {"kda": 1.2, "cs_per_min": 6.5, "dmg_per_min": 1100, "vision_per_min": 1.2},
+    "MASTER":      {"kda": 1.4, "cs_per_min": 7.5, "dmg_per_min": 1300, "vision_per_min": 1.4},
+    "GRANDMASTER": {"kda": 1.5, "cs_per_min": 8.0, "dmg_per_min": 1400, "vision_per_min": 1.5},
+    "CHALLENGER":  {"kda": 1.6, "cs_per_min": 8.5, "dmg_per_min": 1500, "vision_per_min": 1.6},
+}
+
+
+def get_player_rank(puuid):
+    """Obtiene el tier SoloQ actual del jugador (e.g. 'GOLD')."""
+    summoner_res = requests.get(f"{SUMMONER_BY_PUUID_URL}/{puuid}", headers=headers)
+    if summoner_res.status_code != 200:
+        return "GOLD", "IV"  # fallback
+
+    summoner_id = summoner_res.json()["id"]
+    entries_res = requests.get(f"{LEAGUE_ENTRIES_URL}/{summoner_id}", headers=headers)
+    if entries_res.status_code != 200:
+        return "GOLD", "IV"
+
+    for entry in entries_res.json():
+        if entry["queueType"] == "RANKED_SOLO_5x5":
+            return entry["tier"], entry["rank"]
+
+    return "UNRANKED", ""
+
+
+def calculate_tumor_score(player, game_duration, tier="GOLD"):
     """
-    Score 0-100 que mide lo malo que fue un jugador.
-    100 = nuclear tumor, 0 = jugador decente.
+    Score 0-100 que mide lo malo que fue un jugador relativo a su rango.
+    Los umbrales se ajustan según el tier: en Diamond se exige mucho más que en Bronze.
     """
+    thresholds = RANK_THRESHOLDS.get(tier, RANK_THRESHOLDS["GOLD"])
     mins = max(game_duration / 60, 1)
 
-    # KDA (0-30 pts): KDA 0 = 30, KDA 1+ = 0
-    kda_pts = max(0.0, min(30.0, (1.0 - player["kda"]) * 30))
+    def pct_below(value, threshold, max_pts):
+        """Cuánto por debajo del umbral estás, en puntos."""
+        if threshold == 0:
+            return 0.0
+        return max(0.0, min(float(max_pts), (threshold - value) / threshold * max_pts))
 
-    # CS/min (0-25 pts): 0 cs/min = 25, 4+ cs/min = 0
-    cs_per_min = player["cs"] / mins
-    cs_pts = max(0.0, min(25.0, (4.0 - cs_per_min) / 4.0 * 25))
+    # KDA (0-30 pts)
+    kda_pts = pct_below(player["kda"], thresholds["kda"], 30)
 
-    # Daño/min (0-20 pts): 0 = 20, 800+ dm/min = 0
-    dmg_per_min = player["damage"] / mins
-    dmg_pts = max(0.0, min(20.0, (800 - dmg_per_min) / 800 * 20))
+    # CS/min (0-25 pts)
+    cs_pts = pct_below(player["cs"] / mins, thresholds["cs_per_min"], 25)
 
-    # Tiempo muerto % (0-15 pts): >40% del tiempo muerto = 15 pts
+    # Daño/min (0-20 pts)
+    dmg_pts = pct_below(player["damage"] / mins, thresholds["dmg_per_min"], 20)
+
+    # Tiempo muerto % (0-15 pts) — igual en todos los rangos
     dead_pct = player["time_dead"] / max(game_duration, 1)
     dead_pts = min(15.0, dead_pct * 37.5)
 
-    # Visión/min (0-10 pts): 0 vs/min = 10, 2+ vs/min = 0
-    vision_per_min = player["vision_score"] / mins
-    vision_pts = max(0.0, min(10.0, (2.0 - vision_per_min) / 2.0 * 10))
+    # Visión/min (0-10 pts)
+    vision_pts = pct_below(player["vision_score"] / mins, thresholds["vision_per_min"], 10)
 
     return round(kda_pts + cs_pts + dmg_pts + dead_pts + vision_pts)
 
@@ -173,7 +212,10 @@ def get_overview(game_name, tag_line):
         account = account_res.json()
         puuid = account["puuid"]
 
-        # 2. Obtener últimas rankeds (SoloQ)
+        # 2. Obtener rango actual del jugador
+        tier, division = get_player_rank(puuid)
+
+        # 3. Obtener últimas rankeds (SoloQ)
         matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
         matches_res = requests.get(matches_url, headers=headers)
 
@@ -183,7 +225,7 @@ def get_overview(game_name, tag_line):
         match_ids = matches_res.json()
         matches_overview = []
 
-        # 3. Procesar cada partida
+        # 4. Procesar cada partida
         for match_id in match_ids:
             match_url = f"{MATCH_DETAILS_URL}/{match_id}"
             match_res = requests.get(match_url, headers=headers)
@@ -252,7 +294,7 @@ def get_overview(game_name, tag_line):
                     "gold":   team_avg("goldEarned"),
                 },
             }
-            worst_dict["tumor_score"] = calculate_tumor_score(worst_dict, game_duration)
+            worst_dict["tumor_score"] = calculate_tumor_score(worst_dict, game_duration, tier)
 
             matches_overview.append({
                 "match_id": match_id,
@@ -312,6 +354,8 @@ def get_overview(game_name, tag_line):
 
         return {
             "summoner": f"{account['gameName']}#{account['tagLine']}",
+            "tier": tier,
+            "division": division,
             "matches": matches_overview,
             "top_tumor": top_tumor,
             "personal_stats": personal_stats,
