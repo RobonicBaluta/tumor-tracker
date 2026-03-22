@@ -86,19 +86,46 @@
         </button>
       </div>
 
-      <!-- Stats summary -->
-      <div class="grid grid-cols-3 gap-4 mb-8 animate-fade">
-        <div class="bg-black/30 rounded-xl p-4 text-center border border-white/10">
-          <p class="text-white/50 text-xs font-mono mb-1">PARTIDAS</p>
-          <p class="text-white text-2xl font-bold">{{ matches.length }}</p>
-        </div>
-        <div class="bg-black/30 rounded-xl p-4 text-center border border-white/10">
-          <p class="text-white/50 text-xs font-mono mb-1">VICTORIAS</p>
-          <p class="text-green-400 text-2xl font-bold">{{ wins }}</p>
-        </div>
-        <div class="bg-black/30 rounded-xl p-4 text-center border border-white/10">
-          <p class="text-white/50 text-xs font-mono mb-1">DERROTAS</p>
-          <p class="text-red-400 text-2xl font-bold">{{ losses }}</p>
+      <!-- Personal stats panel -->
+      <div v-if="personalStats" class="bg-black/30 rounded-xl border border-white/10 p-5 mb-6 animate-fade">
+        <p class="text-white/30 text-[10px] font-mono tracking-widest mb-4">TUS ESTADÍSTICAS</p>
+        <div class="grid grid-cols-9 gap-3 text-center">
+          <div>
+            <p class="text-white text-xl font-bold">{{ personalStats.total_matches }}</p>
+            <p class="text-white/40 text-[10px] font-mono">PARTIDAS</p>
+          </div>
+          <div>
+            <p class="text-blue-400 text-xl font-bold">{{ personalStats.wins }}</p>
+            <p class="text-white/40 text-[10px] font-mono">VICTORIAS</p>
+          </div>
+          <div>
+            <p class="text-red-400 text-xl font-bold">{{ personalStats.losses }}</p>
+            <p class="text-white/40 text-[10px] font-mono">DERROTAS</p>
+          </div>
+          <div>
+            <p :class="personalStats.win_rate >= 50 ? 'text-green-400' : 'text-red-400'" class="text-xl font-bold">{{ personalStats.win_rate }}%</p>
+            <p class="text-white/40 text-[10px] font-mono">WIN RATE</p>
+          </div>
+          <div class="border-l border-white/10">
+            <p :class="personalStats.avg_kda >= 3 ? 'text-green-400' : personalStats.avg_kda >= 2 ? 'text-yellow-400' : 'text-red-400'" class="text-xl font-bold">{{ personalStats.avg_kda }}</p>
+            <p class="text-white/40 text-[10px] font-mono">KDA MEDIO</p>
+          </div>
+          <div>
+            <p class="text-white/80 text-xl font-bold">{{ personalStats.avg_cs }}</p>
+            <p class="text-white/40 text-[10px] font-mono">CS MEDIO</p>
+          </div>
+          <div>
+            <p class="text-white/80 text-xl font-bold">{{ formatGold(personalStats.avg_damage) }}</p>
+            <p class="text-white/40 text-[10px] font-mono">DMG MEDIO</p>
+          </div>
+          <div class="border-l border-white/10">
+            <p class="text-red-400 text-xl font-bold">{{ personalStats.times_worst }}</p>
+            <p class="text-white/40 text-[10px] font-mono">VECES TUMOR</p>
+          </div>
+          <div>
+            <p class="text-orange-400 text-xl font-bold">{{ personalStats.times_best_and_lost }}</p>
+            <p class="text-white/40 text-[10px] font-mono">MEJOR Y PERDIÓ</p>
+          </div>
         </div>
       </div>
 
@@ -179,19 +206,22 @@
                 </p>
               </div>
 
-              <!-- Extra stats grid -->
+              <!-- Extra stats grid with team avg deltas -->
               <div class="grid grid-cols-4 gap-x-3 gap-y-1 flex-1 min-w-0">
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">CS</p>
                   <p :class="match.worst.cs < 80 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ match.worst.cs }}</p>
+                  <p :class="delta(match.worst.cs, match.worst.team_avg.cs).better ? 'text-green-400/60' : 'text-red-400/60'" class="text-[9px] font-mono">{{ delta(match.worst.cs, match.worst.team_avg.cs).text }}</p>
                 </div>
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">DMG</p>
                   <p :class="match.worst.damage < 5000 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ formatGold(match.worst.damage) }}</p>
+                  <p :class="delta(match.worst.damage, match.worst.team_avg.damage).better ? 'text-green-400/60' : 'text-red-400/60'" class="text-[9px] font-mono">{{ delta(match.worst.damage, match.worst.team_avg.damage).text }}</p>
                 </div>
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">ORO</p>
                   <p class="text-yellow-400/80 text-xs font-bold">{{ formatGold(match.worst.gold) }}</p>
+                  <p :class="delta(match.worst.gold, match.worst.team_avg.gold).better ? 'text-green-400/60' : 'text-red-400/60'" class="text-[9px] font-mono">{{ delta(match.worst.gold, match.worst.team_avg.gold).text }}</p>
                 </div>
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">MUERTO</p>
@@ -200,6 +230,7 @@
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">VISIÓN</p>
                   <p :class="match.worst.vision_score < 10 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ match.worst.vision_score }}</p>
+                  <p :class="delta(match.worst.vision_score, match.worst.team_avg.vision).better ? 'text-green-400/60' : 'text-red-400/60'" class="text-[9px] font-mono">{{ delta(match.worst.vision_score, match.worst.team_avg.vision).text }}</p>
                 </div>
                 <div class="text-center">
                   <p class="text-white/40 text-[9px] font-mono">WARDS</p>
@@ -209,6 +240,12 @@
                   <p class="text-white/40 text-[9px] font-mono">DURACIÓN</p>
                   <p class="text-white/60 text-xs font-mono">{{ formatDuration(match.game_duration) }}</p>
                 </div>
+              </div>
+
+              <!-- Tumor score -->
+              <div class="shrink-0 flex flex-col items-center justify-center pl-3 border-l border-white/10 min-w-[64px]">
+                <p :class="tumorColor(match.worst.tumor_score)" class="text-2xl font-black font-mono">{{ match.worst.tumor_score }}</p>
+                <p :class="tumorColor(match.worst.tumor_score)" class="text-[9px] font-mono font-bold text-center leading-tight">{{ tumorLabel(match.worst.tumor_score) }}</p>
               </div>
             </div>
           </div>
@@ -293,6 +330,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 
+interface TeamAvg {
+  kda: number
+  cs: number
+  damage: number
+  vision: number
+  gold: number
+}
+
 interface WorstPlayer {
   nombre: string
   campeon: string
@@ -307,6 +352,20 @@ interface WorstPlayer {
   time_dead: number
   champ_level: number
   wards_placed: number
+  tumor_score: number
+  team_avg: TeamAvg
+}
+
+interface PersonalStats {
+  total_matches: number
+  wins: number
+  losses: number
+  win_rate: number
+  times_worst: number
+  times_best_and_lost: number
+  avg_kda: number
+  avg_cs: number
+  avg_damage: number
 }
 
 interface TopTumor {
@@ -330,6 +389,8 @@ interface MatchOverview {
   my_deaths: number
   my_assists: number
   my_kda: number
+  my_cs: number
+  my_damage: number
   worst: WorstPlayer
 }
 
@@ -337,6 +398,7 @@ const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
 const matches = ref<MatchOverview[]>([])
 const topTumor = ref<TopTumor | null>(null)
+const personalStats = ref<PersonalStats | null>(null)
 const loading = ref(false)
 const scanning = ref(false)
 const error = ref('')
@@ -368,8 +430,6 @@ const loadRecent = (entry: string) => {
 
 fetchRecent()
 
-const wins = computed(() => matches.value.filter(m => m.win).length)
-const losses = computed(() => matches.value.filter(m => !m.win).length)
 
 const formatDuration = (seconds: number) => {
   const m = Math.floor(seconds / 60)
@@ -403,6 +463,7 @@ const login = async () => {
     summoner.value = data.summoner
     matches.value = data.matches
     topTumor.value = data.top_tumor ?? null
+    personalStats.value = data.personal_stats ?? null
     saveRecent(data.summoner)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
@@ -416,7 +477,30 @@ const logout = () => {
   summoner.value = ''
   matches.value = []
   topTumor.value = null
+  personalStats.value = null
   formData.value = { gameName: '', tagLine: '' }
+}
+
+const tumorColor = (score: number) => {
+  if (score >= 75) return 'text-red-500'
+  if (score >= 50) return 'text-orange-400'
+  if (score >= 25) return 'text-yellow-400'
+  return 'text-green-400'
+}
+
+const tumorLabel = (score: number) => {
+  if (score >= 75) return '☢ NUCLEAR'
+  if (score >= 50) return '☣ TUMOR'
+  if (score >= 25) return '⚠ SUS'
+  return '✓ DECENTE'
+}
+
+const delta = (val: number, avg: number, higherIsBetter = true) => {
+  const d = val - avg
+  const positive = d > 0
+  const better = higherIsBetter ? positive : !positive
+  const sign = positive ? '+' : ''
+  return { text: `${sign}${Math.round(d)}`, better }
 }
 </script>
 

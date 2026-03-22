@@ -48,6 +48,35 @@ def calculate_kda(kills, deaths, assists):
     return (kills + assists) / max(1, deaths)
 
 
+def calculate_tumor_score(player, game_duration):
+    """
+    Score 0-100 que mide lo malo que fue un jugador.
+    100 = nuclear tumor, 0 = jugador decente.
+    """
+    mins = max(game_duration / 60, 1)
+
+    # KDA (0-30 pts): KDA 0 = 30, KDA 1+ = 0
+    kda_pts = max(0.0, min(30.0, (1.0 - player["kda"]) * 30))
+
+    # CS/min (0-25 pts): 0 cs/min = 25, 4+ cs/min = 0
+    cs_per_min = player["cs"] / mins
+    cs_pts = max(0.0, min(25.0, (4.0 - cs_per_min) / 4.0 * 25))
+
+    # Daño/min (0-20 pts): 0 = 20, 800+ dm/min = 0
+    dmg_per_min = player["damage"] / mins
+    dmg_pts = max(0.0, min(20.0, (800 - dmg_per_min) / 800 * 20))
+
+    # Tiempo muerto % (0-15 pts): >40% del tiempo muerto = 15 pts
+    dead_pct = player["time_dead"] / max(game_duration, 1)
+    dead_pts = min(15.0, dead_pct * 37.5)
+
+    # Visión/min (0-10 pts): 0 vs/min = 10, 2+ vs/min = 0
+    vision_per_min = player["vision_score"] / mins
+    vision_pts = max(0.0, min(10.0, (2.0 - vision_per_min) / 2.0 * 10))
+
+    return round(kda_pts + cs_pts + dmg_pts + dead_pts + vision_pts)
+
+
 def get_worst_player_in_match(participants, puuid):
     """Encuentra el peor aliado en una partida"""
     my_player = next(p for p in participants if p["puuid"] == puuid)
@@ -173,14 +202,57 @@ def get_overview(game_name, tag_line):
             # Datos del propio jugador en esa partida
             my_data = next(p for p in participants if p["puuid"] == puuid)
             my_kda = calculate_kda(my_data["kills"], my_data["deaths"], my_data["assists"])
+            my_cs = my_data["totalMinionsKilled"] + my_data["neutralMinionsKilled"]
+
+            # Equipo aliado
+            team = [p for p in participants if p["teamId"] == my_data["teamId"]]
+            team_kdas = [calculate_kda(p["kills"], p["deaths"], p["assists"]) for p in team]
 
             # ¿Eres el mejor de tu equipo y aun así perdiste?
-            team_kdas = [
-                calculate_kda(p["kills"], p["deaths"], p["assists"])
-                for p in participants if p["teamId"] == my_data["teamId"]
-            ]
             best_and_lost = not my_data["win"] and my_kda == max(team_kdas)
             worst_is_me = worst_player["puuid"] == puuid
+
+            # Medias del equipo (para comparativa)
+            def team_avg(field):
+                vals = [p[field] for p in team]
+                return round(sum(vals) / len(vals), 1) if vals else 0
+
+            def team_avg_cs():
+                vals = [p["totalMinionsKilled"] + p["neutralMinionsKilled"] for p in team]
+                return round(sum(vals) / len(vals), 1) if vals else 0
+
+            worst_cs    = worst_player["totalMinionsKilled"] + worst_player["neutralMinionsKilled"]
+            worst_dmg   = worst_player["totalDamageDealtToChampions"]
+            worst_vs    = worst_player["visionScore"]
+            worst_gold  = worst_player["goldEarned"]
+            worst_dead  = worst_player["totalTimeSpentDead"]
+            worst_level = worst_player["champLevel"]
+            worst_wards = worst_player["wardsPlaced"]
+
+            worst_dict = {
+                "nombre": f"{worst_player['riotIdGameName']}#{worst_player['riotIdTagline']}",
+                "campeon": worst_player["championName"],
+                "kills": worst_player["kills"],
+                "deaths": worst_player["deaths"],
+                "assists": worst_player["assists"],
+                "kda": round(worst_player["kda"], 2),
+                "cs": worst_cs,
+                "damage": worst_dmg,
+                "vision_score": worst_vs,
+                "gold": worst_gold,
+                "time_dead": worst_dead,
+                "champ_level": worst_level,
+                "wards_placed": worst_wards,
+                # Medias del equipo
+                "team_avg": {
+                    "kda":    round(sum(team_kdas) / len(team_kdas), 2),
+                    "cs":     team_avg_cs(),
+                    "damage": team_avg("totalDamageDealtToChampions"),
+                    "vision": team_avg("visionScore"),
+                    "gold":   team_avg("goldEarned"),
+                },
+            }
+            worst_dict["tumor_score"] = calculate_tumor_score(worst_dict, game_duration)
 
             matches_overview.append({
                 "match_id": match_id,
@@ -193,21 +265,9 @@ def get_overview(game_name, tag_line):
                 "my_deaths": my_data["deaths"],
                 "my_assists": my_data["assists"],
                 "my_kda": round(my_kda, 2),
-                "worst": {
-                    "nombre": f"{worst_player['riotIdGameName']}#{worst_player['riotIdTagline']}",
-                    "campeon": worst_player["championName"],
-                    "kills": worst_player["kills"],
-                    "deaths": worst_player["deaths"],
-                    "assists": worst_player["assists"],
-                    "kda": round(worst_player["kda"], 2),
-                    "cs": worst_player["totalMinionsKilled"] + worst_player["neutralMinionsKilled"],
-                    "damage": worst_player["totalDamageDealtToChampions"],
-                    "vision_score": worst_player["visionScore"],
-                    "gold": worst_player["goldEarned"],
-                    "time_dead": worst_player["totalTimeSpentDead"],
-                    "champ_level": worst_player["champLevel"],
-                    "wards_placed": worst_player["wardsPlaced"],
-                }
+                "my_cs": my_cs,
+                "my_damage": my_data["totalDamageDealtToChampions"],
+                "worst": worst_dict,
             })
 
         # 4. Encontrar el top tumor (el que más veces apareció como el peor)
@@ -234,10 +294,27 @@ def get_overview(game_name, tag_line):
                 "avg_kda": avg_kda
             }
 
+        # 5. Estadísticas personales (solo partidas no remake)
+        valid = [m for m in matches_overview if m["game_duration"] >= 300]
+        total = len(valid)
+        wins_count = sum(1 for m in valid if m["win"])
+        personal_stats = {
+            "total_matches": total,
+            "wins": wins_count,
+            "losses": total - wins_count,
+            "win_rate": round(wins_count / total * 100) if total else 0,
+            "times_worst": sum(1 for m in valid if m["worst_is_me"]),
+            "times_best_and_lost": sum(1 for m in valid if m["best_and_lost"]),
+            "avg_kda": round(sum(m["my_kda"] for m in valid) / total, 2) if total else 0,
+            "avg_cs": round(sum(m["my_cs"] for m in valid) / total, 1) if total else 0,
+            "avg_damage": round(sum(m["my_damage"] for m in valid) / total) if total else 0,
+        }
+
         return {
             "summoner": f"{account['gameName']}#{account['tagLine']}",
             "matches": matches_overview,
-            "top_tumor": top_tumor
+            "top_tumor": top_tumor,
+            "personal_stats": personal_stats,
         }
 
     except Exception as e:
