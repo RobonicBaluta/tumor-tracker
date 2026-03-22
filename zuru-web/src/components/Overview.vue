@@ -108,7 +108,13 @@
       <!-- Match list -->
       <div class="space-y-4 flex-1 min-w-0">
         <div v-for="match in matches" :key="match.match_id"
-          class="bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition">
+          class="relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition">
+
+          <!-- Remake overlay -->
+          <div v-if="match.game_duration < 300"
+            class="absolute inset-0 z-10 bg-black/60 backdrop-grayscale flex items-center justify-center rounded-xl">
+            <p class="text-white/80 font-mono font-black text-4xl tracking-[0.3em] select-none">REMAKE</p>
+          </div>
 
           <div class="flex items-stretch">
 
@@ -149,34 +155,60 @@
             <div class="flex items-center px-3 text-white/20 text-lg">→</div>
 
             <!-- Worst player -->
-            <div class="flex items-center gap-4 px-4 py-4 flex-1">
-              <img :src="`https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/${match.worst.campeon}.png`"
-                class="w-12 h-12 rounded-lg shrink-0" />
-              <div class="flex-1 min-w-0">
-                <p class="text-white/50 text-[10px] font-mono mb-0.5">PEOR ALIADO · {{ match.worst.campeon }}</p>
-                <p class="text-white text-sm font-bold truncate">{{ match.worst.nombre }}</p>
-                <p class="text-sm">
+            <div class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
+              <div class="relative shrink-0">
+                <img :src="`https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/${match.worst.campeon}.png`"
+                  class="w-11 h-11 rounded-lg" />
+                <span class="absolute -bottom-1 -right-1 bg-black/70 text-white text-[9px] font-bold px-1 rounded font-mono border border-white/20">
+                  Lv{{ match.worst.champ_level }}
+                </span>
+              </div>
+
+              <!-- Name + KDA -->
+              <div class="min-w-0 w-28 shrink-0">
+                <p class="text-white/50 text-[10px] font-mono truncate">{{ match.worst.campeon }}</p>
+                <p class="text-white text-xs font-bold truncate">{{ match.worst.nombre }}</p>
+                <p class="text-xs mt-0.5">
                   <span class="text-green-400">{{ match.worst.kills }}</span>
-                  <span class="text-white/40">/</span>
+                  <span class="text-white/30">/</span>
                   <span class="text-red-400">{{ match.worst.deaths }}</span>
-                  <span class="text-white/40">/</span>
+                  <span class="text-white/30">/</span>
                   <span class="text-blue-400">{{ match.worst.assists }}</span>
+                  <span :class="match.worst.kda < 1 ? 'text-red-400' : match.worst.kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                    class="ml-1 font-mono font-bold">{{ match.worst.kda.toFixed(2) }}</span>
                 </p>
               </div>
 
-              <!-- KDA badge -->
-              <div class="text-right shrink-0">
-                <p class="text-white/40 text-[10px] font-mono">KDA</p>
-                <p :class="match.worst.kda < 1 ? 'text-red-400' : match.worst.kda < 2 ? 'text-yellow-400' : 'text-green-400'"
-                  class="text-xl font-bold font-mono">
-                  {{ match.worst.kda.toFixed(2) }}
-                </p>
-              </div>
-
-              <!-- Duration -->
-              <div class="text-right shrink-0 pl-4 border-l border-white/10">
-                <p class="text-white/40 text-[10px] font-mono">DURACIÓN</p>
-                <p class="text-white/70 text-sm font-mono">{{ formatDuration(match.game_duration) }}</p>
+              <!-- Extra stats grid -->
+              <div class="grid grid-cols-4 gap-x-3 gap-y-1 flex-1 min-w-0">
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">CS</p>
+                  <p :class="match.worst.cs < 80 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ match.worst.cs }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">DMG</p>
+                  <p :class="match.worst.damage < 5000 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ formatGold(match.worst.damage) }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">ORO</p>
+                  <p class="text-yellow-400/80 text-xs font-bold">{{ formatGold(match.worst.gold) }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">MUERTO</p>
+                  <p :class="match.worst.time_dead > 180 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ formatDuration(match.worst.time_dead) }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">VISIÓN</p>
+                  <p :class="match.worst.vision_score < 10 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ match.worst.vision_score }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">WARDS</p>
+                  <p :class="match.worst.wards_placed < 3 ? 'text-red-400' : 'text-white/80'" class="text-xs font-bold">{{ match.worst.wards_placed }}</p>
+                </div>
+                <div class="text-center col-span-2">
+                  <p class="text-white/40 text-[9px] font-mono">DURACIÓN</p>
+                  <p class="text-white/60 text-xs font-mono">{{ formatDuration(match.game_duration) }}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -188,13 +220,17 @@
       </div>
 
       <!-- Top Tumor sidebar -->
-      <div v-if="topTumor" class="w-72 shrink-0 sticky top-6 animate-fade">
+      <div v-if="topTumor" class="w-64 shrink-0 sticky top-6 animate-fade">
         <div class="rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30">
 
-          <!-- Splash art -->
-          <div class="relative h-80"
-            :style="{ backgroundImage: `url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${topTumor.campeon}_0.jpg)`, backgroundSize: 'cover', backgroundPosition: 'center top' }">
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
+          <!-- Loading screen portrait art -->
+          <div class="relative">
+            <img
+              :src="`https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${topTumor.campeon}_0.jpg`"
+              class="w-full object-cover object-top"
+              style="aspect-ratio: 308/560"
+            />
+            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
 
             <!-- Badge -->
             <div class="absolute top-3 left-3 bg-red-600 text-white text-[10px] font-mono font-bold px-2 py-1 rounded tracking-widest">
@@ -206,7 +242,7 @@
               x{{ topTumor.apariciones }}
             </div>
 
-            <!-- Name over splash -->
+            <!-- Name over art -->
             <div class="absolute bottom-0 left-0 right-0 p-4">
               <p class="text-white font-bold text-base leading-tight truncate">{{ topTumor.nombre }}</p>
               <p class="text-white/50 text-xs font-mono">{{ topTumor.campeon }}</p>
@@ -264,6 +300,13 @@ interface WorstPlayer {
   deaths: number
   assists: number
   kda: number
+  cs: number
+  damage: number
+  vision_score: number
+  gold: number
+  time_dead: number
+  champ_level: number
+  wards_placed: number
 }
 
 interface TopTumor {
@@ -333,6 +376,8 @@ const formatDuration = (seconds: number) => {
   const s = seconds % 60
   return `${m}m ${s.toString().padStart(2, '0')}s`
 }
+
+const formatGold = (g: number) => g >= 1000 ? `${(g / 1000).toFixed(1)}k` : String(g)
 
 const login = async () => {
   loading.value = true

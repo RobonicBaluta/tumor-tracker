@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py)",
+      "Bash(curl -s -H \"X-Riot-Token: RGAPI-63034a0d-fb31-4d0d-93ee-58c7aa517086\" \"https://europe.api.riotgames.com/riot/account/v1/accounts/by-riot-id/test/test\")",
+      "Bash(python -c \"from config import headers; print\\(headers\\)\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 55592 /PID 57964 /PID 54364)",
+      "Bash(taskkill -F -PID 55592)",
+      "Bash(taskkill -F -PID 57964)",
+      "Bash(taskkill -F -PID 54364)",
+      "Bash(curl -s \"http://localhost:5000/getElPeor?game_name=Faker&tag_line=T1\")",
+      "Bash(python -c \":*)",
+      "Bash(findstr :5000)",
+      "Bash(findstr LISTENING)",
+      "Bash(../venv/Scripts/python.exe -c \":*)"
+    ]
+  }
+}

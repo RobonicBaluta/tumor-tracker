@@ -199,7 +199,14 @@ def get_overview(game_name, tag_line):
                     "kills": worst_player["kills"],
                     "deaths": worst_player["deaths"],
                     "assists": worst_player["assists"],
-                    "kda": round(worst_player["kda"], 2)
+                    "kda": round(worst_player["kda"], 2),
+                    "cs": worst_player["totalMinionsKilled"] + worst_player["neutralMinionsKilled"],
+                    "damage": worst_player["totalDamageDealtToChampions"],
+                    "vision_score": worst_player["visionScore"],
+                    "gold": worst_player["goldEarned"],
+                    "time_dead": worst_player["totalTimeSpentDead"],
+                    "champ_level": worst_player["champLevel"],
+                    "wards_placed": worst_player["wardsPlaced"],
                 }
             })
 
