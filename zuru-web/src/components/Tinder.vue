@@ -59,7 +59,7 @@
           <div class="relative p-10 text-center">
 
             <!-- Champion Icon -->
-            <img :src="`https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/${playerData.campeon}.png`"
+            <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${playerData.campeon}.png`"
               class="w-28 h-28 mx-auto mb-4 rounded-xl shadow-lg animate-pop" />
 
             <!-- Name -->
@@ -106,6 +106,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+
+const ddragonVersion = ref('15.1.1')
+fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+  .then(r => r.json())
+  .then(versions => { ddragonVersion.value = versions[0] })
+  .catch(() => {})
 
 interface PlayerData {
   assists: number

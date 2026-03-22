@@ -156,7 +156,7 @@
             <!-- My stats -->
             <div class="flex items-center gap-4 px-4 py-4 border-r border-white/10 min-w-[200px]">
               <div class="relative">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/${match.my_champion}.png`"
+                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.my_champion}.png`"
                   class="w-12 h-12 rounded-lg" />
                 <span :class="match.win ? 'bg-blue-500' : 'bg-red-500'"
                   class="absolute -bottom-1 -right-1 text-white text-[9px] font-bold px-1 rounded font-mono">
@@ -189,7 +189,7 @@
             <!-- Worst player -->
             <div class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
               <div class="relative shrink-0">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/${match.worst.campeon}.png`"
+                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.worst.campeon}.png`"
                   class="w-11 h-11 rounded-lg" />
                 <span class="absolute -bottom-1 -right-1 bg-black/70 text-white text-[9px] font-bold px-1 rounded font-mono border border-white/20">
                   Lv{{ match.worst.champ_level }}
@@ -409,6 +409,13 @@ interface MatchOverview {
   my_damage: number
   worst: WorstPlayer
 }
+
+const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
+
+fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+  .then(r => r.json())
+  .then(versions => { ddragonVersion.value = versions[0] })
+  .catch(() => {})
 
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
