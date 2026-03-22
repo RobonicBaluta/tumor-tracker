@@ -1,5 +1,6 @@
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-[#0d1b2a] to-[#1b2838] overflow-y-auto relative">
+  <div class="flex-1 flex flex-col overflow-y-auto relative"
+    :style="{ background: `linear-gradient(to bottom right, ${theme.from}, ${theme.to})` }">
 
     <!-- X-Ray scanning overlay -->
     <Transition name="xray">
@@ -58,6 +59,17 @@
           </form>
         </div>
 
+        <!-- Saved accounts -->
+        <div v-if="savedAccounts.length" class="mt-4 animate-fade">
+          <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2 text-center">MIS CUENTAS</p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <button v-for="entry in savedAccounts" :key="entry" @click="loadRecent(entry)"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-[#c89b3c]/10 hover:bg-[#c89b3c]/20 border border-[#c89b3c]/30 hover:border-[#c89b3c]/60 text-[#c89b3c] hover:text-[#e0b84e] text-xs font-mono rounded-lg transition">
+              ⭐ {{ entry }}
+            </button>
+          </div>
+        </div>
+
         <!-- Recent searches -->
         <div v-if="recentSummoners.length" class="mt-4 animate-fade">
           <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2 text-center">BÚSQUEDAS RECIENTES</p>
@@ -66,6 +78,28 @@
               class="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-[#c89b3c]/50 text-white/70 hover:text-white text-xs font-mono rounded-lg transition">
               {{ entry }}
             </button>
+          </div>
+        </div>
+
+        <!-- Global leaderboard preview -->
+        <div v-if="leaderboard.length" class="mt-6 bg-black/20 rounded-2xl border border-[#c89b3c]/15 overflow-hidden animate-fade">
+          <div class="px-4 py-3 border-b border-white/10 text-center">
+            <p class="text-[#c89b3c] text-[10px] font-mono tracking-widest font-bold">☢ HALL OF TUMORES · GLOBAL</p>
+          </div>
+          <div class="divide-y divide-white/5">
+            <div v-for="entry in leaderboard.slice(0, 5)" :key="entry.nombre"
+              class="flex items-center gap-3 px-4 py-2.5">
+              <span class="font-mono font-bold text-sm w-5 shrink-0 text-center"
+                :class="entry.position <= 3 ? 'text-[#c89b3c]' : 'text-white/20'">
+                {{ entry.position <= 3 ? ['🥇','🥈','🥉'][entry.position - 1] : entry.position }}
+              </span>
+              <div class="flex-1 min-w-0">
+                <p class="text-white text-xs font-bold truncate">{{ entry.nombre }}</p>
+                <p class="text-white/30 text-[10px] font-mono">{{ entry.apariciones }} apariciones</p>
+              </div>
+              <p :class="entry.avg_kda < 1 ? 'text-red-400' : entry.avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                class="text-xs font-bold font-mono">{{ entry.avg_kda.toFixed(2) }}</p>
+            </div>
           </div>
         </div>
       </div>
@@ -85,15 +119,44 @@
             </span>
           </div>
         </div>
-        <button @click="logout"
-          class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
-          Cerrar sesión
-        </button>
+        <div class="flex gap-2">
+          <button @click="toggleSaveAccount"
+            :class="isSaved ? 'bg-[#c89b3c]/20 border-[#c89b3c]/50 text-[#c89b3c] hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40'"
+            class="px-3 py-2 text-sm border rounded-lg transition font-mono">
+            {{ isSaved ? '⭐ Guardada' : '☆ Guardar' }}
+          </button>
+          <button @click="logout"
+            class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+
+      <!-- Tumor watch alerts -->
+      <div v-if="alerts.length" class="mb-4 animate-fade">
+        <div v-for="alert in alerts" :key="alert.nombre"
+          class="flex items-center gap-3 bg-orange-950/40 border border-orange-500/40 rounded-xl px-4 py-3 mb-2">
+          <span class="text-xl animate-spin-slow">☢️</span>
+          <div class="flex-1">
+            <p class="text-orange-300 font-mono font-bold text-sm">Tumor detectado en tus partidas</p>
+            <p class="text-orange-400/70 text-xs font-mono">{{ alert.nombre }} ({{ alert.campeon }}) ha vuelto a jugar contigo</p>
+          </div>
+          <button @click="toggleWatch(alert.nombre)" class="text-orange-400/50 hover:text-orange-300 text-xs font-mono border border-orange-500/20 hover:border-orange-500/40 px-2 py-1 rounded transition">
+            Dejar de vigilar
+          </button>
+        </div>
       </div>
 
       <!-- Personal stats panel -->
       <div v-if="personalStats" class="bg-black/30 rounded-xl border border-white/10 p-5 mb-6 animate-fade">
-        <p class="text-white/30 text-[10px] font-mono tracking-widest mb-4">TUS ESTADÍSTICAS</p>
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-white/30 text-[10px] font-mono tracking-widest">TUS ESTADÍSTICAS</p>
+          <div v-if="losingStreak >= 3"
+            class="flex items-center gap-1.5 bg-red-900/40 border border-red-500/50 px-3 py-1 rounded-full animate-pulse">
+            <span class="text-sm">🔥</span>
+            <span class="text-red-400 text-[11px] font-mono font-bold tracking-wider">RACHA NEGATIVA · {{ losingStreak }} DERROTAS</span>
+          </div>
+        </div>
         <div class="grid grid-cols-9 gap-3 text-center">
           <div>
             <p class="text-white text-xl font-bold">{{ personalStats.total_matches }}</p>
@@ -134,13 +197,57 @@
         </div>
       </div>
 
+      <!-- Filter bar -->
+      <div class="flex flex-wrap items-center gap-3 mb-4 animate-fade">
+        <!-- Win/Loss -->
+        <div class="flex rounded-lg overflow-hidden border border-white/10 bg-black/20">
+          <button v-for="opt in [['all','Todos'],['win','Victoria'],['loss','Derrota']]" :key="opt[0]"
+            @click="filterResult = opt[0] as any"
+            :class="filterResult === opt[0] ? 'bg-white/20 text-white' : 'text-white/40 hover:text-white/70'"
+            class="px-3 py-1.5 text-xs font-mono transition">
+            {{ opt[1] }}
+          </button>
+        </div>
+
+        <!-- Champion filter -->
+        <select v-model="filterChampion"
+          class="px-3 py-1.5 bg-black/30 border border-white/10 rounded-lg text-white/70 text-xs font-mono focus:outline-none focus:border-white/30 transition">
+          <option value="">Todos los campeones</option>
+          <option v-for="champ in availableChampions" :key="champ" :value="champ">{{ champ }}</option>
+        </select>
+
+        <!-- Days filter -->
+        <div class="flex rounded-lg overflow-hidden border border-white/10 bg-black/20">
+          <button v-for="[days, label] in [[0,'Todo'],[7,'7d'],[14,'14d'],[30,'30d']]" :key="days"
+            @click="filterDays = days as number"
+            :class="filterDays === days ? 'bg-white/20 text-white' : 'text-white/40 hover:text-white/70'"
+            class="px-3 py-1.5 text-xs font-mono transition">
+            {{ label }}
+          </button>
+        </div>
+
+        <!-- Results count -->
+        <span class="text-white/20 text-xs font-mono ml-auto">
+          {{ filteredMatches.length }} / {{ matches.length }} partidas
+        </span>
+
+        <!-- Reset filters -->
+        <button v-if="filterResult !== 'all' || filterChampion || filterDays !== 0"
+          @click="filterResult = 'all'; filterChampion = ''; filterDays = 0"
+          class="text-white/30 hover:text-white/60 text-xs font-mono transition">
+          ✕ Limpiar
+        </button>
+      </div>
+
       <!-- Main content: match list + top tumor -->
       <div class="flex gap-6 items-start">
 
       <!-- Match list -->
       <div class="space-y-4 flex-1 min-w-0">
-        <div v-for="match in matches" :key="match.match_id"
-          class="relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition">
+        <div v-for="(match, index) in filteredMatches" :key="match.match_id"
+          class="relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
+          :style="{ animationDelay: `${Math.min(index * 55, 550)}ms` }"
+          @click="openMatchDetail(match.match_id)">
 
           <!-- Remake overlay -->
           <div v-if="match.game_duration < 300"
@@ -247,17 +354,23 @@
                 </div>
               </div>
 
-              <!-- Tumor score -->
-              <div class="shrink-0 flex flex-col items-center justify-center pl-3 border-l border-white/10 min-w-[64px]">
+              <!-- Tumor score + watch -->
+              <div class="shrink-0 flex flex-col items-center justify-center gap-2 pl-3 border-l border-white/10 min-w-[64px]">
                 <p :class="tumorColor(match.worst.tumor_score)" class="text-2xl font-black font-mono">{{ match.worst.tumor_score }}</p>
                 <p :class="tumorColor(match.worst.tumor_score)" class="text-[9px] font-mono font-bold text-center leading-tight">{{ tumorLabel(match.worst.tumor_score) }}</p>
+                <button v-if="!match.worst_is_me" @click.stop="toggleWatch(match.worst.nombre)"
+                  :class="isWatched(match.worst.nombre) ? 'text-orange-400 border-orange-500/40' : 'text-white/20 border-white/10 hover:text-orange-300 hover:border-orange-500/30'"
+                  :title="isWatched(match.worst.nombre) ? 'Dejar de vigilar' : 'Vigilar tumor'"
+                  class="text-[10px] border rounded px-1.5 py-0.5 transition font-mono">
+                  {{ isWatched(match.worst.nombre) ? '👁️' : '👁' }}
+                </button>
               </div>
             </div>
           </div>
         </div>
 
-        <p v-if="matches.length === 0" class="text-white/40 text-center py-12 font-mono">
-          No se encontraron partidas rankeds recientes.
+        <p v-if="filteredMatches.length === 0" class="text-white/40 text-center py-12 font-mono">
+          {{ matches.length === 0 ? 'No se encontraron partidas rankeds recientes.' : 'Ninguna partida coincide con los filtros.' }}
         </p>
 
         <!-- Load more -->
@@ -272,67 +385,111 @@
         </div>
       </div>
 
-      <!-- Top Tumor sidebar -->
-      <div v-if="topTumor" class="w-64 shrink-0 sticky top-6 animate-fade">
-        <div class="rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30">
+      <!-- Sidebar -->
+      <div v-if="topTumores.length || leaderboard.length" class="w-72 shrink-0 sticky top-6 animate-fade space-y-3">
 
-          <!-- Loading screen portrait art -->
-          <div class="relative">
-            <img
-              :src="`https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${topTumor.campeon}_0.jpg`"
-              class="w-full object-cover object-top"
-              style="aspect-ratio: 308/560"
-            />
-            <div class="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+        <!-- Tab switcher -->
+        <div class="flex rounded-xl overflow-hidden border border-white/10 bg-black/30">
+          <button @click="sidebarTab = 'top5'" :class="sidebarTab === 'top5' ? 'bg-red-900/50 text-red-300 border-red-500/40' : 'text-white/40 hover:text-white/70'"
+            class="flex-1 py-2 text-[11px] font-mono font-bold tracking-wider transition border-r border-white/10">
+            ☢ TOP 5
+          </button>
+          <button @click="sidebarTab = 'global'" :class="sidebarTab === 'global' ? 'bg-[#c89b3c]/20 text-[#c89b3c] border-[#c89b3c]/30' : 'text-white/40 hover:text-white/70'"
+            class="flex-1 py-2 text-[11px] font-mono font-bold tracking-wider transition">
+            🌍 GLOBAL
+          </button>
+        </div>
 
-            <!-- Badge -->
-            <div class="absolute top-3 left-3 bg-red-600 text-white text-[10px] font-mono font-bold px-2 py-1 rounded tracking-widest">
-              ☢ TOP TUMOR
+        <!-- Top 5 tab -->
+        <div v-if="sidebarTab === 'top5' && topTumores.length">
+
+          <!-- #1 big portrait card -->
+          <div class="rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30 mb-3">
+            <div class="relative">
+              <img
+                :src="`https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${topTumores[0].campeon}_0.jpg`"
+                class="w-full object-cover object-top"
+                style="aspect-ratio: 308/340"
+              />
+              <div class="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+              <div class="absolute top-3 left-3 bg-red-600 text-white text-[10px] font-mono font-bold px-2 py-1 rounded tracking-widest">
+                ☢ #1 TUMOR
+              </div>
+              <div class="absolute top-3 right-3 bg-black/60 text-red-400 text-xs font-mono font-bold px-2 py-1 rounded border border-red-500/40">
+                x{{ topTumores[0].apariciones }}
+              </div>
+              <div class="absolute bottom-0 left-0 right-0 p-4">
+                <p class="text-white font-bold text-base leading-tight truncate">{{ topTumores[0].nombre }}</p>
+                <p class="text-white/50 text-xs font-mono">{{ topTumores[0].campeon }}</p>
+              </div>
             </div>
-
-            <!-- Apparitions badge -->
-            <div class="absolute top-3 right-3 bg-black/60 text-red-400 text-xs font-mono font-bold px-2 py-1 rounded border border-red-500/40">
-              x{{ topTumor.apariciones }}
-            </div>
-
-            <!-- Name over art -->
-            <div class="absolute bottom-0 left-0 right-0 p-4">
-              <p class="text-white font-bold text-base leading-tight truncate">{{ topTumor.nombre }}</p>
-              <p class="text-white/50 text-xs font-mono">{{ topTumor.campeon }}</p>
+            <div class="bg-[#0d1b2a] p-3">
+              <div class="grid grid-cols-3 gap-2 text-center mb-2">
+                <div>
+                  <p class="text-green-400 text-base font-bold">{{ topTumores[0].total_kills }}</p>
+                  <p class="text-white/40 text-[9px] font-mono">K</p>
+                </div>
+                <div>
+                  <p class="text-red-400 text-base font-bold">{{ topTumores[0].total_deaths }}</p>
+                  <p class="text-white/40 text-[9px] font-mono">D</p>
+                </div>
+                <div>
+                  <p class="text-blue-400 text-base font-bold">{{ topTumores[0].total_assists }}</p>
+                  <p class="text-white/40 text-[9px] font-mono">A</p>
+                </div>
+              </div>
+              <div class="text-center border-t border-white/10 pt-2">
+                <p :class="topTumores[0].avg_kda < 1 ? 'text-red-400' : topTumores[0].avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                  class="text-2xl font-bold font-mono">{{ topTumores[0].avg_kda.toFixed(2) }}</p>
+                <p class="text-white/30 text-[9px] font-mono">KDA MEDIO</p>
+              </div>
             </div>
           </div>
 
-          <!-- Stats -->
-          <div class="bg-[#0d1b2a] p-4 space-y-3">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest">ESTADÍSTICAS ACUMULADAS</p>
-
-            <div class="grid grid-cols-3 gap-2 text-center">
-              <div>
-                <p class="text-green-400 text-lg font-bold">{{ topTumor.total_kills }}</p>
-                <p class="text-white/40 text-[10px] font-mono">KILLS</p>
+          <!-- #2-5 compact rows -->
+          <div class="space-y-2">
+            <div v-for="(tumor, i) in topTumores.slice(1)" :key="tumor.nombre"
+              class="flex items-center gap-3 bg-black/30 rounded-xl border border-white/10 px-3 py-2.5 hover:border-red-500/20 transition">
+              <span class="text-white/30 font-mono font-bold text-sm w-4 shrink-0">#{{ i + 2 }}</span>
+              <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${tumor.campeon}.png`"
+                class="w-8 h-8 rounded-lg shrink-0" />
+              <div class="flex-1 min-w-0">
+                <p class="text-white text-xs font-bold truncate">{{ tumor.nombre }}</p>
+                <p class="text-white/40 text-[10px] font-mono">{{ tumor.campeon }}</p>
               </div>
-              <div>
-                <p class="text-red-400 text-lg font-bold">{{ topTumor.total_deaths }}</p>
-                <p class="text-white/40 text-[10px] font-mono">DEATHS</p>
-              </div>
-              <div>
-                <p class="text-blue-400 text-lg font-bold">{{ topTumor.total_assists }}</p>
-                <p class="text-white/40 text-[10px] font-mono">ASSISTS</p>
+              <div class="text-right shrink-0">
+                <p :class="tumor.avg_kda < 1 ? 'text-red-400' : tumor.avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                  class="text-xs font-bold font-mono">{{ tumor.avg_kda.toFixed(2) }}</p>
+                <p class="text-white/30 text-[9px] font-mono">x{{ tumor.apariciones }}</p>
               </div>
             </div>
+          </div>
+        </div>
 
-            <div class="border-t border-white/10 pt-3 text-center">
-              <p class="text-white/40 text-[10px] font-mono mb-1">KDA MEDIO</p>
-              <p :class="topTumor.avg_kda < 1 ? 'text-red-400' : topTumor.avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
-                class="text-3xl font-bold font-mono">
-                {{ topTumor.avg_kda.toFixed(2) }}
-              </p>
+        <!-- Global leaderboard tab -->
+        <div v-if="sidebarTab === 'global'" class="bg-black/30 rounded-2xl border border-[#c89b3c]/20 overflow-hidden">
+          <div class="px-4 py-3 border-b border-white/10">
+            <p class="text-[#c89b3c] text-[10px] font-mono tracking-widest font-bold">LEADERBOARD GLOBAL · PEORES JUGADORES</p>
+          </div>
+          <div v-if="leaderboard.length" class="divide-y divide-white/5">
+            <div v-for="entry in leaderboard" :key="entry.nombre"
+              class="flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 transition">
+              <span :class="entry.position <= 3 ? 'text-[#c89b3c]' : 'text-white/20'"
+                class="font-mono font-bold text-sm w-5 shrink-0 text-center">
+                {{ entry.position <= 3 ? ['🥇','🥈','🥉'][entry.position - 1] : entry.position }}
+              </span>
+              <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${entry.campeon}.png`"
+                class="w-7 h-7 rounded-md shrink-0" />
+              <div class="flex-1 min-w-0">
+                <p class="text-white text-xs font-bold truncate">{{ entry.nombre }}</p>
+                <p class="text-white/30 text-[10px] font-mono">{{ entry.apariciones }} apariciones</p>
+              </div>
+              <p :class="entry.avg_kda < 1 ? 'text-red-400' : entry.avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                class="text-xs font-bold font-mono shrink-0">{{ entry.avg_kda.toFixed(2) }}</p>
             </div>
-
-            <div class="border-t border-white/10 pt-3 text-center">
-              <p class="text-white/40 text-[10px] font-mono mb-1">APARICIONES</p>
-              <p class="text-white text-xl font-bold font-mono">{{ topTumor.apariciones }} <span class="text-white/30 text-sm">/ {{ matches.length }}</span></p>
-            </div>
+          </div>
+          <div v-else class="px-4 py-8 text-center">
+            <p class="text-white/30 text-xs font-mono">Aún no hay datos globales.<br>Busca más summoners.</p>
           </div>
         </div>
       </div>
@@ -340,11 +497,104 @@
       </div><!-- end flex -->
     </div>
 
+    <!-- Match detail modal -->
+    <Transition name="modal">
+      <div v-if="selectedMatchId" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        @click.self="closeMatchDetail">
+        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+
+          <!-- Modal header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
+            <div>
+              <p class="text-white font-mono font-bold">Detalle de partida</p>
+              <p v-if="matchDetail" class="text-white/30 text-xs font-mono">
+                {{ formatDuration(matchDetail.game_duration) }} ·
+                {{ new Date(matchDetail.game_date).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' }) }}
+              </p>
+            </div>
+            <button @click="closeMatchDetail" class="text-white/40 hover:text-white text-xl transition">✕</button>
+          </div>
+
+          <!-- Loading -->
+          <div v-if="loadingDetail" class="flex items-center justify-center py-16">
+            <p class="text-white/40 font-mono text-sm animate-pulse">Cargando scorecard...</p>
+          </div>
+
+          <!-- Scorecard -->
+          <div v-else-if="matchDetail" class="p-4 space-y-3">
+            <!-- Team label helper -->
+            <template v-for="(team, ti) in [matchDetail.team_blue, matchDetail.team_red]" :key="ti">
+              <div :class="(ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'border-blue-500/30' : 'border-red-500/30'"
+                class="rounded-xl border overflow-hidden">
+                <!-- Team header -->
+                <div :class="(ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'bg-blue-900/30' : 'bg-red-900/20'"
+                  class="px-4 py-2 flex items-center gap-3">
+                  <span class="text-xs font-mono font-bold" :class="(ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'text-blue-400' : 'text-red-400'">
+                    {{ ti === 0 ? '🔵 EQUIPO AZUL' : '🔴 EQUIPO ROJO' }}
+                  </span>
+                  <span class="text-[10px] font-mono px-2 py-0.5 rounded"
+                    :class="(ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'bg-blue-500/20 text-blue-300' : 'bg-red-500/20 text-red-300'">
+                    {{ (ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'VICTORIA' : 'DERROTA' }}
+                  </span>
+                </div>
+
+                <!-- Players -->
+                <div class="divide-y divide-white/5">
+                  <div v-for="p in team" :key="p.puuid"
+                    :class="p.nombre === summoner ? 'bg-yellow-900/10 border-l-2 border-yellow-500/50' : ''"
+                    class="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition">
+                    <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${p.campeon}.png`"
+                      class="w-9 h-9 rounded-lg shrink-0" />
+                    <div class="w-36 min-w-0 shrink-0">
+                      <p class="text-white text-xs font-bold truncate">
+                        {{ p.nombre === summoner ? '⭐ ' + p.nombre : p.nombre }}
+                      </p>
+                      <p class="text-white/30 text-[10px] font-mono">{{ p.campeon }} · Lv{{ p.champ_level }}</p>
+                    </div>
+                    <div class="w-24 shrink-0 text-center">
+                      <p class="text-white text-xs font-bold">{{ p.kills }}/{{ p.deaths }}/{{ p.assists }}</p>
+                      <p :class="p.kda < 1 ? 'text-red-400' : p.kda < 2 ? 'text-yellow-400' : 'text-green-400'"
+                        class="text-[10px] font-mono font-bold">{{ p.kda }} KDA</p>
+                    </div>
+                    <!-- Damage bar -->
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <div class="flex-1 bg-white/10 rounded-full h-1.5 overflow-hidden">
+                          <div :style="{ width: `${Math.round(p.damage / Math.max(...[...matchDetail.team_blue, ...matchDetail.team_red].map(x => x.damage)) * 100)}%` }"
+                            :class="p.nombre === summoner ? 'bg-yellow-400' : 'bg-purple-400'"
+                            class="h-full rounded-full transition-all"></div>
+                        </div>
+                        <span class="text-white/50 text-[10px] font-mono w-10 text-right shrink-0">{{ formatGold(p.damage) }}</span>
+                      </div>
+                    </div>
+                    <div class="hidden sm:grid grid-cols-3 gap-3 shrink-0">
+                      <div class="text-center w-10">
+                        <p class="text-white/60 text-xs font-mono">{{ p.cs }}</p>
+                        <p class="text-white/20 text-[9px] font-mono">CS</p>
+                      </div>
+                      <div class="text-center w-10">
+                        <p class="text-yellow-400/70 text-xs font-mono">{{ formatGold(p.gold) }}</p>
+                        <p class="text-white/20 text-[9px] font-mono">ORO</p>
+                      </div>
+                      <div class="text-center w-10">
+                        <p class="text-white/60 text-xs font-mono">{{ p.vision_score }}</p>
+                        <p class="text-white/20 text-[9px] font-mono">VIS</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, inject } from 'vue'
 
 interface TeamAvg {
   kda: number
@@ -394,9 +644,21 @@ interface TopTumor {
   avg_kda: number
 }
 
+interface LeaderboardEntry {
+  position: number
+  nombre: string
+  apariciones: number
+  campeon: string
+  total_kills: number
+  total_deaths: number
+  total_assists: number
+  avg_kda: number
+}
+
 interface MatchOverview {
   match_id: string
   game_duration: number
+  game_date: number
   win: boolean
   best_and_lost: boolean
   worst_is_me: boolean
@@ -409,6 +671,36 @@ interface MatchOverview {
   my_damage: number
   worst: WorstPlayer
 }
+
+interface DetailPlayer {
+  puuid: string
+  nombre: string
+  campeon: string
+  kills: number
+  deaths: number
+  assists: number
+  kda: number
+  cs: number
+  damage: number
+  gold: number
+  vision_score: number
+  wards_placed: number
+  champ_level: number
+  time_dead: number
+  win: boolean
+}
+
+interface MatchDetail {
+  match_id: string
+  game_duration: number
+  game_date: number
+  blue_win: boolean
+  team_blue: DetailPlayer[]
+  team_red: DetailPlayer[]
+}
+
+// Theme
+const theme = inject<ReturnType<typeof computed>>('theme')!
 
 const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
 
@@ -429,8 +721,56 @@ const hasMore = ref(false)
 const currentStart = ref(0)
 const error = ref('')
 const recentSummoners = ref<string[]>([])
+const savedAccounts = ref<string[]>([])
+const watchList = ref<string[]>([])
+const alerts = ref<{ nombre: string; campeon: string }[]>([])
+const leaderboard = ref<LeaderboardEntry[]>([])
+const sidebarTab = ref<'top5' | 'global'>('top5')
+
+// Filters
+const filterResult = ref<'all' | 'win' | 'loss'>('all')
+const filterChampion = ref('')
+const filterDays = ref(0)
+
+// Match detail modal
+const selectedMatchId = ref<string | null>(null)
+const matchDetail = ref<MatchDetail | null>(null)
+const loadingDetail = ref(false)
 
 const validMatches = computed(() => matches.value.filter(m => m.game_duration >= 300))
+
+const availableChampions = computed(() => {
+  const set = new Set(matches.value.map(m => m.my_champion))
+  return [...set].sort()
+})
+
+const filteredMatches = computed(() => {
+  let list = matches.value
+  if (filterResult.value === 'win') list = list.filter(m => m.win)
+  if (filterResult.value === 'loss') list = list.filter(m => !m.win)
+  if (filterChampion.value) list = list.filter(m => m.my_champion === filterChampion.value)
+  if (filterDays.value > 0) {
+    const cutoff = Date.now() - filterDays.value * 24 * 3600 * 1000
+    list = list.filter(m => m.game_date > cutoff)
+  }
+  return list
+})
+
+const openMatchDetail = async (matchId: string) => {
+  selectedMatchId.value = matchId
+  loadingDetail.value = true
+  matchDetail.value = null
+  try {
+    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}`)
+    matchDetail.value = await res.json()
+  } catch {}
+  loadingDetail.value = false
+}
+
+const closeMatchDetail = () => {
+  selectedMatchId.value = null
+  matchDetail.value = null
+}
 
 const personalStats = computed<PersonalStats | null>(() => {
   const valid = validMatches.value
@@ -450,45 +790,102 @@ const personalStats = computed<PersonalStats | null>(() => {
   }
 })
 
-const topTumor = computed<TopTumor | null>(() => {
-  const valid = validMatches.value
-  if (!valid.length) return null
+const topTumores = computed<TopTumor[]>(() => {
+  const valid = validMatches.value.filter(m => !m.worst_is_me)
+  if (!valid.length) return []
 
-  const counts = new Map<string, { worst: WorstPlayer[] }>()
+  const counts = new Map<string, WorstPlayer[]>()
   for (const m of valid) {
     const n = m.worst.nombre
-    if (!counts.has(n)) counts.set(n, { worst: [] })
-    counts.get(n)!.worst.push(m.worst)
+    if (!counts.has(n)) counts.set(n, [])
+    counts.get(n)!.push(m.worst)
   }
 
-  let best: { nombre: string; worst: WorstPlayer[] } | null = null
-  for (const [nombre, entry] of counts)
-    if (!best || entry.worst.length > best.worst.length) best = { nombre, ...entry }
+  return [...counts.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 5)
+    .map(([nombre, players]) => {
+      const tk = players.reduce((s, p) => s + p.kills, 0)
+      const td = players.reduce((s, p) => s + p.deaths, 0)
+      const ta = players.reduce((s, p) => s + p.assists, 0)
+      const champMap = new Map<string, number>()
+      for (const p of players) champMap.set(p.campeon, (champMap.get(p.campeon) ?? 0) + 1)
+      const campeon = [...champMap.entries()].sort((a, b) => b[1] - a[1])[0][0]
+      return {
+        nombre,
+        apariciones: players.length,
+        campeon,
+        total_kills: tk,
+        total_deaths: td,
+        total_assists: ta,
+        avg_kda: Math.round((td === 0 ? tk + ta : (tk + ta) / td) * 100) / 100,
+      }
+    })
+})
 
-  if (!best) return null
-
-  const tk = best.worst.reduce((s, p) => s + p.kills, 0)
-  const td = best.worst.reduce((s, p) => s + p.deaths, 0)
-  const ta = best.worst.reduce((s, p) => s + p.assists, 0)
-  const champMap = new Map<string, number>()
-  for (const p of best.worst) champMap.set(p.campeon, (champMap.get(p.campeon) ?? 0) + 1)
-  const campeon = [...champMap.entries()].sort((a, b) => b[1] - a[1])[0][0]
-
-  return {
-    nombre: best.nombre,
-    apariciones: best.worst.length,
-    campeon,
-    total_kills: tk,
-    total_deaths: td,
-    total_assists: ta,
-    avg_kda: Math.round((td === 0 ? tk + ta : (tk + ta) / td) * 100) / 100,
+const losingStreak = computed(() => {
+  let streak = 0
+  for (const m of validMatches.value) {
+    if (!m.win) streak++
+    else break
   }
+  return streak
 })
 
 const fetchRecent = async () => {
   try {
     const res = await fetch('http://localhost:5000/recentSummoners')
     recentSummoners.value = await res.json()
+  } catch {}
+}
+
+const fetchLeaderboard = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/leaderboard')
+    leaderboard.value = await res.json()
+  } catch {}
+}
+
+const fetchSavedAccounts = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/savedAccounts')
+    savedAccounts.value = await res.json()
+  } catch {}
+}
+
+const isSaved = computed(() => summoner.value && savedAccounts.value.includes(summoner.value))
+
+const toggleSaveAccount = async () => {
+  const method = isSaved.value ? 'DELETE' : 'POST'
+  try {
+    const res = await fetch('http://localhost:5000/savedAccounts', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summoner: summoner.value })
+    })
+    savedAccounts.value = await res.json()
+  } catch {}
+}
+
+const fetchWatchList = async () => {
+  if (!summoner.value) return
+  try {
+    const res = await fetch(`http://localhost:5000/watchList?summoner=${encodeURIComponent(summoner.value)}`)
+    watchList.value = await res.json()
+  } catch {}
+}
+
+const isWatched = (nombre: string) => watchList.value.includes(nombre)
+
+const toggleWatch = async (nombre: string) => {
+  const method = isWatched(nombre) ? 'DELETE' : 'POST'
+  try {
+    const res = await fetch('http://localhost:5000/watchList', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summoner: summoner.value, tumor: nombre })
+    })
+    watchList.value = await res.json()
   } catch {}
 }
 
@@ -510,7 +907,8 @@ const loadRecent = (entry: string) => {
 }
 
 fetchRecent()
-
+fetchLeaderboard()
+fetchSavedAccounts()
 
 const formatDuration = (seconds: number) => {
   const m = Math.floor(seconds / 60)
@@ -544,7 +942,9 @@ const login = async () => {
     matches.value = data.matches
     hasMore.value = data.has_more ?? false
     currentStart.value = data.matches.length
+    alerts.value = data.alerts ?? []
     saveRecent(data.summoner)
+    fetchWatchList()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -585,6 +985,8 @@ const logout = () => {
   matches.value = []
   hasMore.value = false
   currentStart.value = 0
+  alerts.value = []
+  watchList.value = []
   formData.value = { gameName: '', tagLine: '' }
 }
 
@@ -717,4 +1119,9 @@ const delta = (val: number, avg: number, higherIsBetter = true) => {
 .xray-enter-active { transition: opacity 0.3s ease; }
 .xray-leave-active { transition: opacity 0.6s ease; }
 .xray-enter-from, .xray-leave-to { opacity: 0; }
+
+/* Modal transition */
+.modal-enter-active { transition: opacity 0.2s ease; }
+.modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
 </style>

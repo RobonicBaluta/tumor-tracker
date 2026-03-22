@@ -13,6 +13,9 @@ app = Flask(__name__)
 CORS(app)
 
 RECENT_FILE = os.path.join(os.path.dirname(__file__), "recent_summoners.json")
+LEADERBOARD_FILE = os.path.join(os.path.dirname(__file__), "leaderboard.json")
+SAVED_ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "saved_accounts.json")
+WATCH_LIST_FILE = os.path.join(os.path.dirname(__file__), "watch_list.json")
 MAX_RECENT = 10
 
 
@@ -31,6 +34,73 @@ def save_recent(summoner: str):
         json.dump(recent[:MAX_RECENT], f)
 
 
+def load_saved_accounts():
+    if not os.path.exists(SAVED_ACCOUNTS_FILE):
+        return []
+    with open(SAVED_ACCOUNTS_FILE) as f:
+        return json.load(f)
+
+
+def load_watch_list():
+    if not os.path.exists(WATCH_LIST_FILE):
+        return {}
+    with open(WATCH_LIST_FILE) as f:
+        return json.load(f)
+
+
+def save_watch_list(data):
+    with open(WATCH_LIST_FILE, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def load_leaderboard():
+    if not os.path.exists(LEADERBOARD_FILE):
+        return {}
+    with open(LEADERBOARD_FILE, "r") as f:
+        return json.load(f)
+
+
+def update_leaderboard(matches_overview):
+    lb = load_leaderboard()
+    for match in matches_overview:
+        if match["game_duration"] < 300:
+            continue
+        w = match["worst"]
+        nombre = w["nombre"]
+        if nombre not in lb:
+            lb[nombre] = {"nombre": nombre, "apariciones": 0, "champion_counts": {},
+                          "total_kills": 0, "total_deaths": 0, "total_assists": 0}
+        e = lb[nombre]
+        e["apariciones"] += 1
+        e["total_kills"] += w["kills"]
+        e["total_deaths"] += w["deaths"]
+        e["total_assists"] += w["assists"]
+        e["champion_counts"][w["campeon"]] = e["champion_counts"].get(w["campeon"], 0) + 1
+    with open(LEADERBOARD_FILE, "w") as f:
+        json.dump(lb, f)
+
+
+@app.route("/leaderboard", methods=["GET"])
+def get_leaderboard():
+    lb = load_leaderboard()
+    entries = sorted(lb.values(), key=lambda e: e["apariciones"], reverse=True)[:20]
+    result = []
+    for i, e in enumerate(entries):
+        campeon = max(e["champion_counts"], key=lambda c: e["champion_counts"][c])
+        kda = round((e["total_kills"] + e["total_assists"]) / max(1, e["total_deaths"]), 2)
+        result.append({
+            "position": i + 1,
+            "nombre": e["nombre"],
+            "apariciones": e["apariciones"],
+            "campeon": campeon,
+            "total_kills": e["total_kills"],
+            "total_deaths": e["total_deaths"],
+            "total_assists": e["total_assists"],
+            "avg_kda": kda,
+        })
+    return jsonify(result)
+
+
 @app.route("/recentSummoners", methods=["GET"])
 def get_recent_summoners():
     return jsonify(load_recent())
@@ -42,6 +112,65 @@ def post_recent_summoner():
     if summoner:
         save_recent(summoner)
     return jsonify({"ok": True})
+
+
+@app.route("/savedAccounts", methods=["GET"])
+def get_saved_accounts():
+    return jsonify(load_saved_accounts())
+
+
+@app.route("/savedAccounts", methods=["POST"])
+def add_saved_account():
+    summoner = (request.json or {}).get("summoner", "").strip()
+    if not summoner:
+        return jsonify({"error": "Summoner requerido"}), 400
+    accounts = load_saved_accounts()
+    accounts = [a for a in accounts if a != summoner]
+    accounts.insert(0, summoner)
+    with open(SAVED_ACCOUNTS_FILE, "w") as f:
+        json.dump(accounts, f, ensure_ascii=False)
+    return jsonify(accounts)
+
+
+@app.route("/savedAccounts", methods=["DELETE"])
+def remove_saved_account():
+    summoner = (request.json or {}).get("summoner", "").strip()
+    accounts = [a for a in load_saved_accounts() if a != summoner]
+    with open(SAVED_ACCOUNTS_FILE, "w") as f:
+        json.dump(accounts, f, ensure_ascii=False)
+    return jsonify(accounts)
+
+
+@app.route("/watchList", methods=["GET"])
+def get_watch_list_ep():
+    summoner = request.args.get("summoner", "")
+    return jsonify(load_watch_list().get(summoner, []))
+
+
+@app.route("/watchList", methods=["POST"])
+def add_to_watch_list():
+    data = request.json or {}
+    summoner = data.get("summoner", "")
+    tumor = data.get("tumor", "")
+    watch = load_watch_list()
+    if summoner not in watch:
+        watch[summoner] = []
+    if tumor not in watch[summoner]:
+        watch[summoner].append(tumor)
+    save_watch_list(watch)
+    return jsonify(watch[summoner])
+
+
+@app.route("/watchList", methods=["DELETE"])
+def remove_from_watch_list():
+    data = request.json or {}
+    summoner = data.get("summoner", "")
+    tumor = data.get("tumor", "")
+    watch = load_watch_list()
+    if summoner in watch:
+        watch[summoner] = [t for t in watch[summoner] if t != tumor]
+    save_watch_list(watch)
+    return jsonify(watch.get(summoner, []))
 
 
 def calculate_kda(kills, deaths, assists):
@@ -132,6 +261,102 @@ def get_worst_player_in_match(participants, puuid):
             worst_player = p
 
     return worst_player
+
+
+def get_compare(game_name1, tag_line1, game_name2, tag_line2):
+    """Busca partidas comunes entre dos jugadores y compara sus stats."""
+    try:
+        acc1_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name1}/{tag_line1}", headers=headers)
+        if acc1_res.status_code != 200:
+            return {"error": f"Error cuenta 1: {acc1_res.text}"}, 400
+        acc1 = acc1_res.json()
+        puuid1 = acc1["puuid"]
+
+        acc2_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name2}/{tag_line2}", headers=headers)
+        if acc2_res.status_code != 200:
+            return {"error": f"Error cuenta 2: {acc2_res.text}"}, 400
+        acc2 = acc2_res.json()
+        puuid2 = acc2["puuid"]
+
+        ids1_res = requests.get(f"{MATCHES_BY_PUUID_URL}/{puuid1}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}", headers=headers)
+        ids2_res = requests.get(f"{MATCHES_BY_PUUID_URL}/{puuid2}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}", headers=headers)
+
+        ids1 = set(ids1_res.json() if ids1_res.status_code == 200 else [])
+        ids2 = set(ids2_res.json() if ids2_res.status_code == 200 else [])
+        common = ids1 & ids2
+
+        matches = []
+        score1, score2 = 0, 0  # who was worse more often
+
+        for match_id in common:
+            match_res = requests.get(f"{MATCH_DETAILS_URL}/{match_id}", headers=headers)
+            if match_res.status_code != 200:
+                continue
+
+            data = match_res.json()
+            participants = data["info"]["participants"]
+            game_duration = data["info"]["gameDuration"]
+
+            p1 = next((p for p in participants if p["puuid"] == puuid1), None)
+            p2 = next((p for p in participants if p["puuid"] == puuid2), None)
+            if not p1 or not p2:
+                continue
+
+            kda1 = calculate_kda(p1["kills"], p1["deaths"], p1["assists"])
+            kda2 = calculate_kda(p2["kills"], p2["deaths"], p2["assists"])
+            worse = 1 if kda1 < kda2 else (2 if kda2 < kda1 else 0)
+            if worse == 1:
+                score1 += 1
+            elif worse == 2:
+                score2 += 1
+
+            matches.append({
+                "match_id": match_id,
+                "game_duration": game_duration,
+                "same_team": p1["teamId"] == p2["teamId"],
+                "worse_player": worse,
+                "player1": {
+                    "campeon": p1["championName"],
+                    "kills": p1["kills"], "deaths": p1["deaths"], "assists": p1["assists"],
+                    "kda": round(kda1, 2),
+                    "cs": p1["totalMinionsKilled"] + p1["neutralMinionsKilled"],
+                    "damage": p1["totalDamageDealtToChampions"],
+                    "win": p1["win"],
+                },
+                "player2": {
+                    "campeon": p2["championName"],
+                    "kills": p2["kills"], "deaths": p2["deaths"], "assists": p2["assists"],
+                    "kda": round(kda2, 2),
+                    "cs": p2["totalMinionsKilled"] + p2["neutralMinionsKilled"],
+                    "damage": p2["totalDamageDealtToChampions"],
+                    "win": p2["win"],
+                },
+            })
+
+        return {
+            "player1_name": f"{acc1['gameName']}#{acc1['tagLine']}",
+            "player2_name": f"{acc2['gameName']}#{acc2['tagLine']}",
+            "common_matches": len(matches),
+            "score1": score1,
+            "score2": score2,
+            "matches": matches,
+        }
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route("/compare", methods=["GET"])
+def compare_endpoint():
+    gn1 = request.args.get("game_name1")
+    tl1 = request.args.get("tag_line1")
+    gn2 = request.args.get("game_name2")
+    tl2 = request.args.get("tag_line2")
+    if not all([gn1, tl1, gn2, tl2]):
+        return jsonify({"error": "Faltan parámetros"}), 400
+    result = get_compare(gn1, tl1, gn2, tl2)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    return jsonify(result)
 
 
 def get_el_peor(game_name, tag_line):
@@ -297,6 +522,7 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
             matches_overview.append({
                 "match_id": match_id,
                 "game_duration": game_duration,
+                "game_date": data["info"].get("gameCreation", 0),
                 "win": my_data["win"],
                 "best_and_lost": best_and_lost,
                 "worst_is_me": worst_is_me,
@@ -310,12 +536,27 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
                 "worst": worst_dict,
             })
 
+        summoner_key = f"{account['gameName']}#{account['tagLine']}"
+
+        alerts = []
+        if start == 0:
+            update_leaderboard(matches_overview)
+            watched = set(load_watch_list().get(summoner_key, []))
+            if watched:
+                seen = set()
+                for m in matches_overview:
+                    nombre = m["worst"]["nombre"]
+                    if nombre in watched and nombre not in seen:
+                        seen.add(nombre)
+                        alerts.append({"nombre": nombre, "campeon": m["worst"]["campeon"]})
+
         return {
-            "summoner": f"{account['gameName']}#{account['tagLine']}",
+            "summoner": summoner_key,
             "tier": tier,
             "division": division,
             "matches": matches_overview,
             "has_more": len(match_ids) == MATCHES_COUNT,
+            "alerts": alerts,
         }
 
     except Exception as e:
@@ -336,6 +577,46 @@ def get_overview_endpoint():
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     return jsonify(result)
+
+
+@app.route('/matchDetail/<match_id>', methods=['GET'])
+def match_detail_endpoint(match_id):
+    res = requests.get(f"{MATCH_DETAILS_URL}/{match_id}", headers=headers)
+    if res.status_code != 200:
+        return jsonify({"error": "No se pudo obtener la partida"}), res.status_code
+
+    info = res.json()["info"]
+    participants = info["participants"]
+
+    def summarize(p):
+        kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
+        return {
+            "puuid": p["puuid"],
+            "nombre": f"{p['riotIdGameName']}#{p['riotIdTagline']}",
+            "campeon": p["championName"],
+            "kills": p["kills"], "deaths": p["deaths"], "assists": p["assists"],
+            "kda": round(kda, 2),
+            "cs": p["totalMinionsKilled"] + p["neutralMinionsKilled"],
+            "damage": p["totalDamageDealtToChampions"],
+            "gold": p["goldEarned"],
+            "vision_score": p["visionScore"],
+            "wards_placed": p["wardsPlaced"],
+            "champ_level": p["champLevel"],
+            "time_dead": p["totalTimeSpentDead"],
+            "win": p["win"],
+        }
+
+    team_blue = [summarize(p) for p in participants if p["teamId"] == 100]
+    team_red  = [summarize(p) for p in participants if p["teamId"] == 200]
+
+    return jsonify({
+        "match_id": match_id,
+        "game_duration": info["gameDuration"],
+        "game_date": info.get("gameCreation", 0),
+        "blue_win": team_blue[0]["win"] if team_blue else False,
+        "team_blue": team_blue,
+        "team_red": team_red,
+    })
 
 
 @app.route('/getElPeor', methods=['GET'])
