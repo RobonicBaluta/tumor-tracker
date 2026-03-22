@@ -199,7 +199,7 @@ def get_el_peor(game_name, tag_line):
         return {"error": str(e)}, 500
 
 
-def get_overview(game_name, tag_line):
+def get_overview(game_name, tag_line, start=0, tier_override=None):
     """Obtiene el peor aliado por cada una de las últimas rankeds"""
     try:
         # 1. Obtener PUUID
@@ -212,11 +212,14 @@ def get_overview(game_name, tag_line):
         account = account_res.json()
         puuid = account["puuid"]
 
-        # 2. Obtener rango actual del jugador
-        tier, division = get_player_rank(puuid)
+        # 2. Obtener rango (solo en la primera carga; en "load more" se reutiliza)
+        if tier_override:
+            tier, division = tier_override, ""
+        else:
+            tier, division = get_player_rank(puuid)
 
-        # 3. Obtener últimas rankeds (SoloQ)
-        matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
+        # 3. Obtener rankeds (SoloQ) desde el offset pedido
+        matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start={start}&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
         matches_res = requests.get(matches_url, headers=headers)
 
         if matches_res.status_code != 200:
@@ -312,53 +315,12 @@ def get_overview(game_name, tag_line):
                 "worst": worst_dict,
             })
 
-        # 4. Encontrar el top tumor (el que más veces apareció como el peor)
-        from collections import Counter
-        appearances = Counter(m["worst"]["nombre"] for m in matches_overview)
-        top_nombre = appearances.most_common(1)[0][0] if appearances else None
-
-        top_tumor = None
-        if top_nombre:
-            top_matches = [m["worst"] for m in matches_overview if m["worst"]["nombre"] == top_nombre]
-            total_kills   = sum(p["kills"]   for p in top_matches)
-            total_deaths  = sum(p["deaths"]  for p in top_matches)
-            total_assists = sum(p["assists"] for p in top_matches)
-            avg_kda = round(calculate_kda(total_kills, total_deaths, total_assists), 2)
-            # Campeón más jugado por este tumor
-            champion = Counter(p["campeon"] for p in top_matches).most_common(1)[0][0]
-            top_tumor = {
-                "nombre": top_nombre,
-                "apariciones": appearances[top_nombre],
-                "campeon": champion,
-                "total_kills": total_kills,
-                "total_deaths": total_deaths,
-                "total_assists": total_assists,
-                "avg_kda": avg_kda
-            }
-
-        # 5. Estadísticas personales (solo partidas no remake)
-        valid = [m for m in matches_overview if m["game_duration"] >= 300]
-        total = len(valid)
-        wins_count = sum(1 for m in valid if m["win"])
-        personal_stats = {
-            "total_matches": total,
-            "wins": wins_count,
-            "losses": total - wins_count,
-            "win_rate": round(wins_count / total * 100) if total else 0,
-            "times_worst": sum(1 for m in valid if m["worst_is_me"]),
-            "times_best_and_lost": sum(1 for m in valid if m["best_and_lost"]),
-            "avg_kda": round(sum(m["my_kda"] for m in valid) / total, 2) if total else 0,
-            "avg_cs": round(sum(m["my_cs"] for m in valid) / total, 1) if total else 0,
-            "avg_damage": round(sum(m["my_damage"] for m in valid) / total) if total else 0,
-        }
-
         return {
             "summoner": f"{account['gameName']}#{account['tagLine']}",
             "tier": tier,
             "division": division,
             "matches": matches_overview,
-            "top_tumor": top_tumor,
-            "personal_stats": personal_stats,
+            "has_more": len(match_ids) == MATCHES_COUNT,
         }
 
     except Exception as e:
@@ -369,11 +331,13 @@ def get_overview(game_name, tag_line):
 def get_overview_endpoint():
     game_name = request.args.get('game_name')
     tag_line = request.args.get('tag_line')
+    start = int(request.args.get('start', 0))
+    tier_override = request.args.get('tier') or None
 
     if not game_name or not tag_line:
         return jsonify({"error": "Falta game_name y/o tag_line como query params"}), 400
 
-    result = get_overview(game_name, tag_line)
+    result = get_overview(game_name, tag_line, start=start, tier_override=tier_override)
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     return jsonify(result)

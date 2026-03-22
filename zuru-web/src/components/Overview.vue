@@ -259,6 +259,17 @@
         <p v-if="matches.length === 0" class="text-white/40 text-center py-12 font-mono">
           No se encontraron partidas rankeds recientes.
         </p>
+
+        <!-- Load more -->
+        <div class="pt-2 pb-4 text-center">
+          <button v-if="hasMore" @click="loadMore" :disabled="loadingMore"
+            class="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-[#c89b3c]/40 text-white/60 hover:text-white font-mono text-sm rounded-lg transition disabled:opacity-40">
+            {{ loadingMore ? 'Cargando...' : `Cargar más (${currentStart} cargadas)` }}
+          </button>
+          <p v-else-if="matches.length > 0" class="text-white/20 text-xs font-mono">
+            No hay más partidas
+          </p>
+        </div>
       </div>
 
       <!-- Top Tumor sidebar -->
@@ -404,12 +415,68 @@ const summoner = ref('')
 const tier = ref('')
 const division = ref('')
 const matches = ref<MatchOverview[]>([])
-const topTumor = ref<TopTumor | null>(null)
-const personalStats = ref<PersonalStats | null>(null)
 const loading = ref(false)
+const loadingMore = ref(false)
 const scanning = ref(false)
+const hasMore = ref(false)
+const currentStart = ref(0)
 const error = ref('')
 const recentSummoners = ref<string[]>([])
+
+const validMatches = computed(() => matches.value.filter(m => m.game_duration >= 300))
+
+const personalStats = computed<PersonalStats | null>(() => {
+  const valid = validMatches.value
+  const total = valid.length
+  if (!total) return null
+  const wins = valid.filter(m => m.win).length
+  return {
+    total_matches: total,
+    wins,
+    losses: total - wins,
+    win_rate: Math.round(wins / total * 100),
+    times_worst: valid.filter(m => m.worst_is_me).length,
+    times_best_and_lost: valid.filter(m => m.best_and_lost).length,
+    avg_kda: Math.round(valid.reduce((s, m) => s + m.my_kda, 0) / total * 100) / 100,
+    avg_cs: Math.round(valid.reduce((s, m) => s + m.my_cs, 0) / total * 10) / 10,
+    avg_damage: Math.round(valid.reduce((s, m) => s + m.my_damage, 0) / total),
+  }
+})
+
+const topTumor = computed<TopTumor | null>(() => {
+  const valid = validMatches.value
+  if (!valid.length) return null
+
+  const counts = new Map<string, { worst: WorstPlayer[] }>()
+  for (const m of valid) {
+    const n = m.worst.nombre
+    if (!counts.has(n)) counts.set(n, { worst: [] })
+    counts.get(n)!.worst.push(m.worst)
+  }
+
+  let best: { nombre: string; worst: WorstPlayer[] } | null = null
+  for (const [nombre, entry] of counts)
+    if (!best || entry.worst.length > best.worst.length) best = { nombre, ...entry }
+
+  if (!best) return null
+
+  const tk = best.worst.reduce((s, p) => s + p.kills, 0)
+  const td = best.worst.reduce((s, p) => s + p.deaths, 0)
+  const ta = best.worst.reduce((s, p) => s + p.assists, 0)
+  const champMap = new Map<string, number>()
+  for (const p of best.worst) champMap.set(p.campeon, (champMap.get(p.campeon) ?? 0) + 1)
+  const campeon = [...champMap.entries()].sort((a, b) => b[1] - a[1])[0][0]
+
+  return {
+    nombre: best.nombre,
+    apariciones: best.worst.length,
+    campeon,
+    total_kills: tk,
+    total_deaths: td,
+    total_assists: ta,
+    avg_kda: Math.round((td === 0 ? tk + ta : (tk + ta) / td) * 100) / 100,
+  }
+})
 
 const fetchRecent = async () => {
   try {
@@ -454,25 +521,22 @@ const login = async () => {
   try {
     const params = new URLSearchParams({
       game_name: formData.value.gameName,
-      tag_line: formData.value.tagLine
+      tag_line: formData.value.tagLine,
     })
 
     const res = await fetch(`http://localhost:5000/getOverview?${params}`)
     const data = await res.json()
 
-    if (!res.ok || data.error) {
-      throw new Error(data.error || 'Error al cargar el overview')
-    }
+    if (!res.ok || data.error) throw new Error(data.error || 'Error al cargar el overview')
 
-    // Hold the scan for at least 2.5s so the animation is visible
     await new Promise(r => setTimeout(r, 2500))
 
     summoner.value = data.summoner
     tier.value = data.tier ?? ''
     division.value = data.division ?? ''
     matches.value = data.matches
-    topTumor.value = data.top_tumor ?? null
-    personalStats.value = data.personal_stats ?? null
+    hasMore.value = data.has_more ?? false
+    currentStart.value = data.matches.length
     saveRecent(data.summoner)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
@@ -482,13 +546,38 @@ const login = async () => {
   }
 }
 
+const loadMore = async () => {
+  loadingMore.value = true
+  try {
+    const params = new URLSearchParams({
+      game_name: summoner.value.split('#')[0],
+      tag_line: summoner.value.split('#')[1],
+      start: String(currentStart.value),
+      tier: tier.value,
+    })
+
+    const res = await fetch(`http://localhost:5000/getOverview?${params}`)
+    const data = await res.json()
+
+    if (!res.ok || data.error) throw new Error(data.error)
+
+    matches.value = [...matches.value, ...data.matches]
+    hasMore.value = data.has_more ?? false
+    currentStart.value += data.matches.length
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Error desconocido'
+  } finally {
+    loadingMore.value = false
+  }
+}
+
 const logout = () => {
   summoner.value = ''
   tier.value = ''
   division.value = ''
   matches.value = []
-  topTumor.value = null
-  personalStats.value = null
+  hasMore.value = false
+  currentStart.value = 0
   formData.value = { gameName: '', tagLine: '' }
 }
 
