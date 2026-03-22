@@ -290,9 +290,6 @@ interface MatchOverview {
   worst: WorstPlayer
 }
 
-const RECENT_KEY = 'tt_recent_summoners'
-const MAX_RECENT = 5
-
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
 const matches = ref<MatchOverview[]>([])
@@ -300,12 +297,24 @@ const topTumor = ref<TopTumor | null>(null)
 const loading = ref(false)
 const scanning = ref(false)
 const error = ref('')
-const recentSummoners = ref<string[]>(JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'))
+const recentSummoners = ref<string[]>([])
 
-const saveRecent = (name: string) => {
-  const list = [name, ...recentSummoners.value.filter(s => s !== name)].slice(0, MAX_RECENT)
-  recentSummoners.value = list
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list))
+const fetchRecent = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/recentSummoners')
+    recentSummoners.value = await res.json()
+  } catch {}
+}
+
+const saveRecent = async (name: string) => {
+  try {
+    await fetch('http://localhost:5000/recentSummoners', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summoner: name })
+    })
+    await fetchRecent()
+  } catch {}
 }
 
 const loadRecent = (entry: string) => {
@@ -313,6 +322,8 @@ const loadRecent = (entry: string) => {
   formData.value = { gameName, tagLine }
   login()
 }
+
+fetchRecent()
 
 const wins = computed(() => matches.value.filter(m => m.win).length)
 const losses = computed(() => matches.value.filter(m => !m.win).length)

@@ -1,3 +1,5 @@
+import json
+import os
 import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -8,6 +10,37 @@ from config import (
 
 app = Flask(__name__)
 CORS(app)
+
+RECENT_FILE = os.path.join(os.path.dirname(__file__), "recent_summoners.json")
+MAX_RECENT = 10
+
+
+def load_recent():
+    if not os.path.exists(RECENT_FILE):
+        return []
+    with open(RECENT_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_recent(summoner: str):
+    recent = load_recent()
+    recent = [s for s in recent if s != summoner]
+    recent.insert(0, summoner)
+    with open(RECENT_FILE, "w") as f:
+        json.dump(recent[:MAX_RECENT], f)
+
+
+@app.route("/recentSummoners", methods=["GET"])
+def get_recent_summoners():
+    return jsonify(load_recent())
+
+
+@app.route("/recentSummoners", methods=["POST"])
+def post_recent_summoner():
+    summoner = request.json.get("summoner")
+    if summoner:
+        save_recent(summoner)
+    return jsonify({"ok": True})
 
 
 def calculate_kda(kills, deaths, assists):
