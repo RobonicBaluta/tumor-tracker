@@ -13,7 +13,8 @@ const navBgColor = computed(() => {
   const colors: Record<string, string> = {
     'oncologico': 'bg-[#143a32]',
     'mental': 'bg-[#2f0535]',
-    'tinder': 'bg-[#762d79]'
+    'tinder': 'bg-[#762d79]',
+    'overview': 'bg-[#0d1b2a]'
   };
   return colors[props.currentPage] || 'bg-[#143a32]';
 });
@@ -48,6 +49,15 @@ const navBgColor = computed(() => {
           : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
       ]">
         Tinder
+      </button>
+      <button @click="emit('navigate', 'overview')" :class="[
+        'px-6 py-3 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
+        'hover:-translate-y-1 active:translate-y-0',
+        currentPage === 'overview'
+          ? 'bg-[#c89b3c] text-black shadow-lg shadow-[#c89b3c]/50'
+          : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
+      ]">
+        Top Tumores
       </button>
     </div>
   </nav>
