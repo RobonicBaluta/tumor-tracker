@@ -125,6 +125,14 @@
             class="px-3 py-2 text-sm border rounded-lg transition font-mono">
             {{ isSaved ? '⭐ Guardada' : '☆ Guardar' }}
           </button>
+          <button @click="searchLiveGame" :disabled="liveLoading"
+            class="px-3 py-2 text-sm text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30">
+            <span class="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 align-middle"></span>{{ liveLoading ? 'Buscando...' : 'En directo' }}
+          </button>
+          <button @click="refresh" :disabled="loading"
+            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30">
+            {{ loading ? '↻' : '↻' }} Refrescar
+          </button>
           <button @click="logout"
             class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
             Cerrar sesión
@@ -522,6 +530,25 @@
 
           <!-- Scorecard -->
           <div v-else-if="matchDetail" class="p-4 space-y-3">
+            <!-- Tumor prediction vs actual -->
+            <div class="grid grid-cols-3 gap-3 items-center bg-black/30 border border-white/10 rounded-xl p-3">
+              <div class="text-center">
+                <p class="text-blue-400 text-[10px] font-mono tracking-widest">AZUL</p>
+                <p class="text-blue-200 text-xl font-mono font-black">{{ matchPrediction.blueSum }}</p>
+              </div>
+              <div class="text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest">PREDICCIÓN</p>
+                <p class="text-xl">{{ matchPrediction.winner === 'blue' ? '🔵' : matchPrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
+                <p :class="matchPrediction.correct ? 'text-green-400' : matchPrediction.winner === 'tie' ? 'text-white/40' : 'text-red-400'"
+                  class="text-[9px] font-mono font-bold mt-0.5">
+                  {{ matchPrediction.winner === 'tie' ? 'IGUALADO' : matchPrediction.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}
+                </p>
+              </div>
+              <div class="text-center">
+                <p class="text-red-400 text-[10px] font-mono tracking-widest">ROJO</p>
+                <p class="text-red-200 text-xl font-mono font-black">{{ matchPrediction.redSum }}</p>
+              </div>
+            </div>
             <!-- Team label helper -->
             <template v-for="(team, ti) in [matchDetail.team_blue, matchDetail.team_red]" :key="ti">
               <div :class="(ti === 0 ? matchDetail.blue_win : !matchDetail.blue_win) ? 'border-blue-500/30' : 'border-red-500/30'"
@@ -581,10 +608,145 @@
                         <p class="text-white/20 text-[9px] font-mono">VIS</p>
                       </div>
                     </div>
+                    <div class="text-center shrink-0 w-12 border-l border-white/10 pl-2 ml-1">
+                      <p :class="tumorColor(p.tumor_score ?? 0)" class="text-base font-mono font-black leading-none">{{ p.tumor_score ?? '?' }}</p>
+                      <p :class="tumorColor(p.tumor_score ?? 0)" class="text-[8px] font-mono font-bold mt-0.5">{{ tumorLabel(p.tumor_score ?? 0) }}</p>
+                    </div>
                   </div>
                 </div>
               </div>
             </template>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Live game modal -->
+    <Transition name="modal">
+      <div v-if="showLiveGame" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        @click.self="closeLiveGame">
+        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
+            <div class="flex items-center gap-3">
+              <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
+              <p class="text-white font-mono font-bold">Partida en directo · Predicción de tumor</p>
+            </div>
+            <button @click="closeLiveGame" class="text-white/40 hover:text-white text-xl transition">✕</button>
+          </div>
+
+          <div v-if="liveLoading" class="flex flex-col items-center justify-center py-16 gap-3">
+            <p class="text-white/40 font-mono text-sm animate-pulse">Analizando 10 jugadores...</p>
+            <p class="text-white/20 font-mono text-xs">Esto puede tardar 10-30 segundos</p>
+          </div>
+
+          <div v-else-if="liveError" class="py-16 text-center">
+            <p class="text-red-400 font-mono text-sm">{{ liveError }}</p>
+          </div>
+
+          <div v-else-if="liveGame" class="p-6">
+            <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">
+              Tumor score promedio basado en últimas rankeds de cada jugador
+            </p>
+
+            <!-- Win prediction -->
+            <div class="grid grid-cols-3 gap-3 mb-4 items-center">
+              <div class="bg-blue-950/40 border rounded-xl px-4 py-3 text-center"
+                :class="livePrediction.winner === 'blue' ? 'border-blue-400/70 shadow-lg shadow-blue-500/20' : 'border-blue-500/20'">
+                <p class="text-blue-400 text-[10px] font-mono tracking-widest">EQUIPO AZUL</p>
+                <p class="text-blue-200 text-2xl font-mono font-black mt-1">{{ livePrediction.blueSum }}</p>
+                <p class="text-blue-300/60 text-[9px] font-mono">tumor total</p>
+              </div>
+              <div class="text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">PREDICCIÓN</p>
+                <p class="text-2xl">{{ livePrediction.winner === 'blue' ? '🔵' : livePrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
+                <p :class="livePrediction.winner === 'blue' ? 'text-blue-300' : livePrediction.winner === 'red' ? 'text-red-300' : 'text-white/50'"
+                  class="text-[10px] font-mono font-bold mt-1">
+                  {{ livePrediction.winner === 'blue' ? 'GANA AZUL' : livePrediction.winner === 'red' ? 'GANA ROJO' : 'IGUALADO' }}
+                </p>
+                <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ livePrediction.confidence }}% conf.</p>
+              </div>
+              <div class="bg-red-950/40 border rounded-xl px-4 py-3 text-center"
+                :class="livePrediction.winner === 'red' ? 'border-red-400/70 shadow-lg shadow-red-500/20' : 'border-red-500/20'">
+                <p class="text-red-400 text-[10px] font-mono tracking-widest">EQUIPO ROJO</p>
+                <p class="text-red-200 text-2xl font-mono font-black mt-1">{{ livePrediction.redSum }}</p>
+                <p class="text-red-300/60 text-[9px] font-mono">tumor total</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <!-- Blue team -->
+              <div>
+                <p class="text-blue-400 text-[11px] font-mono font-bold mb-2 tracking-widest">EQUIPO AZUL</p>
+                <div class="space-y-2">
+                  <div v-for="p in liveGame.players.filter(x => x.team_id === 100)" :key="p.puuid"
+                    :class="p.is_me ? 'border-[#c89b3c]/60 bg-[#c89b3c]/5' : 'border-white/10'"
+                    class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
+                    <img v-if="champData[String(p.champion_id)]"
+                      :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                      class="w-12 h-12 rounded-lg border border-white/20" />
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <p class="text-white text-sm font-mono truncate">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                        <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                      </div>
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <p :class="tierColor[p.tier] ?? 'text-white/40'" class="text-[10px] font-mono">{{ p.tier }} {{ p.division }}</p>
+                        <p v-if="p.estimated_games > 0" class="text-[10px] font-mono text-white/50">
+                          · ~{{ p.estimated_games }} games
+                          <span class="text-white/30">(M{{ p.mastery_level }})</span>
+                        </p>
+                        <p v-if="p.champion_winrate !== null" class="text-[10px] font-mono"
+                          :class="p.champion_winrate >= 60 ? 'text-green-400' : p.champion_winrate >= 50 ? 'text-yellow-400' : 'text-red-400'">
+                          · {{ p.champion_winrate }}% WR ({{ p.champion_games }}/{{ p.champion_total_sample }})
+                        </p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p :class="tumorColor(p.avg_tumor_score ?? 0)" class="text-2xl font-mono font-bold leading-none">
+                        {{ p.avg_tumor_score ?? '?' }}
+                      </p>
+                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- Red team -->
+              <div>
+                <p class="text-red-400 text-[11px] font-mono font-bold mb-2 tracking-widest">EQUIPO ROJO</p>
+                <div class="space-y-2">
+                  <div v-for="p in liveGame.players.filter(x => x.team_id === 200)" :key="p.puuid"
+                    :class="p.is_me ? 'border-[#c89b3c]/60 bg-[#c89b3c]/5' : 'border-white/10'"
+                    class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
+                    <img v-if="champData[String(p.champion_id)]"
+                      :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                      class="w-12 h-12 rounded-lg border border-white/20" />
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <p class="text-white text-sm font-mono truncate">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                        <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                      </div>
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <p :class="tierColor[p.tier] ?? 'text-white/40'" class="text-[10px] font-mono">{{ p.tier }} {{ p.division }}</p>
+                        <p v-if="p.estimated_games > 0" class="text-[10px] font-mono text-white/50">
+                          · ~{{ p.estimated_games }} games
+                          <span class="text-white/30">(M{{ p.mastery_level }})</span>
+                        </p>
+                        <p v-if="p.champion_winrate !== null" class="text-[10px] font-mono"
+                          :class="p.champion_winrate >= 60 ? 'text-green-400' : p.champion_winrate >= 50 ? 'text-yellow-400' : 'text-red-400'">
+                          · {{ p.champion_winrate }}% WR ({{ p.champion_games }}/{{ p.champion_total_sample }})
+                        </p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p :class="tumorColor(p.avg_tumor_score ?? 0)" class="text-2xl font-mono font-bold leading-none">
+                        {{ p.avg_tumor_score ?? '?' }}
+                      </p>
+                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -704,9 +866,23 @@ const theme = inject<ReturnType<typeof computed>>('theme')!
 
 const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
 
+const champData = ref<Record<string, string>>({})
+
 fetch('https://ddragon.leagueoflegends.com/api/versions.json')
   .then(r => r.json())
-  .then(versions => { ddragonVersion.value = versions[0] })
+  .then(versions => {
+    ddragonVersion.value = versions[0]
+    return fetch(`https://ddragon.leagueoflegends.com/cdn/${versions[0]}/data/en_US/champion.json`)
+  })
+  .then(r => r ? r.json() : null)
+  .then(data => {
+    if (!data) return
+    const map: Record<string, string> = {}
+    for (const id in data.data) {
+      map[data.data[id].key] = id
+    }
+    champData.value = map
+  })
   .catch(() => {})
 
 const formData = ref({ gameName: '', tagLine: '' })
@@ -761,7 +937,7 @@ const openMatchDetail = async (matchId: string) => {
   loadingDetail.value = true
   matchDetail.value = null
   try {
-    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}`)
+    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
     matchDetail.value = await res.json()
   } catch {}
   loadingDetail.value = false
@@ -975,6 +1151,118 @@ const loadMore = async () => {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
     loadingMore.value = false
+  }
+}
+
+interface LivePlayer {
+  puuid: string
+  nombre: string
+  champion_id: number
+  team_id: number
+  tier: string
+  division: string
+  avg_tumor_score: number | null
+  champion_games: number
+  champion_total_sample: number
+  champion_pct: number
+  champion_winrate: number | null
+  is_main: boolean
+  mastery_points: number
+  mastery_level: number
+  estimated_games: number
+  is_me: boolean
+}
+interface LiveGame {
+  game_id: number
+  queue_id: number
+  players: LivePlayer[]
+}
+
+const liveGame = ref<LiveGame | null>(null)
+
+const matchPrediction = computed(() => {
+  if (!matchDetail.value) return { blueSum: 0, redSum: 0, winner: 'tie', correct: false }
+  const blueSum = matchDetail.value.team_blue.reduce((s: number, p: any) => s + (p.tumor_score ?? 0), 0)
+  const redSum = matchDetail.value.team_red.reduce((s: number, p: any) => s + (p.tumor_score ?? 0), 0)
+  const diff = Math.abs(blueSum - redSum)
+  let winner: 'blue' | 'red' | 'tie' = 'tie'
+  if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
+  const actualBlueWon = matchDetail.value.blue_win
+  const correct = (winner === 'blue' && actualBlueWon) || (winner === 'red' && !actualBlueWon)
+  return { blueSum, redSum, winner, correct }
+})
+
+const livePrediction = computed(() => {
+  if (!liveGame.value) return { blueSum: 0, redSum: 0, winner: 'tie', confidence: 0 }
+  const blue = liveGame.value.players.filter(p => p.team_id === 100)
+  const red = liveGame.value.players.filter(p => p.team_id === 200)
+  const sum = (arr: LivePlayer[]) => arr.reduce((s, p) => s + (p.avg_tumor_score ?? 0), 0)
+  const blueSum = sum(blue)
+  const redSum = sum(red)
+  const diff = Math.abs(blueSum - redSum)
+  const total = blueSum + redSum
+  const confidence = total > 0 ? Math.min(99, Math.round((diff / total) * 200)) : 0
+  let winner: 'blue' | 'red' | 'tie' = 'tie'
+  if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
+  return { blueSum, redSum, winner, confidence }
+})
+
+const liveLoading = ref(false)
+const liveError = ref('')
+const showLiveGame = ref(false)
+
+const searchLiveGame = async () => {
+  showLiveGame.value = true
+  liveLoading.value = true
+  liveError.value = ''
+  liveGame.value = null
+  try {
+    const params = new URLSearchParams({
+      game_name: summoner.value.split('#')[0],
+      tag_line: summoner.value.split('#')[1],
+    })
+    const res = await fetch(`http://localhost:5000/liveGame?${params}`)
+    const data = await res.json()
+    if (!res.ok || data.error) throw new Error(data.error || 'Error')
+    liveGame.value = data
+  } catch (err) {
+    liveError.value = err instanceof Error ? err.message : 'Error desconocido'
+  } finally {
+    liveLoading.value = false
+  }
+}
+
+const closeLiveGame = () => {
+  showLiveGame.value = false
+  liveGame.value = null
+  liveError.value = ''
+}
+
+const refresh = async () => {
+  loading.value = true
+  scanning.value = true
+  error.value = ''
+  try {
+    const params = new URLSearchParams({
+      game_name: summoner.value.split('#')[0],
+      tag_line: summoner.value.split('#')[1],
+    })
+    const res = await fetch(`http://localhost:5000/getOverview?${params}`)
+    const data = await res.json()
+    if (!res.ok || data.error) throw new Error(data.error || 'Error al refrescar')
+    await new Promise(r => setTimeout(r, 1500))
+    matches.value = data.matches
+    tier.value = data.tier ?? ''
+    division.value = data.division ?? ''
+    hasMore.value = data.has_more ?? false
+    currentStart.value = data.matches.length
+    alerts.value = data.alerts ?? []
+    fetchWatchList()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Error desconocido'
+  } finally {
+    loading.value = false
+    scanning.value = false
   }
 }
 

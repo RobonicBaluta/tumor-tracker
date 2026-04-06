@@ -23,6 +23,8 @@ ACCOUNT_BY_RIOT_ID_URL = f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-riot-id"
 MATCHES_BY_PUUID_URL = f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid"
 MATCH_DETAILS_URL = f"{RIOT_BASE_URL}/lol/match/v5/matches"
 LEAGUE_ENTRIES_BY_PUUID_URL = f"{RIOT_PLATFORM_URL}/lol/league/v4/entries/by-puuid"
+ACTIVE_GAME_URL = f"{RIOT_PLATFORM_URL}/lol/spectator/v5/active-games/by-summoner"
+CHAMPION_MASTERY_URL = f"{RIOT_PLATFORM_URL}/lol/champion-mastery/v4/champion-masteries/by-puuid"
 
 # Configuración de query
 MATCHES_COUNT = 20

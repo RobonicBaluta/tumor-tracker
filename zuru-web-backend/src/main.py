@@ -1,16 +1,40 @@
 import json
 import os
+import time
 import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import (
     headers, ACCOUNT_BY_RIOT_ID_URL, MATCHES_BY_PUUID_URL,
     MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
-    LEAGUE_ENTRIES_BY_PUUID_URL
+    LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL
 )
 
 app = Flask(__name__)
 CORS(app)
+
+LIVE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "live_game_cache.json")
+LIVE_CACHE_TTL = 6 * 3600  # 6 horas para éxitos
+LIVE_CACHE_TTL_FAIL = 30 * 60  # 30 min para fallos (rate limit, etc)
+
+
+def load_live_cache():
+    if not os.path.exists(LIVE_CACHE_FILE):
+        return {}
+    try:
+        with open(LIVE_CACHE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_live_cache(cache):
+    try:
+        with open(LIVE_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
 
 RECENT_FILE = os.path.join(os.path.dirname(__file__), "recent_summoners.json")
 LEADERBOARD_FILE = os.path.join(os.path.dirname(__file__), "leaderboard.json")
@@ -207,35 +231,46 @@ def get_player_rank(puuid):
     return "UNRANKED", ""
 
 
-def calculate_tumor_score(player, game_duration, tier="GOLD"):
+ROLE_PROFILES = {
+    # weights:  kda, cs, dmg, dead, vision        (suman 100)
+    # mults:    multiplicador a aplicar al threshold base por rango
+    "TOP":     {"weights": (28, 22, 22, 15, 13),  "cs_mult": 1.0,  "dmg_mult": 1.0,  "vision_mult": 0.7},
+    "JUNGLE":  {"weights": (28, 18, 18, 15, 21),  "cs_mult": 0.7,  "dmg_mult": 1.0,  "vision_mult": 1.2},
+    "MIDDLE":  {"weights": (28, 22, 25, 15, 10),  "cs_mult": 1.0,  "dmg_mult": 1.1,  "vision_mult": 0.7},
+    "BOTTOM":  {"weights": (28, 25, 27, 15, 5),   "cs_mult": 1.1,  "dmg_mult": 1.2,  "vision_mult": 0.5},
+    "UTILITY": {"weights": (30, 5,  10, 15, 40),  "cs_mult": 0.25, "dmg_mult": 0.45, "vision_mult": 2.5},
+    # default si no se conoce el rol
+    "DEFAULT": {"weights": (30, 25, 20, 15, 10),  "cs_mult": 1.0,  "dmg_mult": 1.0,  "vision_mult": 1.0},
+}
+
+
+def calculate_tumor_score(player, game_duration, tier="GOLD", role="DEFAULT"):
     """
-    Score 0-100 que mide lo malo que fue un jugador relativo a su rango.
-    Los umbrales se ajustan según el tier: en Diamond se exige mucho más que en Bronze.
+    Score 0-100 que mide lo malo que fue un jugador relativo a su rango y rol.
+    Los umbrales se ajustan por tier y rol: a un support se le exige visión,
+    no farm; a un ADC daño y CS, no visión.
     """
-    thresholds = RANK_THRESHOLDS.get(tier, RANK_THRESHOLDS["GOLD"])
+    base = RANK_THRESHOLDS.get(tier, RANK_THRESHOLDS["GOLD"])
+    profile = ROLE_PROFILES.get(role, ROLE_PROFILES["DEFAULT"])
+    w_kda, w_cs, w_dmg, w_dead, w_vis = profile["weights"]
+
+    cs_thr = base["cs_per_min"] * profile["cs_mult"]
+    dmg_thr = base["dmg_per_min"] * profile["dmg_mult"]
+    vis_thr = base["vision_per_min"] * profile["vision_mult"]
+
     mins = max(game_duration / 60, 1)
 
     def pct_below(value, threshold, max_pts):
-        """Cuánto por debajo del umbral estás, en puntos."""
         if threshold == 0:
             return 0.0
         return max(0.0, min(float(max_pts), (threshold - value) / threshold * max_pts))
 
-    # KDA (0-30 pts)
-    kda_pts = pct_below(player["kda"], thresholds["kda"], 30)
-
-    # CS/min (0-25 pts)
-    cs_pts = pct_below(player["cs"] / mins, thresholds["cs_per_min"], 25)
-
-    # Daño/min (0-20 pts)
-    dmg_pts = pct_below(player["damage"] / mins, thresholds["dmg_per_min"], 20)
-
-    # Tiempo muerto % (0-15 pts) — igual en todos los rangos
+    kda_pts = pct_below(player["kda"], base["kda"], w_kda)
+    cs_pts = pct_below(player["cs"] / mins, cs_thr, w_cs)
+    dmg_pts = pct_below(player["damage"] / mins, dmg_thr, w_dmg)
     dead_pct = player["time_dead"] / max(game_duration, 1)
-    dead_pts = min(15.0, dead_pct * 37.5)
-
-    # Visión/min (0-10 pts)
-    vision_pts = pct_below(player["vision_score"] / mins, thresholds["vision_per_min"], 10)
+    dead_pts = min(float(w_dead), dead_pct * (w_dead * 2.5))
+    vision_pts = pct_below(player["vision_score"] / mins, vis_thr, w_vis)
 
     return round(kda_pts + cs_pts + dmg_pts + dead_pts + vision_pts)
 
@@ -517,7 +552,8 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
                     "gold":   team_avg("goldEarned"),
                 },
             }
-            worst_dict["tumor_score"] = calculate_tumor_score(worst_dict, game_duration, tier)
+            worst_role = worst_player.get("teamPosition") or "DEFAULT"
+            worst_dict["tumor_score"] = calculate_tumor_score(worst_dict, game_duration, tier, worst_role)
 
             matches_overview.append({
                 "match_id": match_id,
@@ -563,6 +599,181 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         return {"error": str(e)}, 500
 
 
+def riot_get(url, max_retries=4):
+    """GET con retry en 429 respetando Retry-After (hasta ~2 min de espera total)."""
+    for attempt in range(max_retries + 1):
+        res = requests.get(url, headers=headers)
+        if res.status_code == 429 and attempt < max_retries:
+            wait = int(res.headers.get("Retry-After", "10"))
+            time.sleep(min(wait, 60))
+            continue
+        return res
+    return res
+
+
+def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_id=None):
+    """Tumor score + estadísticas del campeón actual basadas en últimas N partidas (ranked solo o cualquiera)."""
+    try:
+        ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={num_matches}&queue={QUEUE_RANKED_SOLO}")
+        match_ids = ids_res.json() if ids_res.status_code == 200 else []
+        if not match_ids:
+            ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={num_matches}")
+            if ids_res.status_code != 200:
+                return None
+            match_ids = ids_res.json()
+        if not match_ids:
+            return None
+
+        scores = []
+        total_games = 0
+        champion_games = 0
+        champion_wins = 0
+
+        for mid in match_ids:
+            mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
+            if mres.status_code != 200:
+                continue
+            data = mres.json()
+            game_duration = data["info"]["gameDuration"]
+            if game_duration < 300:
+                continue
+            p = next((x for x in data["info"]["participants"] if x["puuid"] == puuid), None)
+            if not p:
+                continue
+
+            total_games += 1
+            if current_champion_id is not None and p.get("championId") == current_champion_id:
+                champion_games += 1
+                if p.get("win"):
+                    champion_wins += 1
+
+            stats = {
+                "kda": calculate_kda(p["kills"], p["deaths"], p["assists"]),
+                "cs": p["totalMinionsKilled"] + p["neutralMinionsKilled"],
+                "damage": p["totalDamageDealtToChampions"],
+                "vision_score": p["visionScore"],
+                "time_dead": p["totalTimeSpentDead"],
+            }
+            role = p.get("teamPosition") or "DEFAULT"
+            scores.append(calculate_tumor_score(stats, game_duration, tier, role))
+
+        if not scores:
+            return None
+
+        champ_pct = round(champion_games / total_games * 100) if total_games else 0
+        champ_wr = round(champion_wins / champion_games * 100) if champion_games else None
+
+        return {
+            "score": round(sum(scores) / len(scores)),
+            "champion_games": champion_games,
+            "champion_wins": champion_wins,
+            "champion_total_sample": total_games,
+            "champion_pct": champ_pct,
+            "champion_winrate": champ_wr,
+            "is_main": champ_pct >= 40,
+        }
+    except Exception:
+        return None
+
+
+@app.route('/liveGame', methods=['GET'])
+def live_game_endpoint():
+    game_name = request.args.get('game_name')
+    tag_line = request.args.get('tag_line')
+    if not game_name or not tag_line:
+        return jsonify({"error": "Falta game_name y/o tag_line"}), 400
+
+    acc_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}", headers=headers)
+    if acc_res.status_code != 200:
+        return jsonify({"error": "No se pudo obtener la cuenta"}), 400
+    me_puuid = acc_res.json()["puuid"]
+
+    spec_res = requests.get(f"{ACTIVE_GAME_URL}/{me_puuid}", headers=headers)
+    if spec_res.status_code == 404:
+        return jsonify({"error": "El jugador no está en partida ahora mismo"}), 404
+    if spec_res.status_code != 200:
+        return jsonify({"error": f"Error spectator: {spec_res.text}"}), 400
+
+    game = spec_res.json()
+    participants = game.get("participants", [])
+    players = []
+    cache = load_live_cache()
+    cache_dirty = False
+    now = time.time()
+
+    for p in participants:
+        p_puuid = p.get("puuid")
+        if not p_puuid:
+            continue
+
+        champ_id = p.get("championId")
+        cache_key = f"{p_puuid}:{champ_id}"
+        cached = cache.get(cache_key)
+        if cached and cached["data"].get("avg_tumor_score") is not None and (now - cached.get("ts", 0)) < LIVE_CACHE_TTL:
+            entry = dict(cached["data"])
+            entry["is_me"] = p_puuid == me_puuid
+            players.append(entry)
+            continue
+
+        tier, division = get_player_rank(p_puuid)
+
+        riot_id = p.get("riotId", "")
+        if not riot_id:
+            acc2 = requests.get(f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-puuid/{p_puuid}", headers=headers)
+            if acc2.status_code == 200:
+                a = acc2.json()
+                riot_id = f"{a.get('gameName', '?')}#{a.get('tagLine', '?')}"
+            else:
+                riot_id = "?"
+
+        profile = compute_player_profile(p_puuid, tier, num_matches=7, current_champion_id=champ_id)
+
+        mastery_points = 0
+        mastery_level = 0
+        try:
+            m_res = requests.get(f"{CHAMPION_MASTERY_URL}/{p_puuid}/by-champion/{champ_id}", headers=headers)
+            if m_res.status_code == 200:
+                m = m_res.json()
+                mastery_points = m.get("championPoints", 0)
+                mastery_level = m.get("championLevel", 0)
+        except Exception:
+            pass
+
+        entry = {
+            "puuid": p_puuid,
+            "nombre": riot_id,
+            "champion_id": champ_id,
+            "team_id": p.get("teamId"),
+            "tier": tier,
+            "division": division,
+            "avg_tumor_score": profile["score"] if profile else None,
+            "champion_games": profile["champion_games"] if profile else 0,
+            "champion_total_sample": profile["champion_total_sample"] if profile else 0,
+            "champion_pct": profile["champion_pct"] if profile else 0,
+            "champion_winrate": profile["champion_winrate"] if profile else None,
+            "is_main": profile["is_main"] if profile else False,
+            "mastery_points": mastery_points,
+            "mastery_level": mastery_level,
+            "estimated_games": round(mastery_points / 1900) if mastery_points else 0,
+        }
+        if entry["avg_tumor_score"] is not None:
+            cache[cache_key] = {"ts": now, "data": entry}
+            cache_dirty = True
+
+        entry_out = dict(entry)
+        entry_out["is_me"] = p_puuid == me_puuid
+        players.append(entry_out)
+
+    if cache_dirty:
+        save_live_cache(cache)
+
+    return jsonify({
+        "game_id": game.get("gameId"),
+        "queue_id": game.get("gameQueueConfigId"),
+        "players": players,
+    })
+
+
 @app.route('/getOverview', methods=['GET'])
 def get_overview_endpoint():
     game_name = request.args.get('game_name')
@@ -587,16 +798,28 @@ def match_detail_endpoint(match_id):
 
     info = res.json()["info"]
     participants = info["participants"]
+    game_duration = info["gameDuration"]
+    viewer_tier = request.args.get("viewer_tier", "GOLD") or "GOLD"
 
     def summarize(p):
         kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
+        cs = p["totalMinionsKilled"] + p["neutralMinionsKilled"]
+        stats = {
+            "kda": kda,
+            "cs": cs,
+            "damage": p["totalDamageDealtToChampions"],
+            "vision_score": p["visionScore"],
+            "time_dead": p["totalTimeSpentDead"],
+        }
+        role = p.get("teamPosition") or "DEFAULT"
+        tumor_score = calculate_tumor_score(stats, game_duration, viewer_tier, role)
         return {
             "puuid": p["puuid"],
             "nombre": f"{p['riotIdGameName']}#{p['riotIdTagline']}",
             "campeon": p["championName"],
             "kills": p["kills"], "deaths": p["deaths"], "assists": p["assists"],
             "kda": round(kda, 2),
-            "cs": p["totalMinionsKilled"] + p["neutralMinionsKilled"],
+            "cs": cs,
             "damage": p["totalDamageDealtToChampions"],
             "gold": p["goldEarned"],
             "vision_score": p["visionScore"],
@@ -604,6 +827,7 @@ def match_detail_endpoint(match_id):
             "champ_level": p["champLevel"],
             "time_dead": p["totalTimeSpentDead"],
             "win": p["win"],
+            "tumor_score": tumor_score,
         }
 
     team_blue = [summarize(p) for p in participants if p["teamId"] == 100]
