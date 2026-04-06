@@ -7,7 +7,18 @@ import Tinder from './components/Tinder.vue';
 import Overview from './components/Overview.vue';
 import Compare from './components/Compare.vue';
 
-const currentPage = ref('oncologico');
+const initialPage = (() => {
+  const h = window.location.hash || ''
+  if (h.startsWith('#/summoner/')) return 'overview'
+  return 'oncologico'
+})()
+const currentPage = ref(initialPage);
+
+window.addEventListener('hashchange', () => {
+  if (window.location.hash.startsWith('#/summoner/')) {
+    currentPage.value = 'overview'
+  }
+})
 
 const THEMES = {
   default: { from: '#0d1b2a', to: '#1b2838', label: 'Naval 🌊' },

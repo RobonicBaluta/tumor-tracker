@@ -157,6 +157,13 @@
             :title="'Copiar URL del perfil'">
             🔗 {{ shareCopied ? 'Copiado!' : 'Compartir' }}
           </button>
+          <button @click="showNotifications = !showNotifications"
+            class="relative px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono"
+            title="Notificaciones">
+            🔔
+            <span v-if="unreadNotifCount > 0"
+              class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{{ unreadNotifCount }}</span>
+          </button>
           <button @click="logout"
             class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
             Cerrar sesión
@@ -609,9 +616,11 @@
                     <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${p.campeon}.png`"
                       class="w-9 h-9 rounded-lg shrink-0" />
                     <div class="w-36 min-w-0 shrink-0">
-                      <p class="text-white text-xs font-bold truncate">
+                      <a :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
+                        class="text-white text-xs font-bold truncate block hover:text-[#c89b3c] hover:underline transition"
+                        :title="`Abrir perfil de ${p.nombre}`">
                         {{ p.nombre === summoner ? '⭐ ' + p.nombre : p.nombre }}
-                      </p>
+                      </a>
                       <p class="text-white/30 text-[10px] font-mono">{{ p.campeon }} · Lv{{ p.champ_level }}</p>
                     </div>
                     <div class="w-24 shrink-0 text-center">
@@ -659,9 +668,9 @@
 
     <!-- Live game modal -->
     <Transition name="modal">
-      <div v-if="showLiveGame" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      <div v-if="showLiveGame" class="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto"
         @click.self="closeLiveGame">
-        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
@@ -677,19 +686,35 @@
             <button @click="closeLiveGame" class="text-white/40 hover:text-white text-xl transition">✕</button>
           </div>
 
-          <div v-if="liveLoading" class="flex flex-col items-center justify-center py-16 gap-3">
-            <p class="text-white/40 font-mono text-sm animate-pulse">Analizando 10 jugadores...</p>
-            <p class="text-white/20 font-mono text-xs">Esto puede tardar 10-30 segundos</p>
+          <div v-if="liveLoading" class="flex flex-col items-center justify-center py-12 gap-4 px-8">
+            <p class="text-white/70 font-mono text-sm">{{ liveProgress.step || 'Iniciando...' }}</p>
+            <div class="w-full max-w-md bg-white/5 border border-white/10 rounded-full h-2 overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-red-500 to-orange-400 transition-all duration-500"
+                :style="{ width: `${Math.min(100, (liveProgress.progress / Math.max(1, liveProgress.total)) * 100)}%` }"></div>
+            </div>
+            <p class="text-white/30 font-mono text-[10px]">{{ liveProgress.progress }}/{{ liveProgress.total }}</p>
           </div>
 
           <div v-else-if="liveError" class="py-16 text-center">
             <p class="text-red-400 font-mono text-sm">{{ liveError }}</p>
           </div>
 
-          <div v-else-if="liveGame" class="p-6">
+          <div v-else-if="liveGame" class="p-4 sm:p-6">
             <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">
               Tumor score promedio basado en últimas rankeds de cada jugador
             </p>
+
+            <!-- Bans -->
+            <div v-if="liveGame.bans && liveGame.bans.length" class="mb-3 flex items-center gap-3 bg-black/30 border border-white/10 rounded-xl px-3 py-2 flex-wrap">
+              <span class="text-white/30 text-[10px] font-mono tracking-widest">BANS</span>
+              <div class="flex gap-1.5 flex-wrap">
+                <img v-for="b in liveGame.bans" :key="`${b.team_id}-${b.champion_id}`"
+                  :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${b.champion_name}.png`"
+                  :alt="b.champion_name"
+                  :title="b.champion_name"
+                  class="w-7 h-7 rounded border border-white/10 grayscale opacity-70" />
+              </div>
+            </div>
 
             <!-- Blacklist warning -->
             <div v-if="blacklistedInTeam.length"
@@ -704,7 +729,7 @@
             </div>
 
             <!-- Win prediction -->
-            <div class="grid grid-cols-3 gap-3 mb-4 items-center">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 items-center">
               <div class="bg-blue-950/40 border rounded-xl px-4 py-3 text-center"
                 :class="livePrediction.winner === 'blue' ? 'border-blue-400/70 shadow-lg shadow-blue-500/20' : 'border-blue-500/20'">
                 <p class="text-blue-400 text-[10px] font-mono tracking-widest">EQUIPO AZUL</p>
@@ -725,6 +750,19 @@
                 <p class="text-red-400 text-[10px] font-mono tracking-widest">EQUIPO ROJO</p>
                 <p class="text-red-200 text-2xl font-mono font-black mt-1">{{ livePrediction.redSum }}</p>
                 <p class="text-red-300/60 text-[9px] font-mono">tumor total</p>
+              </div>
+            </div>
+
+            <!-- Resolve prediction (comprobar resultado) -->
+            <div class="flex items-center justify-center gap-3 mb-4">
+              <button @click="resolveLivePrediction" :disabled="resolving"
+                class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40 rounded transition disabled:opacity-30">
+                {{ resolving ? 'Comprobando...' : '✅ Comprobar resultado' }}
+              </button>
+              <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2"
+                :class="resolveResult.correct ? 'text-green-400' : 'text-red-400'">
+                <span>{{ resolveResult.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}</span>
+                <span class="text-white/40">ganó {{ resolveResult.actual === 'blue' ? '🔵' : '🔴' }}</span>
               </div>
             </div>
 
@@ -754,7 +792,7 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <!-- Blue team -->
               <div>
                 <p class="text-blue-400 text-[11px] font-mono font-bold mb-2 tracking-widest">EQUIPO AZUL</p>
@@ -762,16 +800,38 @@
                   <div v-for="p in liveGame.players.filter(x => x.team_id === 100)" :key="p.puuid"
                     :class="p.is_me ? 'border-[#c89b3c]/60 bg-[#c89b3c]/5' : 'border-white/10'"
                     class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
-                    <img v-if="champData[String(p.champion_id)]"
-                      :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
-                      class="w-12 h-12 rounded-lg border border-white/20" />
+                    <div class="relative shrink-0">
+                      <img v-if="champData[String(p.champion_id)]"
+                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                        class="w-12 h-12 rounded-lg border border-white/20" />
+                      <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
+                        <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
+                        <img v-if="p.spell2_id && spellIconUrl(p.spell2_id)" :src="spellIconUrl(p.spell2_id)" class="w-4 h-4 rounded-sm border border-black/60" />
+                      </div>
+                      <div v-if="p.perks && p.perks.primary" class="absolute -left-1 -bottom-1 flex gap-0.5">
+                        <span class="w-3 h-3 rounded-full border border-black/60"
+                          :style="{ background: (RUNE_STYLES[p.perks.primary || 0]?.color || '#666') }"
+                          :title="RUNE_STYLES[p.perks.primary || 0]?.name || ''"></span>
+                        <span v-if="p.perks.secondary" class="w-2 h-2 rounded-full border border-black/60 self-end"
+                          :style="{ background: (RUNE_STYLES[p.perks.secondary || 0]?.color || '#666') }"
+                          :title="RUNE_STYLES[p.perks.secondary || 0]?.name || ''"></span>
+                      </div>
+                    </div>
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-1.5 flex-wrap">
                         <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
-                        <p class="text-white text-sm font-mono truncate" :class="p.is_watched ? 'text-red-300' : ''">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                        <a v-if="!p.streamer_mode" :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
+                          class="text-white text-sm font-mono truncate hover:text-[#c89b3c] hover:underline transition"
+                          :class="p.is_watched ? 'text-red-300' : ''"
+                          :title="`Abrir perfil de ${p.nombre}`">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</a>
+                        <p v-else class="text-white/60 text-sm font-mono truncate italic">{{ p.nombre }}</p>
+                        <span v-if="p.streamer_mode" title="Modo streamer activado — score estimado con la media del equipo"
+                          class="text-[9px] font-mono font-bold bg-sky-500/20 border border-sky-400/40 text-sky-300 px-1.5 py-0.5 rounded">🥷 STREAMER</span>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
                         <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
                           class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
+                        <span v-if="p.is_hotstreak" title="Hotstreak: últimas 3 partidas jugando muy bien"
+                          class="text-[9px] font-mono font-bold bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-1.5 py-0.5 rounded">📈 HOT</span>
                         <span v-if="p.duo_group"
                           title="Posible duo detectado en partidas recientes"
                           class="text-[9px] font-mono font-bold bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 px-1.5 py-0.5 rounded">DUO {{ p.duo_group }}</span>
@@ -794,10 +854,10 @@
                       </div>
                     </div>
                     <div class="text-right">
-                      <p :class="tumorColor(p.avg_tumor_score ?? 0)" class="text-2xl font-mono font-bold leading-none">
-                        {{ p.avg_tumor_score ?? '?' }}
+                      <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
+                        {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
                       </p>
-                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
                     </div>
                   </div>
                 </div>
@@ -809,16 +869,38 @@
                   <div v-for="p in liveGame.players.filter(x => x.team_id === 200)" :key="p.puuid"
                     :class="p.is_me ? 'border-[#c89b3c]/60 bg-[#c89b3c]/5' : 'border-white/10'"
                     class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
-                    <img v-if="champData[String(p.champion_id)]"
-                      :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
-                      class="w-12 h-12 rounded-lg border border-white/20" />
+                    <div class="relative shrink-0">
+                      <img v-if="champData[String(p.champion_id)]"
+                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                        class="w-12 h-12 rounded-lg border border-white/20" />
+                      <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
+                        <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
+                        <img v-if="p.spell2_id && spellIconUrl(p.spell2_id)" :src="spellIconUrl(p.spell2_id)" class="w-4 h-4 rounded-sm border border-black/60" />
+                      </div>
+                      <div v-if="p.perks && p.perks.primary" class="absolute -left-1 -bottom-1 flex gap-0.5">
+                        <span class="w-3 h-3 rounded-full border border-black/60"
+                          :style="{ background: (RUNE_STYLES[p.perks.primary || 0]?.color || '#666') }"
+                          :title="RUNE_STYLES[p.perks.primary || 0]?.name || ''"></span>
+                        <span v-if="p.perks.secondary" class="w-2 h-2 rounded-full border border-black/60 self-end"
+                          :style="{ background: (RUNE_STYLES[p.perks.secondary || 0]?.color || '#666') }"
+                          :title="RUNE_STYLES[p.perks.secondary || 0]?.name || ''"></span>
+                      </div>
+                    </div>
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-1.5 flex-wrap">
                         <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
-                        <p class="text-white text-sm font-mono truncate" :class="p.is_watched ? 'text-red-300' : ''">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                        <a v-if="!p.streamer_mode" :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
+                          class="text-white text-sm font-mono truncate hover:text-[#c89b3c] hover:underline transition"
+                          :class="p.is_watched ? 'text-red-300' : ''"
+                          :title="`Abrir perfil de ${p.nombre}`">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</a>
+                        <p v-else class="text-white/60 text-sm font-mono truncate italic">{{ p.nombre }}</p>
+                        <span v-if="p.streamer_mode" title="Modo streamer activado — score estimado con la media del equipo"
+                          class="text-[9px] font-mono font-bold bg-sky-500/20 border border-sky-400/40 text-sky-300 px-1.5 py-0.5 rounded">🥷 STREAMER</span>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
                         <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
                           class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
+                        <span v-if="p.is_hotstreak" title="Hotstreak: últimas 3 partidas jugando muy bien"
+                          class="text-[9px] font-mono font-bold bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-1.5 py-0.5 rounded">📈 HOT</span>
                         <span v-if="p.duo_group"
                           title="Posible duo detectado en partidas recientes"
                           class="text-[9px] font-mono font-bold bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 px-1.5 py-0.5 rounded">DUO {{ p.duo_group }}</span>
@@ -841,10 +923,10 @@
                       </div>
                     </div>
                     <div class="text-right">
-                      <p :class="tumorColor(p.avg_tumor_score ?? 0)" class="text-2xl font-mono font-bold leading-none">
-                        {{ p.avg_tumor_score ?? '?' }}
+                      <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
+                        {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
                       </p>
-                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
                     </div>
                   </div>
                 </div>
@@ -855,20 +937,60 @@
       </div>
     </Transition>
 
-    <!-- Excuse toast -->
+    <!-- Notifications sidebar -->
     <Transition name="modal">
-      <div v-if="excuseText" class="fixed top-6 right-6 z-[60] max-w-sm animate-fade">
-        <div class="bg-gradient-to-br from-yellow-900/90 to-amber-950/90 border border-yellow-500/50 rounded-xl shadow-2xl p-4 backdrop-blur">
-          <div class="flex items-start gap-3">
-            <span class="text-2xl">🗣</span>
-            <div class="flex-1">
-              <p class="text-yellow-300 text-[10px] font-mono tracking-widest mb-1">EXCUSA OFICIAL</p>
-              <p class="text-yellow-100 font-mono text-sm leading-snug">{{ excuseText }}</p>
-              <div class="flex gap-2 mt-3">
-                <button @click="rollExcuse" class="text-[10px] font-mono px-2 py-1 border border-yellow-500/30 text-yellow-300 rounded hover:border-yellow-500/60">🎲 Otra</button>
-                <button @click="excuseText = ''" class="text-[10px] font-mono px-2 py-1 border border-white/10 text-white/40 rounded hover:text-white/70">Cerrar</button>
+      <div v-if="showNotifications" class="fixed top-0 right-0 bottom-0 w-80 z-[55] bg-[#0d1b2a]/95 backdrop-blur-md border-l border-white/10 shadow-2xl flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <p class="text-white/80 font-mono text-sm font-bold">🔔 Notificaciones</p>
+          <div class="flex items-center gap-2">
+            <button v-if="notifications.length" @click="markAllRead" class="text-[10px] font-mono text-white/40 hover:text-white/70">Limpiar</button>
+            <button @click="showNotifications = false" class="text-white/40 hover:text-white text-lg">✕</button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          <div v-if="!notifications.length" class="py-12 text-center px-6">
+            <p class="text-white/30 text-sm font-mono">Sin notificaciones</p>
+            <p class="text-white/20 text-[11px] font-mono mt-2">Te avisaremos cuando se resuelvan predicciones, detectemos tumores recurrentes o cambios en tu WR semanal.</p>
+          </div>
+          <div v-else class="divide-y divide-white/5">
+            <div v-for="n in notifications" :key="n.id"
+              class="px-4 py-3 flex items-start gap-3 hover:bg-white/5 cursor-pointer transition group"
+              @click="openNotification(n)">
+              <span class="text-xl shrink-0">{{ n.icon }}</span>
+              <div class="flex-1 min-w-0">
+                <p class="text-white text-sm font-mono">{{ n.title }}</p>
+                <p class="text-white/60 text-[11px] font-mono leading-snug">{{ n.body }}</p>
+                <p v-if="n.match_id" class="text-white/20 text-[9px] font-mono mt-1 group-hover:text-[#c89b3c]/70">Click para ver la partida →</p>
+              </div>
+              <button @click.stop="dismissNotification(n.id)"
+                class="text-white/20 hover:text-white/60 text-xs shrink-0" title="Descartar">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Excuse toast -->
+    <Transition name="excuse">
+      <div v-if="excuseText" class="fixed top-6 right-6 z-[60] max-w-sm"
+        @mouseenter="pauseExcuseTimer" @mouseleave="resumeExcuseTimer">
+        <div class="bg-gradient-to-br from-yellow-900/90 to-amber-950/90 border border-yellow-500/50 rounded-xl shadow-2xl backdrop-blur overflow-hidden">
+          <div class="p-4">
+            <div class="flex items-start gap-3">
+              <span class="text-2xl" :class="excuseRolling ? 'animate-spin' : ''">🎲</span>
+              <div class="flex-1">
+                <p class="text-yellow-300 text-[10px] font-mono tracking-widest mb-1">EXCUSA OFICIAL</p>
+                <p class="text-yellow-100 font-mono text-sm leading-snug" :class="excuseRolling ? 'opacity-60 italic' : ''">{{ excuseText }}</p>
+                <div class="flex gap-2 mt-3">
+                  <button @click="rollExcuse" :disabled="excuseRolling" class="text-[10px] font-mono px-2 py-1 border border-yellow-500/30 text-yellow-300 rounded hover:border-yellow-500/60 disabled:opacity-40">🎲 Otra</button>
+                  <button @click="closeExcuse" class="text-[10px] font-mono px-2 py-1 border border-white/10 text-white/40 rounded hover:text-white/70">Cerrar</button>
+                </div>
               </div>
             </div>
+          </div>
+          <div class="h-1 bg-black/30">
+            <div class="h-full bg-gradient-to-r from-yellow-400 to-amber-500 transition-[width] duration-100 ease-linear"
+              :style="{ width: `${excuseTimerPct}%` }"></div>
           </div>
         </div>
       </div>
@@ -901,7 +1023,70 @@
           <div v-else-if="analyticsError" class="py-16 text-center">
             <p class="text-red-400 font-mono text-sm">{{ analyticsError }}</p>
           </div>
-          <div v-else-if="analyticsData" class="p-6 space-y-8">
+          <div v-else-if="analyticsData" class="p-4 sm:p-6 space-y-8">
+
+            <!-- Filter bar -->
+            <section>
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">🔎 FILTROS</p>
+              <div class="flex flex-wrap gap-2 items-center bg-black/30 border border-white/10 rounded-xl p-3">
+                <select v-model="analyticsFilters.role" @change="loadAnalytics"
+                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
+                  <option value="">Cualquier rol</option>
+                  <option value="TOP">Top</option>
+                  <option value="JUNGLE">Jungle</option>
+                  <option value="MIDDLE">Mid</option>
+                  <option value="BOTTOM">ADC</option>
+                  <option value="UTILITY">Support</option>
+                </select>
+                <select v-model="analyticsFilters.result" @change="loadAnalytics"
+                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
+                  <option value="">Todas</option>
+                  <option value="win">Solo wins</option>
+                  <option value="loss">Solo losses</option>
+                </select>
+                <select v-model="analyticsFilters.champion" @change="loadAnalytics"
+                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1 max-w-[160px]">
+                  <option value="">Cualquier champ</option>
+                  <option v-for="c in analyticsData.champion_pool" :key="c.champion" :value="c.champion">
+                    {{ c.champion }} ({{ c.games }})
+                  </option>
+                </select>
+                <select v-model.number="analyticsFilters.count" @change="loadAnalytics"
+                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
+                  <option :value="20">Últimas 20</option>
+                  <option :value="30">Últimas 30</option>
+                  <option :value="50">Últimas 50</option>
+                </select>
+                <button @click="analyticsFilters = { champion: '', role: '', result: '', count: 30 }; loadAnalytics()"
+                  class="text-[11px] font-mono text-white/40 hover:text-white/70 px-2 py-1 border border-white/10 rounded">Reset</button>
+                <span class="text-white/30 text-[10px] font-mono ml-auto">{{ analyticsData.total_matches }} partidas</span>
+              </div>
+            </section>
+
+            <!-- Backtest del modelo -->
+            <section>
+              <div class="flex items-center justify-between mb-3">
+                <p class="text-white/30 text-[10px] font-mono tracking-widest">🧪 BACKTEST DEL PREDICTOR</p>
+                <button @click="runBacktest" :disabled="backtestLoading"
+                  class="text-[11px] font-mono px-2.5 py-1 border border-purple-500/40 text-purple-300 hover:border-purple-400/80 rounded disabled:opacity-40">
+                  {{ backtestLoading ? 'Procesando...' : 'Ejecutar' }}
+                </button>
+              </div>
+              <div v-if="backtestData" class="bg-black/30 border border-purple-500/20 rounded-xl p-4">
+                <div class="flex items-baseline gap-6">
+                  <div>
+                    <p :class="backtestData.accuracy >= 60 ? 'text-green-400' : backtestData.accuracy >= 50 ? 'text-yellow-400' : 'text-red-400'"
+                      class="text-4xl font-mono font-black">{{ backtestData.accuracy }}%</p>
+                    <p class="text-white/40 text-[10px] font-mono">acierto real</p>
+                  </div>
+                  <div class="text-sm font-mono text-white/60">
+                    <p>{{ backtestData.correct }} / {{ backtestData.total }} aciertos</p>
+                    <p class="text-white/30 text-xs">{{ backtestData.ties }} partidas sin predicción clara</p>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="text-white/30 font-mono text-xs">Ejecuta el modelo sobre tus últimas 20 partidas ya acabadas para ver su acierto real.</p>
+            </section>
 
             <!-- Weekly comparison -->
             <section v-if="analyticsData.week_stats.this || analyticsData.week_stats.last">
@@ -1012,6 +1197,60 @@
               </div>
             </section>
 
+            <!-- Champion pool -->
+            <section v-if="analyticsData.champion_pool && analyticsData.champion_pool.length">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🏆 CHAMPION POOL</p>
+              <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div v-for="c in analyticsData.champion_pool" :key="c.champion"
+                  class="bg-black/30 border border-white/10 rounded-xl p-2 flex items-center gap-2">
+                  <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${c.champion}.png`"
+                    class="w-10 h-10 rounded-lg border border-white/20 shrink-0" />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-white text-[11px] font-mono truncate">{{ c.champion }}</p>
+                    <p class="text-[9px] font-mono">
+                      <span :class="c.winrate >= 60 ? 'text-green-400' : c.winrate >= 50 ? 'text-yellow-400' : 'text-red-400'">{{ c.winrate }}%</span>
+                      <span class="text-white/30"> · {{ c.games }}g</span>
+                    </p>
+                    <p :class="tumorColor(c.avg_tumor)" class="text-[9px] font-mono">{{ c.avg_tumor }} tumor</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Best teammates / Worst nemesis grid -->
+            <section v-if="(analyticsData.best_teammates && analyticsData.best_teammates.length) || (analyticsData.worst_nemesis && analyticsData.worst_nemesis.length)">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div v-if="analyticsData.best_teammates && analyticsData.best_teammates.length">
+                  <p class="text-green-400/70 text-[10px] font-mono tracking-widest mb-2">🌟 BEST TEAMMATES</p>
+                  <div class="bg-black/30 border border-green-500/20 rounded-xl divide-y divide-white/5">
+                    <div v-for="d in analyticsData.best_teammates" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
+                      <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                        class="w-8 h-8 rounded-lg border border-white/20" />
+                      <div class="flex-1 min-w-0">
+                        <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
+                        <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
+                      </div>
+                      <p class="text-green-400 text-sm font-mono font-black">{{ d.winrate }}%</p>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="analyticsData.worst_nemesis && analyticsData.worst_nemesis.length">
+                  <p class="text-red-400/70 text-[10px] font-mono tracking-widest mb-2">💢 WORST NEMESIS</p>
+                  <div class="bg-black/30 border border-red-500/20 rounded-xl divide-y divide-white/5">
+                    <div v-for="d in analyticsData.worst_nemesis" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
+                      <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                        class="w-8 h-8 rounded-lg border border-white/20" />
+                      <div class="flex-1 min-w-0">
+                        <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
+                        <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
+                      </div>
+                      <p class="text-red-400 text-sm font-mono font-black">{{ d.winrate }}%</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <!-- Dúo ideal -->
             <section v-if="analyticsData.duo_stats.length">
               <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🤝 ALIADOS RECURRENTES</p>
@@ -1043,6 +1282,13 @@
 
 <script setup lang="ts">
 import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
+import {
+  SCAN_MESSAGES, LOADING_FLAVORS,
+  EXCUSE_STARTERS, EXCUSE_REASONS, EXCUSE_ENDINGS,
+  RUNE_STYLES, SUMMONER_SPELLS,
+  ROLE_ORDER, ROLE_LABEL, TIER_COLORS,
+  tumorColor, tumorLabel,
+} from '../composables/overviewConstants'
 
 interface TeamAvg {
   kda: number
@@ -1180,63 +1426,12 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const scanning = ref(false)
 
-const LOADING_FLAVORS = [
-  'Abriendo la tumba de partidas perdidas...',
-  'Convenciendo a Riot de que respondan...',
-  'Extrayendo feed del jungla...',
-  'Filtrando excusas de tus aliados...',
-  'Pidiéndole perdón a Riot por spammear la API...',
-  'Detectando si era tu culpa (spoiler: sí)...',
-  'Rescatando KDA de la papelera de reciclaje...',
-  'Traduciendo flame del all chat al español...',
-  'Consultando a Baron Nashor...',
-  'Buscando el botón de "no jugar con randoms"...',
-  'Revisando si había Yasuo en tu team...',
-  'Cargando más tumores que el Chernobyl...',
-  'Pagando el ping con nuestras lágrimas...',
-  'Reconstruyendo el muro que te comió en mid...',
-]
 const loadingFlavor = ref(LOADING_FLAVORS[0])
+const profileUrl = (nombre: string) => {
+  const slug = nombre.replace('#', '-')
+  return `${window.location.origin}${window.location.pathname}#/summoner/${encodeURIComponent(slug)}`
+}
 
-const EXCUSE_STARTERS = [
-  'Perdí porque',
-  'No fue mi culpa,',
-  'La realidad es que',
-  'Obviamente',
-  'Claramente',
-]
-const EXCUSE_REASONS = [
-  'el jungla estaba AFK en el bush',
-  'mi support era un Teemo con Sunfire',
-  'había lag del servidor (1200 ms fijos)',
-  'mi ADC pusheaba la 1 con 30 de HP',
-  'el mid hizo full AP sobre un Garen',
-  'el top feedeó 0/7 antes del minuto 10',
-  'mi duo me flameó por invocar Ignite',
-  'Riot nerfeó a mi champ en parche no anunciado',
-  'había un smurf en el enemy team',
-  'mi internet se cayó justo en teamfight',
-  'el jungla no gankeó ni una vez',
-  'el support se olvidó las wards en casa',
-  'el chat de mi team estaba en ruso',
-  'mi compañero se comió el blue sin pedir permiso',
-  'el enemigo tenía un Yasuo inmortal',
-  'nadie respondió a mis ? pings en baron',
-  'mi team pickeó 5 AD contra 3 tanques',
-  'el jungla me hizo counterjungle a MI jungla',
-  'mi mouse se desconectó',
-  'Cereza Furiosa tilteó en el minuto 2',
-]
-const EXCUSE_ENDINGS = [
-  'y además hacía mucho calor.',
-  'era imposible ganar.',
-  'y los dioses no me querían.',
-  'así cualquiera pierde.',
-  'y por eso bajé de elo.',
-  'pero bueno, GG WP.',
-  'y yo era el único intentándolo.',
-  '— no tenía sentido insistir.',
-]
 const shareCopied = ref(false)
 const shareProfile = async () => {
   if (!summoner.value) return
@@ -1274,36 +1469,89 @@ onUnmounted(() => {
   window.removeEventListener('hashchange', parseHashAndLoad)
   if (loadingFlavorInterval) clearInterval(loadingFlavorInterval)
   if (scanInterval) clearInterval(scanInterval)
+  stopGlobalPoller()
 })
 
 const excuseText = ref('')
+const excuseRolling = ref(false)
+const EXCUSE_DURATION_MS = 8000
+const excuseTimerPct = ref(100)
+let excuseTimerId: ReturnType<typeof setInterval> | null = null
+let excuseStartedAt = 0
+let excuseRemaining = EXCUSE_DURATION_MS
+
+const closeExcuse = () => {
+  excuseText.value = ''
+  if (excuseTimerId) {
+    clearInterval(excuseTimerId)
+    excuseTimerId = null
+  }
+}
+
+const startExcuseTimer = () => {
+  if (excuseTimerId) clearInterval(excuseTimerId)
+  excuseRemaining = EXCUSE_DURATION_MS
+  excuseStartedAt = Date.now()
+  excuseTimerPct.value = 100
+  excuseTimerId = setInterval(() => {
+    if (excuseRolling.value) {
+      // Mientras rueda el dado, la barra queda congelada.
+      excuseStartedAt = Date.now()
+      return
+    }
+    const elapsed = Date.now() - excuseStartedAt
+    const pct = Math.max(0, (excuseRemaining - elapsed) / EXCUSE_DURATION_MS * 100)
+    excuseTimerPct.value = pct
+    if (pct <= 0) closeExcuse()
+  }, 60)
+}
+
+const pauseExcuseTimer = () => {
+  if (!excuseTimerId) return
+  const elapsed = Date.now() - excuseStartedAt
+  excuseRemaining = Math.max(0, excuseRemaining - elapsed)
+  clearInterval(excuseTimerId)
+  excuseTimerId = null
+}
+
+const resumeExcuseTimer = () => {
+  if (excuseTimerId || !excuseText.value) return
+  excuseStartedAt = Date.now()
+  excuseTimerId = setInterval(() => {
+    if (excuseRolling.value) {
+      excuseStartedAt = Date.now()
+      return
+    }
+    const elapsed = Date.now() - excuseStartedAt
+    const pct = Math.max(0, (excuseRemaining - elapsed) / EXCUSE_DURATION_MS * 100)
+    excuseTimerPct.value = pct
+    if (pct <= 0) closeExcuse()
+  }, 60)
+}
 const rollExcuse = () => {
-  const s = EXCUSE_STARTERS[Math.floor(Math.random() * EXCUSE_STARTERS.length)]
-  const r1 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
-  let r2 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
-  while (r2 === r1) r2 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
-  const e = EXCUSE_ENDINGS[Math.floor(Math.random() * EXCUSE_ENDINGS.length)]
-  excuseText.value = `${s} ${r1}, también ${r2}, ${e}`
+  excuseRolling.value = true
+  // Rueda un par de veces mostrando basura random y luego el resultado final.
+  const frames = 8
+  let i = 0
+  const interval = setInterval(() => {
+    i++
+    const r1 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+    excuseText.value = `🎲 ${r1}...`
+    if (i >= frames) {
+      clearInterval(interval)
+      const s = EXCUSE_STARTERS[Math.floor(Math.random() * EXCUSE_STARTERS.length)]
+      const a = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+      let b = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+      while (b === a) b = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+      const e = EXCUSE_ENDINGS[Math.floor(Math.random() * EXCUSE_ENDINGS.length)]
+      excuseText.value = `${s} ${a}, también ${b}, ${e}`
+      excuseRolling.value = false
+      startExcuseTimer()
+    }
+  }, 70)
 }
 
 
-const SCAN_MESSAGES = [
-  'DETECTANDO TEJIDOS CANCERÍGENOS...',
-  'MIDIENDO NIVEL DE TILT EN SANGRE...',
-  'CALIBRANDO RADIÁMETRO DE KDA...',
-  'INDEXANDO TROLLS EN BASE DE DATOS...',
-  'DESCARGANDO VERGÜENZA AJENA...',
-  'ANALIZANDO PATRONES DE FEED...',
-  'BUSCANDO YASUOS 0/10 EN MATCH HISTORY...',
-  'CARGANDO EXCUSAS PREDETERMINADAS...',
-  'VERIFICANDO INTEGRIDAD DEL JUNGLER...',
-  'COMPUTANDO DAÑO NO INFLIGIDO...',
-  'ESCANEANDO CHAT POR /ALL ENEMY...',
-  'DETECTANDO PING DE 9999 MS...',
-  'REVISANDO STREAM DE CEREZA FURIOSA...',
-  'CONTANDO MUERTES EN TOWER DIVE...',
-  'IDENTIFICANDO BUILDS DE SOLO AP SOBRE AD...',
-]
 const scanMessage = ref(SCAN_MESSAGES[0])
 let scanInterval: ReturnType<typeof setInterval> | null = null
 
@@ -1550,6 +1798,7 @@ const login = async () => {
     saveRecent(data.summoner)
     fetchWatchList()
     fetchBlacklist()
+    startGlobalPoller()
     const slug = data.summoner.replace('#', '-')
     if (!window.location.hash.includes(slug)) {
       history.replaceState(null, '', `#/summoner/${encodeURIComponent(slug)}`)
@@ -1602,7 +1851,9 @@ interface LivePlayer {
   champion_winrate: number | null
   is_main: boolean
   is_tilted: boolean
+  is_hotstreak?: boolean
   recent_losses: number
+  recent_wins?: number
   recent_avg_tumor: number
   mastery_points: number
   mastery_level: number
@@ -1611,13 +1862,39 @@ interface LivePlayer {
   is_watched: boolean
   is_blacklisted: boolean
   champion_name: string
+  streamer_mode?: boolean
+  score_is_team_avg?: boolean
   duo_group?: string
   duo_size?: number
+  spell1_id?: number
+  spell2_id?: number
+  perks?: { keystone: number | null, primary: number | null, secondary: number | null } | null
+}
+
+interface BanInfo {
+  team_id: number
+  champion_id: number
+  champion_name: string
+  pick_turn: number
+}
+
+interface Prediction {
+  blue_score: number
+  red_score: number
+  blue_sum: number
+  red_sum: number
+  winner: 'blue' | 'red' | 'tie'
+  confidence: number
+  diff: number
 }
 interface LiveGame {
   game_id: number
+  match_id: string
   queue_id: number
+  viewer_puuid?: string
   players: LivePlayer[]
+  bans?: BanInfo[]
+  prediction?: Prediction
 }
 
 interface EvolutionPoint { date: number; tumor: number; win: boolean; champion: string; kda: number }
@@ -1625,6 +1902,7 @@ interface HourStat { hour: number; games: number; winrate: number; avg_tumor: nu
 interface WeekStat { games: number; wins: number; winrate: number; avg_tumor: number }
 interface DuoStat { puuid: string; nombre: string; games: number; wins: number; winrate: number; top_champion: string }
 interface RoleComboStat { my_role: string; other_role: string; games: number; wins: number; winrate: number }
+interface ChampionPoolEntry { champion: string; games: number; wins: number; winrate: number; avg_tumor: number }
 interface AnalyticsData {
   summoner: string
   tier: string
@@ -1634,6 +1912,9 @@ interface AnalyticsData {
   week_stats: { this: WeekStat | null; last: WeekStat | null }
   duo_stats: DuoStat[]
   role_combo_stats: RoleComboStat[]
+  champion_pool: ChampionPoolEntry[]
+  best_teammates: DuoStat[]
+  worst_nemesis: DuoStat[]
 }
 
 const analyticsData = ref<AnalyticsData | null>(null)
@@ -1641,18 +1922,29 @@ const analyticsLoading = ref(false)
 const analyticsError = ref('')
 const showAnalytics = ref(false)
 
-const openAnalytics = async () => {
-  showAnalytics.value = true
+const analyticsFilters = ref({
+  champion: '',
+  role: '',
+  result: '',
+  count: 30,
+})
+const backtestData = ref<any>(null)
+const backtestLoading = ref(false)
+
+const loadAnalytics = async () => {
   analyticsLoading.value = true
   analyticsError.value = ''
-  analyticsData.value = null
   try {
-    const params = new URLSearchParams({
+    const params: Record<string, string> = {
       game_name: summoner.value.split('#')[0],
       tag_line: summoner.value.split('#')[1],
-      count: '30',
-    })
-    const res = await fetch(`http://localhost:5000/playerAnalytics?${params}`)
+      count: String(analyticsFilters.value.count || 30),
+    }
+    if (analyticsFilters.value.champion) params.champion = analyticsFilters.value.champion
+    if (analyticsFilters.value.role) params.role = analyticsFilters.value.role
+    if (analyticsFilters.value.result) params.result = analyticsFilters.value.result
+    const qs = new URLSearchParams(params).toString()
+    const res = await fetch(`http://localhost:5000/playerAnalytics?${qs}`)
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Error')
     analyticsData.value = data
@@ -1661,6 +1953,30 @@ const openAnalytics = async () => {
   } finally {
     analyticsLoading.value = false
   }
+}
+
+const openAnalytics = async () => {
+  showAnalytics.value = true
+  analyticsData.value = null
+  backtestData.value = null
+  analyticsFilters.value = { champion: '', role: '', result: '', count: 30 }
+  await loadAnalytics()
+}
+
+const runBacktest = async () => {
+  backtestLoading.value = true
+  backtestData.value = null
+  try {
+    const params = new URLSearchParams({
+      game_name: summoner.value.split('#')[0],
+      tag_line: summoner.value.split('#')[1],
+      count: '20',
+    })
+    const res = await fetch(`http://localhost:5000/backtest?${params}`)
+    const data = await res.json()
+    if (res.ok && !data.error) backtestData.value = data
+  } catch {}
+  finally { backtestLoading.value = false }
 }
 
 const closeAnalytics = () => {
@@ -1705,7 +2021,13 @@ const heatmapCellStyle = (myRole: string, otherRole: string) => {
   const entry = analyticsData.value?.role_combo_stats.find(
     r => r.my_role === myRole && r.other_role === otherRole
   )
-  if (!entry) return { background: 'rgba(255,255,255,0.02)' }
+  if (!entry) {
+    return {
+      background: 'rgba(255,255,255,0.015)',
+      color: 'rgba(255,255,255,0.12)',
+      border: '1px dashed rgba(255,255,255,0.06)',
+    }
+  }
   const hue = entry.winrate >= 50 ? 120 : 0
   const alpha = Math.min(0.6, 0.15 + (Math.abs(entry.winrate - 50) / 50) * 0.5)
   return { background: `hsla(${hue}, 70%, 40%, ${alpha})`, color: 'white' }
@@ -1715,7 +2037,7 @@ const heatmapCellText = (myRole: string, otherRole: string) => {
   const entry = analyticsData.value?.role_combo_stats.find(
     r => r.my_role === myRole && r.other_role === otherRole
   )
-  if (!entry) return '—'
+  if (!entry) return '·'
   return `${entry.winrate}%`
 }
 
@@ -1751,9 +2073,9 @@ const fetchPredictionStats = async () => {
   } catch {}
 }
 
-const ROLE_ORDER = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY']
-const ROLE_LABEL: Record<string, string> = {
-  TOP: 'TOP', JUNGLE: 'JNG', MIDDLE: 'MID', BOTTOM: 'ADC', UTILITY: 'SUP'
+const spellIconUrl = (id?: number) => {
+  if (!id || !SUMMONER_SPELLS[id]) return ''
+  return `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion.value}/img/spell/${SUMMONER_SPELLS[id]}.png`
 }
 
 const blacklistedInTeam = computed(() => {
@@ -1789,8 +2111,11 @@ const laneMatchups = computed(() => {
 
 const matchPrediction = computed(() => {
   if (!matchDetail.value) return { blueSum: 0, redSum: 0, winner: 'tie', correct: false }
-  const blueSum = matchDetail.value.team_blue.reduce((s: number, p: any) => s + (p.tumor_score ?? 0), 0)
-  const redSum = matchDetail.value.team_red.reduce((s: number, p: any) => s + (p.tumor_score ?? 0), 0)
+  // Usa prior_tumor_score (score pre-partida) para que sea una predicción real,
+  // no un análisis post-mortem. Fallback al tumor de la propia partida si falta.
+  const pick = (p: any) => p.prior_tumor_score ?? p.tumor_score ?? 0
+  const blueSum = matchDetail.value.team_blue.reduce((s: number, p: any) => s + pick(p), 0)
+  const redSum = matchDetail.value.team_red.reduce((s: number, p: any) => s + pick(p), 0)
   const diff = Math.abs(blueSum - redSum)
   let winner: 'blue' | 'red' | 'tie' = 'tie'
   if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
@@ -1801,9 +2126,20 @@ const matchPrediction = computed(() => {
 
 const livePrediction = computed(() => {
   if (!liveGame.value) return { blueSum: 0, redSum: 0, winner: 'tie', confidence: 0 }
-  const blue = liveGame.value.players.filter(p => p.team_id === 100)
-  const red = liveGame.value.players.filter(p => p.team_id === 200)
-  const sum = (arr: LivePlayer[]) => arr.reduce((s, p) => s + (p.avg_tumor_score ?? 0), 0)
+  // Preferir la predicción que el backend calcula con el modelo nuevo
+  // (role/volume weighted, elo-normalized). Fallback a suma simple.
+  const p = liveGame.value.prediction
+  if (p) {
+    return {
+      blueSum: Math.round(p.blue_sum),
+      redSum: Math.round(p.red_sum),
+      winner: p.winner,
+      confidence: p.confidence,
+    }
+  }
+  const blue = liveGame.value.players.filter(x => x.team_id === 100)
+  const red = liveGame.value.players.filter(x => x.team_id === 200)
+  const sum = (arr: LivePlayer[]) => arr.reduce((s, x) => s + (x.avg_tumor_score ?? 0), 0)
   const blueSum = sum(blue)
   const redSum = sum(red)
   const diff = Math.abs(blueSum - redSum)
@@ -1818,21 +2154,213 @@ const liveLoading = ref(false)
 const liveError = ref('')
 const showLiveGame = ref(false)
 
+// Notifications
+interface Notification {
+  id: string
+  icon: string
+  title: string
+  body: string
+  at: number
+  match_id?: string
+  correct?: boolean
+}
+const notifications = ref<Notification[]>([])
+const showNotifications = ref(false)
+const notifSeen = ref<Set<string>>(new Set(
+  (localStorage.getItem('zuruweb-notif-seen') || '').split(',').filter(Boolean)
+))
+
+const pushNotification = (n: Omit<Notification, 'at'>) => {
+  if (notifSeen.value.has(n.id)) return
+  if (notifications.value.find(x => x.id === n.id)) return
+  notifications.value = [{ ...n, at: Date.now() }, ...notifications.value].slice(0, 20)
+}
+
+const markAllRead = () => {
+  const newSeen = new Set(notifSeen.value)
+  for (const n of notifications.value) newSeen.add(n.id)
+  notifSeen.value = newSeen
+  localStorage.setItem('zuruweb-notif-seen', Array.from(newSeen).join(','))
+  notifications.value = []
+}
+
+const dismissNotification = (id: string) => {
+  notifSeen.value.add(id)
+  localStorage.setItem('zuruweb-notif-seen', Array.from(notifSeen.value).join(','))
+  notifications.value = notifications.value.filter(n => n.id !== id)
+}
+
+const openNotification = (n: Notification) => {
+  if (n.match_id) {
+    openMatchDetail(n.match_id)
+  }
+  dismissNotification(n.id)
+}
+
+const unreadNotifCount = computed(() => notifications.value.length)
+
+// Bromas sobre campeones para las notificaciones
+const CHAMPION_JOKES_HIT = [
+  (c: string) => `Lo dije: ${c} iba a estar inting.`,
+  (c: string) => `Ese ${c} llevaba el aura de tumor escrita en la frente.`,
+  (c: string) => `Spoiler alert: ${c} no sabía ni los cooldowns.`,
+  (c: string) => `${c} olvidó que tenía keyboard. El modelo no.`,
+  (c: string) => `Confirmado, ${c} fue el paciente cero de la partida.`,
+  (c: string) => `${c} jugando así debería pagar una cuota al seguro médico.`,
+]
+const CHAMPION_JOKES_MISS = [
+  (c: string) => `Error de cálculo: ${c} tuvo un día lúcido.`,
+  (c: string) => `Por una vez, ${c} no era el problema. Shock.`,
+  (c: string) => `${c} se puso serio y el modelo se cayó del stack.`,
+  (c: string) => `Felicitaciones a ${c} por trolear al predictor.`,
+  (c: string) => `¿Quién iba a pensar que ${c} iba a funcionar? No yo.`,
+]
+
+const pickJoke = (champion: string, correct: boolean): string => {
+  const arr = correct ? CHAMPION_JOKES_HIT : CHAMPION_JOKES_MISS
+  const fn = arr[Math.floor(Math.random() * arr.length)]
+  return fn(champion || 'ese tío')
+}
+
+// Dado un match_id busca el peor champion (mayor tumor) del equipo perdedor
+const fetchWorstChampion = async (matchId: string): Promise<string> => {
+  try {
+    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
+    if (!res.ok) return ''
+    const data = await res.json()
+    const losingBlue = !data.blue_win
+    const losers = losingBlue ? data.team_blue : data.team_red
+    if (!Array.isArray(losers) || !losers.length) return ''
+    const worst = losers.reduce((a: any, b: any) =>
+      ((b.tumor_score ?? 0) > (a.tumor_score ?? 0) ? b : a), losers[0])
+    return worst?.campeon || ''
+  } catch {
+    return ''
+  }
+}
+
+// Global poller: cada 60s revalida predicciones pendientes y lanza notificaciones.
+let globalPollerId: ReturnType<typeof setInterval> | null = null
+const startGlobalPoller = () => {
+  if (globalPollerId) return
+  const tick = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/predictionStats')
+      if (!res.ok) return
+      const data = await res.json()
+      predictionStats.value = data
+      if (!Array.isArray(data.recent)) return
+      // Procesa cada predicción resuelta recientemente. El id es el match_id,
+      // así que notifSeen deduplica por partida — aunque el poller vuelva a
+      // encontrar la misma, no se vuelve a añadir.
+      for (const entry of data.recent) {
+        if (entry?.correct === undefined || !entry?.match_id) continue
+        const id = `pred-${entry.match_id}`
+        if (notifSeen.value.has(id)) continue
+        if (notifications.value.find(x => x.id === id)) continue
+        const correct = !!entry.correct
+        // Fetch worst champion async y luego empuja la notificación con el chiste.
+        fetchWorstChampion(entry.match_id).then(champ => {
+          pushNotification({
+            id,
+            icon: correct ? '✅' : '❌',
+            title: correct ? 'Predicción acertada' : 'Predicción fallada',
+            body: pickJoke(champ, correct),
+            match_id: entry.match_id,
+            correct,
+          })
+        })
+      }
+    } catch {}
+  }
+  tick()
+  globalPollerId = setInterval(tick, 60000)
+}
+const stopGlobalPoller = () => {
+  if (globalPollerId) {
+    clearInterval(globalPollerId)
+    globalPollerId = null
+  }
+}
+
+const liveProgress = ref({ step: '', progress: 0, total: 1 })
+let liveAbort = false
+
+const resolveResult = ref<{ predicted: string, actual: string, correct: boolean } | null>(null)
+const resolving = ref(false)
+
+const resolveLivePrediction = async () => {
+  if (!liveGame.value?.match_id || !liveGame.value?.viewer_puuid) return
+  resolving.value = true
+  resolveResult.value = null
+  try {
+    const res = await fetch('http://localhost:5000/resolvePrediction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        match_id: liveGame.value.match_id,
+        viewer_puuid: liveGame.value.viewer_puuid,
+      }),
+    })
+    const data = await res.json()
+    if (res.ok && data.resolved) {
+      resolveResult.value = {
+        predicted: data.predicted_winner,
+        actual: data.actual_winner,
+        correct: data.correct,
+      }
+      fetchPredictionStats()
+    } else {
+      resolveResult.value = null
+    }
+  } catch {
+    resolveResult.value = null
+  } finally {
+    resolving.value = false
+  }
+}
+
+
 const searchLiveGame = async () => {
   showLiveGame.value = true
   liveLoading.value = true
   liveError.value = ''
   liveGame.value = null
+  liveProgress.value = { step: 'Iniciando...', progress: 0, total: 10 }
+  liveAbort = false
   fetchPredictionStats()
   try {
-    const params = new URLSearchParams({
-      game_name: summoner.value.split('#')[0],
-      tag_line: summoner.value.split('#')[1],
+    const startRes = await fetch('http://localhost:5000/liveGame/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_name: summoner.value.split('#')[0],
+        tag_line: summoner.value.split('#')[1],
+      }),
     })
-    const res = await fetch(`http://localhost:5000/liveGame?${params}`)
-    const data = await res.json()
-    if (!res.ok || data.error) throw new Error(data.error || 'Error')
-    liveGame.value = data
+    const startData = await startRes.json()
+    if (!startRes.ok || startData.error) throw new Error(startData.error || 'Error')
+    const jobId = startData.job_id
+
+    // Poll every 600ms
+    while (!liveAbort) {
+      await new Promise(r => setTimeout(r, 600))
+      const pRes = await fetch(`http://localhost:5000/liveGame/progress/${jobId}`)
+      if (!pRes.ok) continue
+      const pData = await pRes.json()
+      liveProgress.value = {
+        step: pData.step || '',
+        progress: pData.progress || 0,
+        total: pData.total || 1,
+      }
+      if (pData.status === 'done') {
+        liveGame.value = pData.result
+        return
+      }
+      if (pData.status === 'error') {
+        throw new Error(pData.error || 'Error procesando partida')
+      }
+    }
   } catch (err) {
     liveError.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -1841,6 +2369,7 @@ const searchLiveGame = async () => {
 }
 
 const closeLiveGame = () => {
+  liveAbort = true
   showLiveGame.value = false
   liveGame.value = null
   liveError.value = ''
@@ -1885,6 +2414,7 @@ const logout = () => {
   alerts.value = []
   watchList.value = []
   formData.value = { gameName: '', tagLine: '' }
+  stopGlobalPoller()
   history.replaceState(null, '', window.location.pathname)
 }
 
@@ -1901,26 +2431,8 @@ watch([loadingDetail, analyticsLoading], ([a, b]) => {
   }
 })
 
-const tierColor: Record<string, string> = {
-  IRON: 'text-[#8a7462]', BRONZE: 'text-[#a0522d]', SILVER: 'text-[#a0a9b0]',
-  GOLD: 'text-[#c89b3c]', PLATINUM: 'text-[#4e9e8a]', EMERALD: 'text-[#2ecc71]',
-  DIAMOND: 'text-[#7ec8e3]', MASTER: 'text-[#c45cff]', GRANDMASTER: 'text-[#ff4444]',
-  CHALLENGER: 'text-[#f4c542]', UNRANKED: 'text-white/40',
-}
-
-const tumorColor = (score: number) => {
-  if (score >= 75) return 'text-red-500'
-  if (score >= 50) return 'text-orange-400'
-  if (score >= 25) return 'text-yellow-400'
-  return 'text-green-400'
-}
-
-const tumorLabel = (score: number) => {
-  if (score >= 75) return '☢ NUCLEAR'
-  if (score >= 50) return '☣ TUMOR'
-  if (score >= 25) return '⚠ SUS'
-  return '✓ DECENTE'
-}
+// tierColor / tumorColor / tumorLabel importados de overviewConstants.ts (alias)
+const tierColor = TIER_COLORS
 
 const delta = (val: number, avg: number, higherIsBetter = true) => {
   const d = val - avg
@@ -2145,6 +2657,12 @@ const delta = (val: number, avg: number, higherIsBetter = true) => {
   background-size: 200% 100%;
   animation: shimmer 1.6s ease-in-out infinite;
 }
+
+/* Excuse toast transition: slide+fade, salida más larga */
+.excuse-enter-active { transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+.excuse-leave-active { transition: opacity 0.7s ease, transform 0.7s ease; }
+.excuse-enter-from   { opacity: 0; transform: translateX(30px) scale(0.9); }
+.excuse-leave-to     { opacity: 0; transform: translateX(30px) scale(0.95); }
 
 /* Modal transition */
 .modal-enter-active { transition: opacity 0.2s ease; }
