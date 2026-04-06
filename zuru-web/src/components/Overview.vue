@@ -5,19 +5,30 @@
     <!-- X-Ray scanning overlay -->
     <Transition name="xray">
       <div v-if="scanning" class="xray-overlay absolute inset-0 z-50 flex flex-col items-center justify-center overflow-hidden">
+        <div class="xray-noise"></div>
+        <div class="xray-scanlines"></div>
         <div class="scan-line"></div>
         <div class="scan-line-glow"></div>
+        <!-- Floating particles -->
+        <div v-for="i in 24" :key="`pt${i}`" class="xray-particle"
+          :style="{
+            left: `${(i * 37) % 100}%`,
+            animationDelay: `${(i * 0.13) % 2}s`,
+            animationDuration: `${3 + (i % 4)}s`
+          }"></div>
 
-        <div class="relative z-10 text-center select-none">
+        <div class="relative z-10 text-center select-none px-8">
           <p class="xray-label text-xs font-mono mb-6 tracking-[0.4em] text-cyan-300/60">HOSPITAL ZURUWEB · ONCOLOGÍA</p>
-          <p class="xray-title font-mono text-3xl font-bold tracking-widest text-white mb-2">ESCANEANDO</p>
+          <p class="xray-title glitch font-mono text-3xl font-bold tracking-widest text-white mb-2" data-text="ESCANEANDO">ESCANEANDO</p>
           <p class="xray-name font-mono text-cyan-400 text-xl tracking-widest mb-8">
-            {{ formData.gameName }}<span class="text-cyan-300/50">#{{ formData.tagLine }}</span>
+            {{ formData.gameName || summoner.split('#')[0] }}<span class="text-cyan-300/50">#{{ formData.tagLine || summoner.split('#')[1] }}</span>
           </p>
           <div class="flex gap-2 justify-center">
             <span v-for="i in 3" :key="i" class="xray-dot" :style="{ animationDelay: `${(i - 1) * 0.3}s` }"></span>
           </div>
-          <p class="xray-label text-[10px] font-mono mt-8 tracking-[0.3em] text-cyan-300/40">DETECTANDO TEJIDOS CANCERÍGENOS...</p>
+          <p class="xray-label text-[11px] font-mono mt-8 tracking-[0.2em] text-cyan-300/60 min-h-[16px] transition-opacity" :key="scanMessage">
+            {{ scanMessage }}
+          </p>
         </div>
 
         <!-- Corner marks (medical/film style) -->
@@ -125,6 +136,14 @@
             class="px-3 py-2 text-sm border rounded-lg transition font-mono">
             {{ isSaved ? '⭐ Guardada' : '☆ Guardar' }}
           </button>
+          <button @click="rollExcuse"
+            class="px-3 py-2 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono">
+            🎲 Excusa
+          </button>
+          <button @click="openAnalytics" :disabled="analyticsLoading"
+            class="px-3 py-2 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30">
+            📊 {{ analyticsLoading ? 'Analizando...' : 'Analíticas' }}
+          </button>
           <button @click="searchLiveGame" :disabled="liveLoading"
             class="px-3 py-2 text-sm text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30">
             <span class="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 align-middle"></span>{{ liveLoading ? 'Buscando...' : 'En directo' }}
@@ -132,6 +151,11 @@
           <button @click="refresh" :disabled="loading"
             class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30">
             {{ loading ? '↻' : '↻' }} Refrescar
+          </button>
+          <button @click="shareProfile"
+            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono"
+            :title="'Copiar URL del perfil'">
+            🔗 {{ shareCopied ? 'Copiado!' : 'Compartir' }}
           </button>
           <button @click="logout"
             class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
@@ -525,7 +549,19 @@
 
           <!-- Loading -->
           <div v-if="loadingDetail" class="flex items-center justify-center py-16">
-            <p class="text-white/40 font-mono text-sm animate-pulse">Cargando scorecard...</p>
+            <div class="w-full max-w-md px-6">
+              <p class="text-white/50 font-mono text-xs text-center mb-5 animate-pulse" :key="loadingFlavor">{{ loadingFlavor }}</p>
+              <div class="space-y-2">
+                <div v-for="n in 5" :key="n" class="flex items-center gap-3 bg-white/5 rounded-lg p-3">
+                  <div class="w-9 h-9 rounded-lg bg-white/10 shimmer"></div>
+                  <div class="flex-1 space-y-1.5">
+                    <div class="h-2.5 bg-white/10 rounded shimmer" :style="{ width: `${55 + (n*7)%35}%` }"></div>
+                    <div class="h-2 bg-white/5 rounded shimmer" :style="{ width: `${30 + (n*11)%30}%` }"></div>
+                  </div>
+                  <div class="w-10 h-6 bg-white/10 rounded shimmer"></div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Scorecard -->
@@ -630,6 +666,13 @@
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
               <p class="text-white font-mono font-bold">Partida en directo · Predicción de tumor</p>
+              <div v-if="predictionStats && predictionStats.total > 0"
+                class="flex items-center gap-1.5 bg-[#c89b3c]/10 border border-[#c89b3c]/30 px-2.5 py-1 rounded-lg">
+                <span class="text-[9px] font-mono text-white/50 tracking-widest">ACIERTO GLOBAL</span>
+                <span :class="predictionStats.accuracy >= 60 ? 'text-green-400' : predictionStats.accuracy >= 50 ? 'text-yellow-400' : 'text-red-400'"
+                  class="text-xs font-mono font-bold">{{ predictionStats.accuracy }}%</span>
+                <span class="text-white/30 text-[9px] font-mono">({{ predictionStats.correct }}/{{ predictionStats.total }})</span>
+              </div>
             </div>
             <button @click="closeLiveGame" class="text-white/40 hover:text-white text-xl transition">✕</button>
           </div>
@@ -647,6 +690,18 @@
             <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">
               Tumor score promedio basado en últimas rankeds de cada jugador
             </p>
+
+            <!-- Blacklist warning -->
+            <div v-if="blacklistedInTeam.length"
+              class="mb-3 flex items-center gap-3 bg-red-950/40 border border-red-500/40 rounded-xl px-4 py-2.5 animate-pulse">
+              <span class="text-2xl">🚫</span>
+              <div class="flex-1">
+                <p class="text-red-300 font-mono text-sm font-bold">Champ en blacklist en tu equipo</p>
+                <p class="text-red-400/70 text-[11px] font-mono">
+                  {{ blacklistedInTeam.map(p => p.champion_name).join(', ') }} — históricamente pierdes con estos picks
+                </p>
+              </div>
+            </div>
 
             <!-- Win prediction -->
             <div class="grid grid-cols-3 gap-3 mb-4 items-center">
@@ -673,6 +728,32 @@
               </div>
             </div>
 
+            <!-- Lane matchups -->
+            <div v-if="laneMatchups.length" class="mb-4 bg-black/20 border border-white/10 rounded-xl p-3">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">⚔ MATCHUPS POR LÍNEA</p>
+              <div class="space-y-1.5">
+                <div v-for="m in laneMatchups" :key="m.role"
+                  class="grid grid-cols-[44px_1fr_50px_1fr] gap-2 items-center text-[11px] font-mono">
+                  <span class="text-white/50 text-[10px] font-bold text-center">{{ ROLE_LABEL[m.role] || m.role.slice(0,3) }}</span>
+                  <div class="flex items-center gap-2 justify-end min-w-0"
+                    :class="m.edge === 'blue' ? 'text-blue-300' : m.edge === 'red' ? 'text-white/40' : 'text-white/60'">
+                    <span class="truncate text-[10px]">{{ m.blue.nombre.split('#')[0] }}</span>
+                    <span :class="tumorColor(m.blue.avg_tumor_score ?? 0)" class="font-bold w-6 text-right">{{ m.blue.avg_tumor_score ?? '?' }}</span>
+                  </div>
+                  <div class="text-center">
+                    <span v-if="m.edge === 'blue'" class="text-blue-400">◀</span>
+                    <span v-else-if="m.edge === 'red'" class="text-red-400">▶</span>
+                    <span v-else class="text-white/20">=</span>
+                  </div>
+                  <div class="flex items-center gap-2 min-w-0"
+                    :class="m.edge === 'red' ? 'text-red-300' : m.edge === 'blue' ? 'text-white/40' : 'text-white/60'">
+                    <span :class="tumorColor(m.red.avg_tumor_score ?? 0)" class="font-bold w-6">{{ m.red.avg_tumor_score ?? '?' }}</span>
+                    <span class="truncate text-[10px]">{{ m.red.nombre.split('#')[0] }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="grid grid-cols-2 gap-4">
               <!-- Blue team -->
               <div>
@@ -685,9 +766,20 @@
                       :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
                       class="w-12 h-12 rounded-lg border border-white/20" />
                     <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <p class="text-white text-sm font-mono truncate">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
+                        <p class="text-white text-sm font-mono truncate" :class="p.is_watched ? 'text-red-300' : ''">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                        <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
+                          class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
+                        <span v-if="p.duo_group"
+                          title="Posible duo detectado en partidas recientes"
+                          class="text-[9px] font-mono font-bold bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 px-1.5 py-0.5 rounded">DUO {{ p.duo_group }}</span>
+                        <button @click.stop="toggleBlacklist(p.champion_name)" :title="championBlacklist.includes(p.champion_name) ? 'Quitar de blacklist' : 'Añadir a blacklist'"
+                          class="text-[9px] font-mono px-1 py-0.5 rounded border transition"
+                          :class="championBlacklist.includes(p.champion_name) ? 'bg-red-500/20 border-red-400/40 text-red-300' : 'border-white/10 text-white/30 hover:text-red-300 hover:border-red-500/40'">
+                          {{ championBlacklist.includes(p.champion_name) ? '🚫' : '+' }}
+                        </button>
                       </div>
                       <div class="flex items-center gap-2 flex-wrap">
                         <p :class="tierColor[p.tier] ?? 'text-white/40'" class="text-[10px] font-mono">{{ p.tier }} {{ p.division }}</p>
@@ -721,9 +813,20 @@
                       :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
                       class="w-12 h-12 rounded-lg border border-white/20" />
                     <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <p class="text-white text-sm font-mono truncate">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
+                        <p class="text-white text-sm font-mono truncate" :class="p.is_watched ? 'text-red-300' : ''">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</p>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                        <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
+                          class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
+                        <span v-if="p.duo_group"
+                          title="Posible duo detectado en partidas recientes"
+                          class="text-[9px] font-mono font-bold bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 px-1.5 py-0.5 rounded">DUO {{ p.duo_group }}</span>
+                        <button @click.stop="toggleBlacklist(p.champion_name)" :title="championBlacklist.includes(p.champion_name) ? 'Quitar de blacklist' : 'Añadir a blacklist'"
+                          class="text-[9px] font-mono px-1 py-0.5 rounded border transition"
+                          :class="championBlacklist.includes(p.champion_name) ? 'bg-red-500/20 border-red-400/40 text-red-300' : 'border-white/10 text-white/30 hover:text-red-300 hover:border-red-500/40'">
+                          {{ championBlacklist.includes(p.champion_name) ? '🚫' : '+' }}
+                        </button>
                       </div>
                       <div class="flex items-center gap-2 flex-wrap">
                         <p :class="tierColor[p.tier] ?? 'text-white/40'" class="text-[10px] font-mono">{{ p.tier }} {{ p.division }}</p>
@@ -752,11 +855,194 @@
       </div>
     </Transition>
 
+    <!-- Excuse toast -->
+    <Transition name="modal">
+      <div v-if="excuseText" class="fixed top-6 right-6 z-[60] max-w-sm animate-fade">
+        <div class="bg-gradient-to-br from-yellow-900/90 to-amber-950/90 border border-yellow-500/50 rounded-xl shadow-2xl p-4 backdrop-blur">
+          <div class="flex items-start gap-3">
+            <span class="text-2xl">🗣</span>
+            <div class="flex-1">
+              <p class="text-yellow-300 text-[10px] font-mono tracking-widest mb-1">EXCUSA OFICIAL</p>
+              <p class="text-yellow-100 font-mono text-sm leading-snug">{{ excuseText }}</p>
+              <div class="flex gap-2 mt-3">
+                <button @click="rollExcuse" class="text-[10px] font-mono px-2 py-1 border border-yellow-500/30 text-yellow-300 rounded hover:border-yellow-500/60">🎲 Otra</button>
+                <button @click="excuseText = ''" class="text-[10px] font-mono px-2 py-1 border border-white/10 text-white/40 rounded hover:text-white/70">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Analytics modal -->
+    <Transition name="modal">
+      <div v-if="showAnalytics" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        @click.self="closeAnalytics">
+        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0d1b2a]/95 backdrop-blur z-10">
+            <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
+            <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
+          </div>
+
+          <div v-if="analyticsLoading" class="flex items-center justify-center py-16">
+            <div class="w-full max-w-2xl px-6 py-8">
+              <p class="text-white/50 font-mono text-xs text-center mb-6 animate-pulse" :key="loadingFlavor">{{ loadingFlavor }}</p>
+              <div class="space-y-5">
+                <div class="bg-white/5 rounded-xl p-5 h-24 shimmer"></div>
+                <div class="bg-white/5 rounded-xl p-5 h-40 shimmer"></div>
+                <div class="grid grid-cols-3 gap-3">
+                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
+                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
+                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="analyticsError" class="py-16 text-center">
+            <p class="text-red-400 font-mono text-sm">{{ analyticsError }}</p>
+          </div>
+          <div v-else-if="analyticsData" class="p-6 space-y-8">
+
+            <!-- Weekly comparison -->
+            <section v-if="analyticsData.week_stats.this || analyticsData.week_stats.last">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">📅 COMPARATIVA SEMANAL</p>
+              <div class="grid grid-cols-2 gap-4">
+                <div v-for="(w, label) in { 'Esta semana': analyticsData.week_stats.this, 'Semana pasada': analyticsData.week_stats.last }" :key="label"
+                  class="bg-black/30 border border-white/10 rounded-xl p-4">
+                  <p class="text-white/40 text-[10px] font-mono tracking-widest">{{ label }}</p>
+                  <div v-if="w" class="flex items-end gap-4 mt-2">
+                    <div>
+                      <p class="text-white text-2xl font-mono font-black">{{ w.games }}</p>
+                      <p class="text-white/30 text-[9px] font-mono">partidas</p>
+                    </div>
+                    <div>
+                      <p :class="w.winrate >= 50 ? 'text-green-400' : 'text-red-400'" class="text-2xl font-mono font-black">{{ w.winrate }}%</p>
+                      <p class="text-white/30 text-[9px] font-mono">WR ({{ w.wins }}W)</p>
+                    </div>
+                    <div>
+                      <p :class="tumorColor(w.avg_tumor)" class="text-2xl font-mono font-black">{{ w.avg_tumor }}</p>
+                      <p class="text-white/30 text-[9px] font-mono">tumor medio</p>
+                    </div>
+                  </div>
+                  <p v-else class="text-white/30 text-xs font-mono mt-3">Sin partidas</p>
+                </div>
+              </div>
+              <p v-if="weekDelta" class="text-white/40 text-xs font-mono mt-3">
+                <span :class="weekDelta.better ? 'text-green-400' : 'text-red-400'">
+                  {{ weekDelta.better ? '↓' : '↑' }} {{ Math.abs(weekDelta.pct) }}% de tumor vs semana pasada
+                </span>
+                — {{ weekDelta.better ? 'vas mejorando' : 'vas peor' }}
+              </p>
+            </section>
+
+            <!-- Tumor evolution line chart (SVG) -->
+            <section v-if="analyticsData.evolution.length > 1">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">📈 EVOLUCIÓN DEL TUMOR SCORE</p>
+              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
+                <svg :viewBox="`0 0 600 180`" class="w-full h-44">
+                  <!-- gridlines -->
+                  <line v-for="y in [0, 25, 50, 75, 100]" :key="y"
+                    :x1="30" :x2="590" :y1="160 - y * 1.4" :y2="160 - y * 1.4"
+                    stroke="rgba(255,255,255,0.07)" stroke-width="1" />
+                  <text v-for="y in [0, 25, 50, 75, 100]" :key="`t${y}`"
+                    :x="5" :y="164 - y * 1.4" fill="rgba(255,255,255,0.25)" font-size="9" font-family="monospace">{{ y }}</text>
+                  <!-- area -->
+                  <path :d="evolutionAreaPath" fill="url(#tumorGradient)" />
+                  <defs>
+                    <linearGradient id="tumorGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="rgba(239,68,68,0.4)" />
+                      <stop offset="100%" stop-color="rgba(239,68,68,0)" />
+                    </linearGradient>
+                  </defs>
+                  <!-- line -->
+                  <polyline :points="evolutionLinePoints" fill="none" stroke="#f87171" stroke-width="1.8" />
+                  <!-- dots -->
+                  <circle v-for="(pt, i) in evolutionPoints" :key="i" :cx="pt.x" :cy="pt.y" r="3"
+                    :fill="pt.win ? '#4ade80' : '#f87171'" stroke="#0d1b2a" stroke-width="1">
+                    <title>{{ pt.champion }} · {{ pt.win ? 'WIN' : 'LOSS' }} · tumor {{ pt.tumor }}</title>
+                  </circle>
+                </svg>
+                <p class="text-white/30 text-[9px] font-mono mt-1">Verde = win · Rojo = loss · Eje Y = tumor score</p>
+              </div>
+            </section>
+
+            <!-- Horario tóxico -->
+            <section v-if="analyticsData.hour_stats.length">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🕒 HORARIO TÓXICO</p>
+              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
+                <div class="flex items-end gap-1 h-32">
+                  <div v-for="h in analyticsData.hour_stats" :key="h.hour"
+                    class="flex-1 flex flex-col items-center gap-1 group relative">
+                    <div class="w-full rounded-t transition"
+                      :class="h.winrate >= 60 ? 'bg-green-500/60' : h.winrate >= 50 ? 'bg-yellow-500/60' : 'bg-red-500/60'"
+                      :style="{ height: `${Math.max(6, h.avg_tumor * 1.2)}%` }"></div>
+                    <span class="text-white/40 text-[9px] font-mono">{{ String(h.hour).padStart(2, '0') }}h</span>
+                    <div class="hidden group-hover:block absolute bottom-full mb-1 bg-black/90 border border-white/20 rounded px-2 py-1 text-[9px] font-mono text-white whitespace-nowrap z-10">
+                      {{ h.games }}g · {{ h.winrate }}% WR · tumor {{ h.avg_tumor }}
+                    </div>
+                  </div>
+                </div>
+                <p class="text-white/30 text-[9px] font-mono mt-2">Altura = tumor medio · Color = winrate</p>
+              </div>
+            </section>
+
+            <!-- Heatmap de roles -->
+            <section v-if="analyticsData.role_combo_stats.length">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🎯 COMBOS DE ROLES (TÚ × COMPAÑERO)</p>
+              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
+                <p class="text-white/30 text-[9px] font-mono mb-2">Filas = tu rol · Columnas = rol del compañero</p>
+                <table class="mx-auto text-[11px] font-mono border-separate border-spacing-1">
+                  <thead>
+                    <tr>
+                      <th class="w-12"></th>
+                      <th v-for="r in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="r"
+                        class="text-white/40 font-bold w-14 h-7 text-center">{{ r.slice(0,3) }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="my in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="my">
+                      <td class="text-white/40 font-bold w-12 text-right pr-2">{{ my.slice(0,3) }}</td>
+                      <td v-for="other in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="other"
+                        class="w-14 h-10 text-center rounded font-bold" :style="heatmapCellStyle(my, other)">
+                        {{ heatmapCellText(my, other) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <!-- Dúo ideal -->
+            <section v-if="analyticsData.duo_stats.length">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🤝 ALIADOS RECURRENTES</p>
+              <div class="bg-black/30 border border-white/10 rounded-xl divide-y divide-white/5">
+                <div v-for="(d, i) in analyticsData.duo_stats" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
+                  <span class="text-white/30 text-xs font-mono w-6">#{{ i + 1 }}</span>
+                  <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                    class="w-10 h-10 rounded-lg border border-white/20" />
+                  <div class="flex-1 min-w-0">
+                    <p class="text-white text-sm font-mono truncate">{{ d.nombre }}</p>
+                    <p class="text-white/30 text-[10px] font-mono">{{ d.top_champion }} · {{ d.games }} partidas juntos</p>
+                  </div>
+                  <div class="text-right">
+                    <p :class="d.winrate >= 60 ? 'text-green-400' : d.winrate >= 50 ? 'text-yellow-400' : 'text-red-400'"
+                      class="text-lg font-mono font-black">{{ d.winrate }}%</p>
+                    <p class="text-white/30 text-[9px] font-mono">{{ d.wins }}W/{{ d.games - d.wins }}L</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+          </div>
+        </div>
+      </div>
+    </Transition>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject } from 'vue'
+import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 
 interface TeamAvg {
   kda: number
@@ -893,6 +1179,148 @@ const matches = ref<MatchOverview[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
 const scanning = ref(false)
+
+const LOADING_FLAVORS = [
+  'Abriendo la tumba de partidas perdidas...',
+  'Convenciendo a Riot de que respondan...',
+  'Extrayendo feed del jungla...',
+  'Filtrando excusas de tus aliados...',
+  'Pidiéndole perdón a Riot por spammear la API...',
+  'Detectando si era tu culpa (spoiler: sí)...',
+  'Rescatando KDA de la papelera de reciclaje...',
+  'Traduciendo flame del all chat al español...',
+  'Consultando a Baron Nashor...',
+  'Buscando el botón de "no jugar con randoms"...',
+  'Revisando si había Yasuo en tu team...',
+  'Cargando más tumores que el Chernobyl...',
+  'Pagando el ping con nuestras lágrimas...',
+  'Reconstruyendo el muro que te comió en mid...',
+]
+const loadingFlavor = ref(LOADING_FLAVORS[0])
+
+const EXCUSE_STARTERS = [
+  'Perdí porque',
+  'No fue mi culpa,',
+  'La realidad es que',
+  'Obviamente',
+  'Claramente',
+]
+const EXCUSE_REASONS = [
+  'el jungla estaba AFK en el bush',
+  'mi support era un Teemo con Sunfire',
+  'había lag del servidor (1200 ms fijos)',
+  'mi ADC pusheaba la 1 con 30 de HP',
+  'el mid hizo full AP sobre un Garen',
+  'el top feedeó 0/7 antes del minuto 10',
+  'mi duo me flameó por invocar Ignite',
+  'Riot nerfeó a mi champ en parche no anunciado',
+  'había un smurf en el enemy team',
+  'mi internet se cayó justo en teamfight',
+  'el jungla no gankeó ni una vez',
+  'el support se olvidó las wards en casa',
+  'el chat de mi team estaba en ruso',
+  'mi compañero se comió el blue sin pedir permiso',
+  'el enemigo tenía un Yasuo inmortal',
+  'nadie respondió a mis ? pings en baron',
+  'mi team pickeó 5 AD contra 3 tanques',
+  'el jungla me hizo counterjungle a MI jungla',
+  'mi mouse se desconectó',
+  'Cereza Furiosa tilteó en el minuto 2',
+]
+const EXCUSE_ENDINGS = [
+  'y además hacía mucho calor.',
+  'era imposible ganar.',
+  'y los dioses no me querían.',
+  'así cualquiera pierde.',
+  'y por eso bajé de elo.',
+  'pero bueno, GG WP.',
+  'y yo era el único intentándolo.',
+  '— no tenía sentido insistir.',
+]
+const shareCopied = ref(false)
+const shareProfile = async () => {
+  if (!summoner.value) return
+  const slug = summoner.value.replace('#', '-')
+  const url = `${window.location.origin}${window.location.pathname}#/summoner/${encodeURIComponent(slug)}`
+  try {
+    await navigator.clipboard.writeText(url)
+    shareCopied.value = true
+    setTimeout(() => { shareCopied.value = false }, 1500)
+  } catch {}
+}
+
+const parseHashAndLoad = () => {
+  const hash = window.location.hash || ''
+  const m = hash.match(/^#\/summoner\/(.+)$/)
+  if (!m) return
+  const raw = decodeURIComponent(m[1])
+  // Acepta "Name-TAG" o "Name#TAG"
+  const sep = raw.includes('#') ? '#' : '-'
+  const idx = raw.lastIndexOf(sep)
+  if (idx < 0) return
+  const name = raw.slice(0, idx)
+  const tag = raw.slice(idx + 1)
+  if (!name || !tag) return
+  if (summoner.value === `${name}#${tag}`) return
+  formData.value = { gameName: name, tagLine: tag }
+  login()
+}
+
+onMounted(() => {
+  parseHashAndLoad()
+  window.addEventListener('hashchange', parseHashAndLoad)
+})
+onUnmounted(() => {
+  window.removeEventListener('hashchange', parseHashAndLoad)
+  if (loadingFlavorInterval) clearInterval(loadingFlavorInterval)
+  if (scanInterval) clearInterval(scanInterval)
+})
+
+const excuseText = ref('')
+const rollExcuse = () => {
+  const s = EXCUSE_STARTERS[Math.floor(Math.random() * EXCUSE_STARTERS.length)]
+  const r1 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+  let r2 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+  while (r2 === r1) r2 = EXCUSE_REASONS[Math.floor(Math.random() * EXCUSE_REASONS.length)]
+  const e = EXCUSE_ENDINGS[Math.floor(Math.random() * EXCUSE_ENDINGS.length)]
+  excuseText.value = `${s} ${r1}, también ${r2}, ${e}`
+}
+
+
+const SCAN_MESSAGES = [
+  'DETECTANDO TEJIDOS CANCERÍGENOS...',
+  'MIDIENDO NIVEL DE TILT EN SANGRE...',
+  'CALIBRANDO RADIÁMETRO DE KDA...',
+  'INDEXANDO TROLLS EN BASE DE DATOS...',
+  'DESCARGANDO VERGÜENZA AJENA...',
+  'ANALIZANDO PATRONES DE FEED...',
+  'BUSCANDO YASUOS 0/10 EN MATCH HISTORY...',
+  'CARGANDO EXCUSAS PREDETERMINADAS...',
+  'VERIFICANDO INTEGRIDAD DEL JUNGLER...',
+  'COMPUTANDO DAÑO NO INFLIGIDO...',
+  'ESCANEANDO CHAT POR /ALL ENEMY...',
+  'DETECTANDO PING DE 9999 MS...',
+  'REVISANDO STREAM DE CEREZA FURIOSA...',
+  'CONTANDO MUERTES EN TOWER DIVE...',
+  'IDENTIFICANDO BUILDS DE SOLO AP SOBRE AD...',
+]
+const scanMessage = ref(SCAN_MESSAGES[0])
+let scanInterval: ReturnType<typeof setInterval> | null = null
+
+watch(scanning, (v) => {
+  if (v) {
+    let i = 0
+    scanMessage.value = SCAN_MESSAGES[Math.floor(Math.random() * SCAN_MESSAGES.length)]
+    scanInterval = setInterval(() => {
+      i = (i + 1) % SCAN_MESSAGES.length
+      scanMessage.value = SCAN_MESSAGES[Math.floor(Math.random() * SCAN_MESSAGES.length)]
+    }, 800)
+  } else if (scanInterval) {
+    clearInterval(scanInterval)
+    scanInterval = null
+  }
+})
+
 const hasMore = ref(false)
 const currentStart = ref(0)
 const error = ref('')
@@ -1121,6 +1549,11 @@ const login = async () => {
     alerts.value = data.alerts ?? []
     saveRecent(data.summoner)
     fetchWatchList()
+    fetchBlacklist()
+    const slug = data.summoner.replace('#', '-')
+    if (!window.location.hash.includes(slug)) {
+      history.replaceState(null, '', `#/summoner/${encodeURIComponent(slug)}`)
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -1159,6 +1592,7 @@ interface LivePlayer {
   nombre: string
   champion_id: number
   team_id: number
+  role: string
   tier: string
   division: string
   avg_tumor_score: number | null
@@ -1167,10 +1601,18 @@ interface LivePlayer {
   champion_pct: number
   champion_winrate: number | null
   is_main: boolean
+  is_tilted: boolean
+  recent_losses: number
+  recent_avg_tumor: number
   mastery_points: number
   mastery_level: number
   estimated_games: number
   is_me: boolean
+  is_watched: boolean
+  is_blacklisted: boolean
+  champion_name: string
+  duo_group?: string
+  duo_size?: number
 }
 interface LiveGame {
   game_id: number
@@ -1178,7 +1620,172 @@ interface LiveGame {
   players: LivePlayer[]
 }
 
+interface EvolutionPoint { date: number; tumor: number; win: boolean; champion: string; kda: number }
+interface HourStat { hour: number; games: number; winrate: number; avg_tumor: number }
+interface WeekStat { games: number; wins: number; winrate: number; avg_tumor: number }
+interface DuoStat { puuid: string; nombre: string; games: number; wins: number; winrate: number; top_champion: string }
+interface RoleComboStat { my_role: string; other_role: string; games: number; wins: number; winrate: number }
+interface AnalyticsData {
+  summoner: string
+  tier: string
+  total_matches: number
+  evolution: EvolutionPoint[]
+  hour_stats: HourStat[]
+  week_stats: { this: WeekStat | null; last: WeekStat | null }
+  duo_stats: DuoStat[]
+  role_combo_stats: RoleComboStat[]
+}
+
+const analyticsData = ref<AnalyticsData | null>(null)
+const analyticsLoading = ref(false)
+const analyticsError = ref('')
+const showAnalytics = ref(false)
+
+const openAnalytics = async () => {
+  showAnalytics.value = true
+  analyticsLoading.value = true
+  analyticsError.value = ''
+  analyticsData.value = null
+  try {
+    const params = new URLSearchParams({
+      game_name: summoner.value.split('#')[0],
+      tag_line: summoner.value.split('#')[1],
+      count: '30',
+    })
+    const res = await fetch(`http://localhost:5000/playerAnalytics?${params}`)
+    const data = await res.json()
+    if (!res.ok || data.error) throw new Error(data.error || 'Error')
+    analyticsData.value = data
+  } catch (err) {
+    analyticsError.value = err instanceof Error ? err.message : 'Error desconocido'
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+const closeAnalytics = () => {
+  showAnalytics.value = false
+  analyticsData.value = null
+  analyticsError.value = ''
+}
+
+const weekDelta = computed(() => {
+  const t = analyticsData.value?.week_stats.this
+  const l = analyticsData.value?.week_stats.last
+  if (!t || !l || !l.avg_tumor) return null
+  const pct = Math.round(((t.avg_tumor - l.avg_tumor) / l.avg_tumor) * 100)
+  return { pct, better: pct < 0 }
+})
+
+const evolutionPoints = computed(() => {
+  const ev = analyticsData.value?.evolution ?? []
+  if (!ev.length) return []
+  const n = ev.length
+  return ev.map((e, i) => ({
+    x: 30 + (i / Math.max(1, n - 1)) * 560,
+    y: 160 - e.tumor * 1.4,
+    tumor: e.tumor,
+    win: e.win,
+    champion: e.champion,
+  }))
+})
+
+const evolutionLinePoints = computed(() =>
+  evolutionPoints.value.map(p => `${p.x},${p.y}`).join(' ')
+)
+
+const evolutionAreaPath = computed(() => {
+  const pts = evolutionPoints.value
+  if (pts.length < 2) return ''
+  const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
+  return `${line} L${pts[pts.length - 1].x},160 L${pts[0].x},160 Z`
+})
+
+const heatmapCellStyle = (myRole: string, otherRole: string) => {
+  const entry = analyticsData.value?.role_combo_stats.find(
+    r => r.my_role === myRole && r.other_role === otherRole
+  )
+  if (!entry) return { background: 'rgba(255,255,255,0.02)' }
+  const hue = entry.winrate >= 50 ? 120 : 0
+  const alpha = Math.min(0.6, 0.15 + (Math.abs(entry.winrate - 50) / 50) * 0.5)
+  return { background: `hsla(${hue}, 70%, 40%, ${alpha})`, color: 'white' }
+}
+
+const heatmapCellText = (myRole: string, otherRole: string) => {
+  const entry = analyticsData.value?.role_combo_stats.find(
+    r => r.my_role === myRole && r.other_role === otherRole
+  )
+  if (!entry) return '—'
+  return `${entry.winrate}%`
+}
+
+const championBlacklist = ref<string[]>([])
+
+const fetchBlacklist = async () => {
+  if (!summoner.value) return
+  try {
+    const res = await fetch(`http://localhost:5000/championBlacklist?summoner=${encodeURIComponent(summoner.value)}`)
+    if (res.ok) championBlacklist.value = await res.json()
+  } catch {}
+}
+
+const toggleBlacklist = async (champion: string) => {
+  const method = championBlacklist.value.includes(champion) ? 'DELETE' : 'POST'
+  try {
+    const res = await fetch('http://localhost:5000/championBlacklist', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summoner: summoner.value, champion }),
+    })
+    if (res.ok) championBlacklist.value = await res.json()
+  } catch {}
+}
+
 const liveGame = ref<LiveGame | null>(null)
+const predictionStats = ref<{ total: number, correct: number, accuracy: number, pending: number } | null>(null)
+
+const fetchPredictionStats = async () => {
+  try {
+    const res = await fetch('http://localhost:5000/predictionStats')
+    if (res.ok) predictionStats.value = await res.json()
+  } catch {}
+}
+
+const ROLE_ORDER = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY']
+const ROLE_LABEL: Record<string, string> = {
+  TOP: 'TOP', JUNGLE: 'JNG', MIDDLE: 'MID', BOTTOM: 'ADC', UTILITY: 'SUP'
+}
+
+const blacklistedInTeam = computed(() => {
+  if (!liveGame.value) return []
+  const me = liveGame.value.players.find(p => p.is_me)
+  if (!me) return []
+  return liveGame.value.players.filter(
+    p => p.team_id === me.team_id && !p.is_me && championBlacklist.value.includes(p.champion_name)
+  )
+})
+
+const laneMatchups = computed(() => {
+  if (!liveGame.value) return []
+  const blue = liveGame.value.players.filter(p => p.team_id === 100)
+  const red = liveGame.value.players.filter(p => p.team_id === 200)
+  const byRoleBlue: Record<string, LivePlayer[]> = {}
+  const byRoleRed: Record<string, LivePlayer[]> = {}
+  for (const p of blue) (byRoleBlue[p.role] ||= []).push(p)
+  for (const p of red) (byRoleRed[p.role] ||= []).push(p)
+  return ROLE_ORDER.map(role => {
+    const b = byRoleBlue[role]?.[0]
+    const r = byRoleRed[role]?.[0]
+    if (!b || !r) return null
+    const bScore = b.avg_tumor_score ?? 50
+    const rScore = r.avg_tumor_score ?? 50
+    const diff = bScore - rScore
+    let edge: 'blue' | 'red' | 'tie' = 'tie'
+    if (Math.abs(diff) >= 5) edge = diff < 0 ? 'blue' : 'red'
+    return { role, blue: b, red: r, edge }
+  }).filter((x): x is NonNullable<typeof x> => !!x)
+})
+
 
 const matchPrediction = computed(() => {
   if (!matchDetail.value) return { blueSum: 0, redSum: 0, winner: 'tie', correct: false }
@@ -1216,6 +1823,7 @@ const searchLiveGame = async () => {
   liveLoading.value = true
   liveError.value = ''
   liveGame.value = null
+  fetchPredictionStats()
   try {
     const params = new URLSearchParams({
       game_name: summoner.value.split('#')[0],
@@ -1258,6 +1866,7 @@ const refresh = async () => {
     currentStart.value = data.matches.length
     alerts.value = data.alerts ?? []
     fetchWatchList()
+    fetchBlacklist()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -1276,7 +1885,21 @@ const logout = () => {
   alerts.value = []
   watchList.value = []
   formData.value = { gameName: '', tagLine: '' }
+  history.replaceState(null, '', window.location.pathname)
 }
+
+let loadingFlavorInterval: ReturnType<typeof setInterval> | null = null
+watch([loadingDetail, analyticsLoading], ([a, b]) => {
+  if (a || b) {
+    loadingFlavor.value = LOADING_FLAVORS[Math.floor(Math.random() * LOADING_FLAVORS.length)]
+    loadingFlavorInterval = setInterval(() => {
+      loadingFlavor.value = LOADING_FLAVORS[Math.floor(Math.random() * LOADING_FLAVORS.length)]
+    }, 1800)
+  } else if (loadingFlavorInterval) {
+    clearInterval(loadingFlavorInterval)
+    loadingFlavorInterval = null
+  }
+})
 
 const tierColor: Record<string, string> = {
   IRON: 'text-[#8a7462]', BRONZE: 'text-[#a0522d]', SILVER: 'text-[#a0a9b0]',
@@ -1321,6 +1944,105 @@ const delta = (val: number, avg: number, higherIsBetter = true) => {
 .xray-overlay {
   background: rgba(0, 4, 10, 0.97);
   backdrop-filter: blur(2px);
+}
+
+/* CRT scanlines overlay */
+.xray-scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 255, 255, 0.03) 0px,
+    rgba(0, 255, 255, 0.03) 1px,
+    transparent 2px,
+    transparent 4px
+  );
+  pointer-events: none;
+  z-index: 2;
+  mix-blend-mode: screen;
+}
+
+/* TV noise */
+@keyframes noiseShift {
+  0%   { transform: translate(0, 0); }
+  10%  { transform: translate(-2%, -1%); }
+  20%  { transform: translate(1%, 2%); }
+  30%  { transform: translate(-1%, 1%); }
+  40%  { transform: translate(2%, -2%); }
+  50%  { transform: translate(-2%, 1%); }
+  60%  { transform: translate(1%, -1%); }
+  70%  { transform: translate(-1%, 2%); }
+  80%  { transform: translate(2%, 1%); }
+  90%  { transform: translate(-1%, -2%); }
+  100% { transform: translate(0, 0); }
+}
+.xray-noise {
+  position: absolute;
+  inset: -5%;
+  background-image:
+    radial-gradient(circle, rgba(0, 255, 255, 0.15) 1px, transparent 1px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 3px 3px, 5px 5px;
+  background-position: 0 0, 1px 1px;
+  opacity: 0.35;
+  animation: noiseShift 0.15s steps(6) infinite;
+  pointer-events: none;
+  z-index: 1;
+  mix-blend-mode: screen;
+}
+
+/* Floating particles (cancer cells) */
+@keyframes floatUp {
+  0%   { transform: translateY(100vh) scale(0.4); opacity: 0; }
+  15%  { opacity: 0.7; }
+  85%  { opacity: 0.5; }
+  100% { transform: translateY(-20vh) scale(1); opacity: 0; }
+}
+.xray-particle {
+  position: absolute;
+  bottom: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 255, 255, 0.9), rgba(0, 255, 255, 0));
+  animation: floatUp 4s linear infinite;
+  z-index: 2;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+  pointer-events: none;
+}
+
+/* Glitch text */
+@keyframes glitchX {
+  0%, 100% { transform: translate(0); }
+  20% { transform: translate(-2px, 1px); }
+  40% { transform: translate(2px, -1px); }
+  60% { transform: translate(-1px, 2px); }
+  80% { transform: translate(1px, -2px); }
+}
+.glitch {
+  position: relative;
+  animation: glitchX 2.5s infinite;
+}
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.glitch::before {
+  color: rgba(255, 0, 80, 0.7);
+  transform: translate(-2px, 0);
+  mix-blend-mode: screen;
+  clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
+  animation: glitchX 1.6s infinite reverse;
+}
+.glitch::after {
+  color: rgba(0, 200, 255, 0.75);
+  transform: translate(2px, 0);
+  mix-blend-mode: screen;
+  clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%);
+  animation: glitchX 2.1s infinite;
 }
 
 /* Scanning beam */
@@ -1407,6 +2129,22 @@ const delta = (val: number, avg: number, higherIsBetter = true) => {
 .xray-enter-active { transition: opacity 0.3s ease; }
 .xray-leave-active { transition: opacity 0.6s ease; }
 .xray-enter-from, .xray-leave-to { opacity: 0; }
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.12) 50%,
+    rgba(255,255,255,0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
 
 /* Modal transition */
 .modal-enter-active { transition: opacity 0.2s ease; }

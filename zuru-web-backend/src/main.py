@@ -9,6 +9,33 @@ from config import (
     MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
     LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL
 )
+from riot_infra import riot_get as _riot_get, cache_stats
+
+
+def riot_get(url, max_retries=4):
+    return _riot_get(url, headers=headers, max_retries=max_retries)
+
+
+_champ_id_name_cache = {}
+
+def champ_id_to_name(champ_id):
+    """Resuelve championId → 'Yasuo' usando DDragon (cacheado en memoria)."""
+    if not champ_id:
+        return ""
+    if not _champ_id_name_cache:
+        try:
+            v_res = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=5)
+            version = v_res.json()[0] if v_res.status_code == 200 else "15.1.1"
+            c_res = requests.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json",
+                timeout=5,
+            )
+            if c_res.status_code == 200:
+                for key, info in c_res.json()["data"].items():
+                    _champ_id_name_cache[int(info["key"])] = key
+        except Exception:
+            pass
+    return _champ_id_name_cache.get(int(champ_id), "")
 
 app = Flask(__name__)
 CORS(app)
@@ -40,6 +67,38 @@ RECENT_FILE = os.path.join(os.path.dirname(__file__), "recent_summoners.json")
 LEADERBOARD_FILE = os.path.join(os.path.dirname(__file__), "leaderboard.json")
 SAVED_ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "saved_accounts.json")
 WATCH_LIST_FILE = os.path.join(os.path.dirname(__file__), "watch_list.json")
+PREDICTIONS_FILE = os.path.join(os.path.dirname(__file__), "predictions.json")
+BLACKLIST_FILE = os.path.join(os.path.dirname(__file__), "champion_blacklist.json")
+
+
+def load_blacklist():
+    if not os.path.exists(BLACKLIST_FILE):
+        return {}
+    try:
+        with open(BLACKLIST_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_blacklist(data):
+    with open(BLACKLIST_FILE, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def load_predictions():
+    if not os.path.exists(PREDICTIONS_FILE):
+        return []
+    try:
+        with open(PREDICTIONS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_predictions(data):
+    with open(PREDICTIONS_FILE, "w") as f:
+        json.dump(data, f)
 MAX_RECENT = 10
 
 
@@ -220,7 +279,7 @@ RANK_THRESHOLDS = {
 
 def get_player_rank(puuid):
     """Obtiene el tier SoloQ actual del jugador (e.g. 'GOLD')."""
-    entries_res = requests.get(f"{LEAGUE_ENTRIES_BY_PUUID_URL}/{puuid}", headers=headers)
+    entries_res = riot_get(f"{LEAGUE_ENTRIES_BY_PUUID_URL}/{puuid}")
     if entries_res.status_code != 200:
         return "GOLD", "IV"  # fallback
 
@@ -301,20 +360,20 @@ def get_worst_player_in_match(participants, puuid):
 def get_compare(game_name1, tag_line1, game_name2, tag_line2):
     """Busca partidas comunes entre dos jugadores y compara sus stats."""
     try:
-        acc1_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name1}/{tag_line1}", headers=headers)
+        acc1_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name1}/{tag_line1}")
         if acc1_res.status_code != 200:
             return {"error": f"Error cuenta 1: {acc1_res.text}"}, 400
         acc1 = acc1_res.json()
         puuid1 = acc1["puuid"]
 
-        acc2_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name2}/{tag_line2}", headers=headers)
+        acc2_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name2}/{tag_line2}")
         if acc2_res.status_code != 200:
             return {"error": f"Error cuenta 2: {acc2_res.text}"}, 400
         acc2 = acc2_res.json()
         puuid2 = acc2["puuid"]
 
-        ids1_res = requests.get(f"{MATCHES_BY_PUUID_URL}/{puuid1}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}", headers=headers)
-        ids2_res = requests.get(f"{MATCHES_BY_PUUID_URL}/{puuid2}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}", headers=headers)
+        ids1_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid1}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}")
+        ids2_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid2}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}")
 
         ids1 = set(ids1_res.json() if ids1_res.status_code == 200 else [])
         ids2 = set(ids2_res.json() if ids2_res.status_code == 200 else [])
@@ -324,7 +383,7 @@ def get_compare(game_name1, tag_line1, game_name2, tag_line2):
         score1, score2 = 0, 0  # who was worse more often
 
         for match_id in common:
-            match_res = requests.get(f"{MATCH_DETAILS_URL}/{match_id}", headers=headers)
+            match_res = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
             if match_res.status_code != 200:
                 continue
 
@@ -399,7 +458,7 @@ def get_el_peor(game_name, tag_line):
     try:
         # 1. Obtener PUUID
         account_url = f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}"
-        account_res = requests.get(account_url, headers=headers)
+        account_res = riot_get(account_url)
 
         if account_res.status_code != 200:
             return {"error": f"Error obteniendo cuenta: {account_res.text}"}, 400
@@ -408,7 +467,7 @@ def get_el_peor(game_name, tag_line):
 
         # 2. Obtener últimas rankeds (SoloQ)
         matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
-        matches_res = requests.get(matches_url, headers=headers)
+        matches_res = riot_get(matches_url)
 
         if matches_res.status_code != 200:
             return {"error": f"Error obteniendo partidas: {matches_res.text}"}, 400
@@ -419,7 +478,7 @@ def get_el_peor(game_name, tag_line):
         # 3. Procesar cada partida
         for match_id in match_ids:
             match_url = f"{MATCH_DETAILS_URL}/{match_id}"
-            match_res = requests.get(match_url, headers=headers)
+            match_res = riot_get(match_url)
 
             if match_res.status_code != 200:
                 continue
@@ -459,7 +518,7 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
     try:
         # 1. Obtener PUUID
         account_url = f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}"
-        account_res = requests.get(account_url, headers=headers)
+        account_res = riot_get(account_url)
 
         if account_res.status_code != 200:
             return {"error": f"Error obteniendo cuenta: {account_res.text}"}, 400
@@ -475,7 +534,7 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
 
         # 3. Obtener rankeds (SoloQ) desde el offset pedido
         matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start={start}&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
-        matches_res = requests.get(matches_url, headers=headers)
+        matches_res = riot_get(matches_url)
 
         if matches_res.status_code != 200:
             return {"error": f"Error obteniendo partidas: {matches_res.text}"}, 400
@@ -486,7 +545,7 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         # 4. Procesar cada partida
         for match_id in match_ids:
             match_url = f"{MATCH_DETAILS_URL}/{match_id}"
-            match_res = requests.get(match_url, headers=headers)
+            match_res = riot_get(match_url)
 
             if match_res.status_code != 200:
                 continue
@@ -599,18 +658,6 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         return {"error": str(e)}, 500
 
 
-def riot_get(url, max_retries=4):
-    """GET con retry en 429 respetando Retry-After (hasta ~2 min de espera total)."""
-    for attempt in range(max_retries + 1):
-        res = requests.get(url, headers=headers)
-        if res.status_code == 429 and attempt < max_retries:
-            wait = int(res.headers.get("Retry-After", "10"))
-            time.sleep(min(wait, 60))
-            continue
-        return res
-    return res
-
-
 def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_id=None):
     """Tumor score + estadísticas del campeón actual basadas en últimas N partidas (ranked solo o cualquiera)."""
     try:
@@ -628,8 +675,13 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
         total_games = 0
         champion_games = 0
         champion_wins = 0
+        role_counts = {}
+        recent_tumors = []  # últimos 3 tumor scores (para streak)
+        recent_wins = []    # últimos 3 wins (para tilt)
+        recent_match_puuids = []  # por partida: lista de (match_id, teammates_puuids)
 
-        for mid in match_ids:
+        # Match IDs vienen ordenados: más recientes primero.
+        for idx, mid in enumerate(match_ids):
             mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
             if mres.status_code != 200:
                 continue
@@ -646,6 +698,9 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
                 champion_games += 1
                 if p.get("win"):
                     champion_wins += 1
+                role_for_champ = p.get("teamPosition") or ""
+                if role_for_champ:
+                    role_counts[role_for_champ] = role_counts.get(role_for_champ, 0) + 1
 
             stats = {
                 "kda": calculate_kda(p["kills"], p["deaths"], p["assists"]),
@@ -655,22 +710,51 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
                 "time_dead": p["totalTimeSpentDead"],
             }
             role = p.get("teamPosition") or "DEFAULT"
-            scores.append(calculate_tumor_score(stats, game_duration, tier, role))
+            score = calculate_tumor_score(stats, game_duration, tier, role)
+            scores.append(score)
+
+            if len(recent_tumors) < 3:
+                recent_tumors.append(score)
+                recent_wins.append(bool(p.get("win")))
+
+            # para duo detection: compañeros de equipo del puuid en esta partida
+            tm = [x["puuid"] for x in data["info"]["participants"]
+                  if x["teamId"] == p["teamId"] and x["puuid"] != puuid]
+            recent_match_puuids.append(tm)
 
         if not scores:
             return None
 
         champ_pct = round(champion_games / total_games * 100) if total_games else 0
         champ_wr = round(champion_wins / champion_games * 100) if champion_games else None
+        likely_role = max(role_counts, key=role_counts.get) if role_counts else ""
+
+        # Streak / tilt detection
+        # Tilt = últimas 3 partidas con tumor medio >= 50 o 3 losses seguidas
+        recent_losses = sum(1 for w in recent_wins if not w)
+        avg_recent_tumor = sum(recent_tumors) / len(recent_tumors) if recent_tumors else 0
+        is_tilted = (recent_losses >= 3) or (avg_recent_tumor >= 50 and len(recent_tumors) >= 3)
+
+        base_score = round(sum(scores) / len(scores))
+        # Si tiltado, añadir penalización al score predicho
+        adjusted_score = base_score
+        if is_tilted:
+            adjusted_score = min(100, base_score + 15)
 
         return {
-            "score": round(sum(scores) / len(scores)),
+            "score": adjusted_score,
+            "base_score": base_score,
+            "is_tilted": is_tilted,
+            "recent_losses": recent_losses,
+            "recent_avg_tumor": round(avg_recent_tumor),
+            "likely_role": likely_role,
             "champion_games": champion_games,
             "champion_wins": champion_wins,
             "champion_total_sample": total_games,
             "champion_pct": champ_pct,
             "champion_winrate": champ_wr,
             "is_main": champ_pct >= 40,
+            "teammate_history": recent_match_puuids,
         }
     except Exception:
         return None
@@ -683,12 +767,12 @@ def live_game_endpoint():
     if not game_name or not tag_line:
         return jsonify({"error": "Falta game_name y/o tag_line"}), 400
 
-    acc_res = requests.get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}", headers=headers)
+    acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
     if acc_res.status_code != 200:
         return jsonify({"error": "No se pudo obtener la cuenta"}), 400
     me_puuid = acc_res.json()["puuid"]
 
-    spec_res = requests.get(f"{ACTIVE_GAME_URL}/{me_puuid}", headers=headers)
+    spec_res = riot_get(f"{ACTIVE_GAME_URL}/{me_puuid}")
     if spec_res.status_code == 404:
         return jsonify({"error": "El jugador no está en partida ahora mismo"}), 404
     if spec_res.status_code != 200:
@@ -701,6 +785,11 @@ def live_game_endpoint():
     cache_dirty = False
     now = time.time()
 
+    # Watch list + blacklist del viewer
+    viewer_key = f"{game_name}#{tag_line}"
+    watched = set(load_watch_list().get(viewer_key, []))
+    blacklist = set(load_blacklist().get(viewer_key, []))
+
     for p in participants:
         p_puuid = p.get("puuid")
         if not p_puuid:
@@ -712,6 +801,10 @@ def live_game_endpoint():
         if cached and cached["data"].get("avg_tumor_score") is not None and (now - cached.get("ts", 0)) < LIVE_CACHE_TTL:
             entry = dict(cached["data"])
             entry["is_me"] = p_puuid == me_puuid
+            entry["is_watched"] = entry.get("nombre") in watched
+            champ_name = champ_id_to_name(champ_id)
+            entry["is_blacklisted"] = champ_name in blacklist
+            entry["champion_name"] = champ_name
             players.append(entry)
             continue
 
@@ -719,7 +812,7 @@ def live_game_endpoint():
 
         riot_id = p.get("riotId", "")
         if not riot_id:
-            acc2 = requests.get(f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-puuid/{p_puuid}", headers=headers)
+            acc2 = riot_get(f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-puuid/{p_puuid}")
             if acc2.status_code == 200:
                 a = acc2.json()
                 riot_id = f"{a.get('gameName', '?')}#{a.get('tagLine', '?')}"
@@ -731,7 +824,7 @@ def live_game_endpoint():
         mastery_points = 0
         mastery_level = 0
         try:
-            m_res = requests.get(f"{CHAMPION_MASTERY_URL}/{p_puuid}/by-champion/{champ_id}", headers=headers)
+            m_res = riot_get(f"{CHAMPION_MASTERY_URL}/{p_puuid}/by-champion/{champ_id}")
             if m_res.status_code == 200:
                 m = m_res.json()
                 mastery_points = m.get("championPoints", 0)
@@ -744,6 +837,9 @@ def live_game_endpoint():
             "nombre": riot_id,
             "champion_id": champ_id,
             "team_id": p.get("teamId"),
+            "role": (profile.get("likely_role") if profile else "") or (
+                "JUNGLE" if p.get("spell1Id") == 11 or p.get("spell2Id") == 11 else ""
+            ),
             "tier": tier,
             "division": division,
             "avg_tumor_score": profile["score"] if profile else None,
@@ -752,25 +848,370 @@ def live_game_endpoint():
             "champion_pct": profile["champion_pct"] if profile else 0,
             "champion_winrate": profile["champion_winrate"] if profile else None,
             "is_main": profile["is_main"] if profile else False,
+            "is_tilted": profile["is_tilted"] if profile else False,
+            "recent_losses": profile["recent_losses"] if profile else 0,
+            "recent_avg_tumor": profile["recent_avg_tumor"] if profile else 0,
             "mastery_points": mastery_points,
             "mastery_level": mastery_level,
             "estimated_games": round(mastery_points / 1900) if mastery_points else 0,
+            "_teammate_history": profile.get("teammate_history", []) if profile else [],
         }
         if entry["avg_tumor_score"] is not None:
             cache[cache_key] = {"ts": now, "data": entry}
             cache_dirty = True
 
+        champ_name = champ_id_to_name(champ_id)
+        entry["champion_name"] = champ_name
+
         entry_out = dict(entry)
         entry_out["is_me"] = p_puuid == me_puuid
+        entry_out["is_watched"] = riot_id in watched
+        entry_out["is_blacklisted"] = champ_name in blacklist
         players.append(entry_out)
 
     if cache_dirty:
         save_live_cache(cache)
 
+    # Duo detection: para cada equipo, cruza los teammate_history.
+    # Si el puuid de A aparece en la historia de B >=2 veces (y viceversa), son duo.
+    duo_groups = {}  # team_id -> list of sets of puuids
+    for team_id in (100, 200):
+        team_players = [p for p in players if p["team_id"] == team_id]
+        pairs = {}
+        for a in team_players:
+            a_hist = a.get("_teammate_history", [])
+            a_puuid = a["puuid"]
+            for b in team_players:
+                if a["puuid"] >= b["puuid"]:
+                    continue
+                b_puuid = b["puuid"]
+                # contar en cuántas partidas de A aparece B
+                matches_together = sum(1 for tm in a_hist if b_puuid in tm)
+                if matches_together >= 2:
+                    pairs[(a_puuid, b_puuid)] = matches_together
+        duo_groups[team_id] = pairs
+
+    # Asignar etiqueta "duo_group" A/B/C a cada pareja detectada
+    for team_id, pairs in duo_groups.items():
+        groups = []  # lista de sets
+        for (a, b) in pairs:
+            placed = False
+            for g in groups:
+                if a in g or b in g:
+                    g.add(a); g.add(b)
+                    placed = True
+                    break
+            if not placed:
+                groups.append({a, b})
+        labels = ["α", "β", "γ", "δ"]
+        for idx, g in enumerate(groups):
+            label = labels[idx] if idx < len(labels) else f"#{idx+1}"
+            for p in players:
+                if p["puuid"] in g and p["team_id"] == team_id:
+                    p["duo_group"] = label
+                    p["duo_size"] = len(g)
+
+    # limpia campos internos antes de devolver
+    for p in players:
+        p.pop("_teammate_history", None)
+
+    # Record prediction for later validation
+    game_id = game.get("gameId")
+    queue_id = game.get("gameQueueConfigId")
+    platform = "EUW1"  # match ids use this prefix
+    match_id = f"{platform}_{game_id}"
+
+    blue_sum = sum(p["avg_tumor_score"] or 0 for p in players if p["team_id"] == 100)
+    red_sum = sum(p["avg_tumor_score"] or 0 for p in players if p["team_id"] == 200)
+    diff = abs(blue_sum - red_sum)
+    predicted_winner = None
+    if diff >= 5:
+        predicted_winner = "blue" if blue_sum < red_sum else "red"
+
+    me = next((p for p in players if p["is_me"]), None)
+    viewer_team = "blue" if (me and me["team_id"] == 100) else "red" if me else None
+
+    try:
+        preds = load_predictions()
+        if not any(p["match_id"] == match_id and p.get("viewer_puuid") == me_puuid for p in preds):
+            preds.append({
+                "match_id": match_id,
+                "game_id": game_id,
+                "viewer_puuid": me_puuid,
+                "viewer_name": f"{game_name}#{tag_line}",
+                "viewer_team": viewer_team,
+                "blue_sum": blue_sum,
+                "red_sum": red_sum,
+                "predicted_winner": predicted_winner,
+                "created_at": now,
+                "resolved": False,
+                "actual_winner": None,
+                "correct": None,
+            })
+            save_predictions(preds)
+    except Exception:
+        pass
+
     return jsonify({
-        "game_id": game.get("gameId"),
-        "queue_id": game.get("gameQueueConfigId"),
+        "game_id": game_id,
+        "match_id": match_id,
+        "queue_id": queue_id,
         "players": players,
+    })
+
+
+@app.route('/playerAnalytics', methods=['GET'])
+def player_analytics_endpoint():
+    import datetime
+    game_name = request.args.get('game_name')
+    tag_line = request.args.get('tag_line')
+    count = int(request.args.get('count', 30))
+    if not game_name or not tag_line:
+        return jsonify({"error": "Falta game_name y/o tag_line"}), 400
+
+    acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc_res.status_code != 200:
+        return jsonify({"error": "No se pudo obtener la cuenta"}), 400
+    puuid = acc_res.json()["puuid"]
+    tier, _ = get_player_rank(puuid)
+
+    ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={count}&queue={QUEUE_RANKED_SOLO}")
+    if ids_res.status_code != 200:
+        return jsonify({"error": "No se pudieron obtener partidas"}), 400
+    match_ids = ids_res.json()
+
+    evolution = []
+    hour_stats = {}
+    week_buckets = {"this": {"games": 0, "wins": 0, "tumor_sum": 0},
+                    "last": {"games": 0, "wins": 0, "tumor_sum": 0}}
+    role_combo_stats = {}
+    duo_stats = {}
+
+    now_ts = time.time()
+    this_week_start = now_ts - 7 * 86400
+    last_week_start = now_ts - 14 * 86400
+
+    for mid in match_ids:
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
+        if mres.status_code != 200:
+            continue
+        data = mres.json()
+        info = data.get("info", {})
+        if info.get("gameDuration", 0) < 300:
+            continue
+
+        me = next((p for p in info["participants"] if p["puuid"] == puuid), None)
+        if not me:
+            continue
+
+        game_date = info.get("gameCreation", 0) / 1000
+        win = bool(me.get("win"))
+        role = me.get("teamPosition") or "DEFAULT"
+
+        stats = {
+            "kda": calculate_kda(me["kills"], me["deaths"], me["assists"]),
+            "cs": me["totalMinionsKilled"] + me["neutralMinionsKilled"],
+            "damage": me["totalDamageDealtToChampions"],
+            "vision_score": me["visionScore"],
+            "time_dead": me["totalTimeSpentDead"],
+        }
+        tumor = calculate_tumor_score(stats, info["gameDuration"], tier, role)
+
+        evolution.append({
+            "date": game_date,
+            "tumor": tumor,
+            "win": win,
+            "champion": me["championName"],
+            "kda": round(stats["kda"], 2),
+        })
+
+        hour = datetime.datetime.fromtimestamp(game_date).hour
+        h = hour_stats.setdefault(hour, {"games": 0, "wins": 0, "tumor_sum": 0})
+        h["games"] += 1
+        h["wins"] += int(win)
+        h["tumor_sum"] += tumor
+
+        if game_date >= this_week_start:
+            wkey = "this"
+        elif game_date >= last_week_start:
+            wkey = "last"
+        else:
+            wkey = None
+        if wkey:
+            w = week_buckets[wkey]
+            w["games"] += 1
+            w["wins"] += int(win)
+            w["tumor_sum"] += tumor
+
+        teammates = [p for p in info["participants"]
+                     if p["teamId"] == me["teamId"] and p["puuid"] != puuid]
+
+        for t in teammates:
+            name = f"{t.get('riotIdGameName','?')}#{t.get('riotIdTagline','?')}"
+            d = duo_stats.setdefault(t["puuid"], {"name": name, "games": 0, "wins": 0,
+                                                  "champion_counts": {}})
+            d["games"] += 1
+            d["wins"] += int(win)
+            ch = t.get("championName", "?")
+            d["champion_counts"][ch] = d["champion_counts"].get(ch, 0) + 1
+
+        if role != "DEFAULT":
+            for t in teammates:
+                other = t.get("teamPosition") or ""
+                if not other:
+                    continue
+                key = f"{role}|{other}"
+                rc = role_combo_stats.setdefault(key, {"games": 0, "wins": 0})
+                rc["games"] += 1
+                rc["wins"] += int(win)
+
+    def pack_week(w):
+        if not w or not w["games"]:
+            return None
+        return {
+            "games": w["games"],
+            "wins": w["wins"],
+            "winrate": round(w["wins"] / w["games"] * 100),
+            "avg_tumor": round(w["tumor_sum"] / w["games"]),
+        }
+
+    duo_out = []
+    for pp, v in duo_stats.items():
+        if v["games"] < 2:
+            continue
+        top_champ = max(v["champion_counts"], key=lambda c: v["champion_counts"][c])
+        duo_out.append({
+            "puuid": pp,
+            "nombre": v["name"],
+            "games": v["games"],
+            "wins": v["wins"],
+            "winrate": round(v["wins"] / v["games"] * 100),
+            "top_champion": top_champ,
+        })
+    duo_out.sort(key=lambda d: (d["games"], d["winrate"]), reverse=True)
+
+    role_combo_out = []
+    for k, v in role_combo_stats.items():
+        if v["games"] < 2:
+            continue
+        my_r, other_r = k.split("|")
+        role_combo_out.append({
+            "my_role": my_r,
+            "other_role": other_r,
+            "games": v["games"],
+            "wins": v["wins"],
+            "winrate": round(v["wins"] / v["games"] * 100),
+        })
+
+    hour_out = [
+        {
+            "hour": h,
+            "games": v["games"],
+            "winrate": round(v["wins"] / v["games"] * 100) if v["games"] else 0,
+            "avg_tumor": round(v["tumor_sum"] / v["games"]) if v["games"] else 0,
+        }
+        for h, v in sorted(hour_stats.items())
+    ]
+
+    return jsonify({
+        "summoner": f"{game_name}#{tag_line}",
+        "tier": tier,
+        "total_matches": len(evolution),
+        "evolution": sorted(evolution, key=lambda e: e["date"]),
+        "hour_stats": hour_out,
+        "week_stats": {
+            "this": pack_week(week_buckets["this"]),
+            "last": pack_week(week_buckets["last"]),
+        },
+        "duo_stats": duo_out[:10],
+        "role_combo_stats": role_combo_out,
+    })
+
+
+@app.route('/cacheStats', methods=['GET'])
+def cache_stats_endpoint():
+    return jsonify(cache_stats())
+
+
+@app.route('/championBlacklist', methods=['GET'])
+def get_blacklist():
+    summoner = request.args.get('summoner', '')
+    return jsonify(load_blacklist().get(summoner, []))
+
+
+@app.route('/championBlacklist', methods=['POST'])
+def add_blacklist():
+    data = request.get_json() or {}
+    summoner = data.get('summoner')
+    champion = data.get('champion')
+    if not summoner or not champion:
+        return jsonify({"error": "summoner y champion requeridos"}), 400
+    bl = load_blacklist()
+    lst = bl.setdefault(summoner, [])
+    if champion not in lst:
+        lst.append(champion)
+    save_blacklist(bl)
+    return jsonify(lst)
+
+
+@app.route('/championBlacklist', methods=['DELETE'])
+def remove_blacklist():
+    data = request.get_json() or {}
+    summoner = data.get('summoner')
+    champion = data.get('champion')
+    bl = load_blacklist()
+    if summoner in bl:
+        bl[summoner] = [c for c in bl[summoner] if c != champion]
+    save_blacklist(bl)
+    return jsonify(bl.get(summoner, []))
+
+
+@app.route('/predictionStats', methods=['GET'])
+def prediction_stats_endpoint():
+    """Resuelve predicciones pendientes y devuelve el acierto global."""
+    preds = load_predictions()
+    changed = False
+
+    for pred in preds:
+        if pred.get("resolved"):
+            continue
+        if pred.get("predicted_winner") is None:
+            pred["resolved"] = True
+            changed = True
+            continue
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{pred['match_id']}")
+        if mres.status_code != 200:
+            continue
+        info = mres.json().get("info", {})
+        parts = info.get("participants", [])
+        if not parts:
+            continue
+        # determinar ganador real
+        blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
+        actual = "blue" if blue_win else "red"
+        pred["actual_winner"] = actual
+        pred["correct"] = (pred["predicted_winner"] == actual)
+        pred["resolved"] = True
+        changed = True
+
+    if changed:
+        save_predictions(preds)
+
+    resolved = [p for p in preds if p.get("resolved") and p.get("predicted_winner") is not None]
+    total = len(resolved)
+    correct = sum(1 for p in resolved if p.get("correct"))
+    pending = sum(1 for p in preds if not p.get("resolved"))
+    pct = round(correct / total * 100) if total else 0
+
+    return jsonify({
+        "total": total,
+        "correct": correct,
+        "accuracy": pct,
+        "pending": pending,
+        "recent": sorted(
+            [p for p in preds if p.get("resolved") and p.get("predicted_winner") is not None],
+            key=lambda x: x.get("created_at", 0), reverse=True
+        )[:10],
     })
 
 
@@ -792,7 +1233,7 @@ def get_overview_endpoint():
 
 @app.route('/matchDetail/<match_id>', methods=['GET'])
 def match_detail_endpoint(match_id):
-    res = requests.get(f"{MATCH_DETAILS_URL}/{match_id}", headers=headers)
+    res = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
     if res.status_code != 200:
         return jsonify({"error": "No se pudo obtener la partida"}), res.status_code
 
