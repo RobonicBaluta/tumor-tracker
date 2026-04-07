@@ -345,7 +345,9 @@
               <!-- Name + KDA -->
               <div class="min-w-0 w-28 shrink-0">
                 <p class="text-white/50 text-[10px] font-mono truncate">{{ match.worst.campeon }}</p>
-                <p class="text-white text-xs font-bold truncate">{{ match.worst.nombre }}</p>
+                <a :href="profileUrl(match.worst.nombre)" target="_blank" rel="noopener" @click.stop
+                  class="text-white text-xs font-bold truncate block hover:text-[#c89b3c] hover:underline transition"
+                  :title="`Abrir perfil de ${match.worst.nombre}`">{{ match.worst.nombre }}</a>
                 <p class="text-xs mt-0.5">
                   <span class="text-green-400">{{ match.worst.kills }}</span>
                   <span class="text-white/30">/</span>
@@ -443,7 +445,9 @@
         <div v-if="sidebarTab === 'top5' && topTumores.length">
 
           <!-- #1 big portrait card -->
-          <div class="rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30 mb-3">
+          <a :href="profileUrl(topTumores[0].nombre)" target="_blank" rel="noopener"
+            :title="`Abrir perfil de ${topTumores[0].nombre}`"
+            class="block rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30 mb-3 hover:border-red-400/60 hover:shadow-red-900/50 transition">
             <div class="relative">
               <img
                 :src="`https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${topTumores[0].campeon}_0.jpg`"
@@ -483,12 +487,14 @@
                 <p class="text-white/30 text-[9px] font-mono">KDA MEDIO</p>
               </div>
             </div>
-          </div>
+          </a>
 
           <!-- #2-5 compact rows -->
           <div class="space-y-2">
-            <div v-for="(tumor, i) in topTumores.slice(1)" :key="tumor.nombre"
-              class="flex items-center gap-3 bg-black/30 rounded-xl border border-white/10 px-3 py-2.5 hover:border-red-500/20 transition">
+            <a v-for="(tumor, i) in topTumores.slice(1)" :key="tumor.nombre"
+              :href="profileUrl(tumor.nombre)" target="_blank" rel="noopener"
+              :title="`Abrir perfil de ${tumor.nombre}`"
+              class="flex items-center gap-3 bg-black/30 rounded-xl border border-white/10 px-3 py-2.5 hover:border-red-500/40 hover:bg-red-950/20 transition cursor-pointer">
               <span class="text-white/30 font-mono font-bold text-sm w-4 shrink-0">#{{ i + 2 }}</span>
               <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${tumor.campeon}.png`"
                 class="w-8 h-8 rounded-lg shrink-0" />
@@ -501,7 +507,7 @@
                   class="text-xs font-bold font-mono">{{ tumor.avg_kda.toFixed(2) }}</p>
                 <p class="text-white/30 text-[9px] font-mono">x{{ tumor.apariciones }}</p>
               </div>
-            </div>
+            </a>
           </div>
         </div>
 
@@ -511,8 +517,10 @@
             <p class="text-[#c89b3c] text-[10px] font-mono tracking-widest font-bold">LEADERBOARD GLOBAL · PEORES JUGADORES</p>
           </div>
           <div v-if="leaderboard.length" class="divide-y divide-white/5">
-            <div v-for="entry in leaderboard" :key="entry.nombre"
-              class="flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 transition">
+            <a v-for="entry in leaderboard" :key="entry.nombre"
+              :href="profileUrl(entry.nombre)" target="_blank" rel="noopener"
+              :title="`Abrir perfil de ${entry.nombre}`"
+              class="flex items-center gap-3 px-3 py-2.5 hover:bg-[#c89b3c]/10 transition cursor-pointer">
               <span :class="entry.position <= 3 ? 'text-[#c89b3c]' : 'text-white/20'"
                 class="font-mono font-bold text-sm w-5 shrink-0 text-center">
                 {{ entry.position <= 3 ? ['🥇','🥈','🥉'][entry.position - 1] : entry.position }}
@@ -525,7 +533,7 @@
               </div>
               <p :class="entry.avg_kda < 1 ? 'text-red-400' : entry.avg_kda < 2 ? 'text-yellow-400' : 'text-green-400'"
                 class="text-xs font-bold font-mono shrink-0">{{ entry.avg_kda.toFixed(2) }}</p>
-            </div>
+            </a>
           </div>
           <div v-else class="px-4 py-8 text-center">
             <p class="text-white/30 text-xs font-mono">Aún no hay datos globales.<br>Busca más summoners.</p>
