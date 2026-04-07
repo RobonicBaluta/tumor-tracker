@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'path/win32'
+import { fileURLToPath, URL } from 'node:url'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -11,7 +11,9 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      // Usa fileURLToPath para evitar separadores específicos de plataforma.
+      // ⚠️ NO sustituir por `path/win32` — eso rompe la build de Linux/Vercel.
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
 })
