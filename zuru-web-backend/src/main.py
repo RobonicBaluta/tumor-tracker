@@ -518,62 +518,93 @@ TIER_BASELINE_TUMOR = {
 }
 
 
-def predict_team_outcome(players, confidence_scale=1.8):
-    """Predicción ponderada por rol y tamaño de muestra, normalizada por elo.
+def to_display_score(value):
+    """Asegura un score 0-100 sin negativos. Acepta None y devuelve None."""
+    if value is None:
+        return None
+    return max(0, min(100, int(round(value))))
 
-    Devuelve dict con blue_score, red_score (normalizados),
-    winner ('blue'|'red'|'tie'), confidence (0-100) y raw sums para debug.
+
+def sample_weight_for(sample):
+    """Peso por tamaño de muestra: 0.4 con 1 partida, lineal hasta 1.0 con 6+."""
+    s = max(int(sample or 0), 1)
+    return min(1.0, 0.4 + (s - 1) * 0.12)
+
+
+def role_weight_for(role):
+    return ROLE_IMPACT_WEIGHTS.get(role or "", 1.0)
+
+
+def predict_team_outcome(players):
+    """Predicción del resultado de la partida usando una sola escala 0-100.
+
+    Reglas claras:
+      • Cada jugador aporta su `avg_tumor_score` (ya está en 0-100).
+      • Se pondera por rol (jungla/mid pesan más) y por volumen de muestra
+        (jugadores con muchas partidas tienen más peso). Los pesos suman a 1.
+      • `team_tumor` = media ponderada de los jugadores del equipo. Sigue siendo 0-100.
+      • Gana el equipo con MENOR `team_tumor`.
+      • `confidence` = magnitud de la diferencia, mapeada a 0-99.
+
+    Devuelve un dict con:
+      - blue_team_tumor / red_team_tumor (0-100)
+      - winner ("blue"|"red"|"tie")
+      - confidence (0-100)
+      - diff (red - blue, positivo si blue es mejor)
+      - blue_breakdown / red_breakdown: lista de detalles por jugador
     """
-    def norm(p):
+    def player_breakdown(p):
         score = p.get("avg_tumor_score")
         if score is None:
             return None
-        baseline = TIER_BASELINE_TUMOR.get(p.get("tier") or "", 40)
-        # Desviación sobre baseline: score > baseline ⇒ jugador peor que la media del elo.
-        deviation = score - baseline
-
         role = p.get("role") or "DEFAULT"
-        role_w = ROLE_IMPACT_WEIGHTS.get(role, 1.0)
+        role_w = role_weight_for(role)
+        sample_w = sample_weight_for(p.get("champion_total_sample", 0))
+        weight = role_w * sample_w
+        return {
+            "puuid": p.get("puuid"),
+            "score": int(score),                      # 0-100, base
+            "role": role,
+            "role_weight": round(role_w, 2),
+            "sample_weight": round(sample_w, 2),
+            "weight": round(weight, 3),
+            "weighted_contribution": round(score * weight, 2),
+        }
 
-        # Peso por muestra: 0.4 con 1 partida, ~1.0 con 6+.
-        sample = max(p.get("champion_total_sample", 0) or 0, 1)
-        sample_w = min(1.0, 0.4 + (sample - 1) * 0.12)
+    def team_stats(team_id):
+        rows = [player_breakdown(p) for p in players if p.get("team_id") == team_id]
+        rows = [r for r in rows if r is not None]
+        if not rows:
+            return 50, 0, []
+        total_w = sum(r["weight"] for r in rows)
+        if total_w <= 0:
+            return 50, 0, rows
+        team_tumor = sum(r["weighted_contribution"] for r in rows) / total_w
+        return round(team_tumor), len(rows), rows
 
-        return deviation * role_w * sample_w
+    blue_tumor, _blue_n, blue_breakdown = team_stats(100)
+    red_tumor, _red_n, red_breakdown = team_stats(200)
 
-    def team_sum(team_id):
-        vals = [norm(p) for p in players if p.get("team_id") == team_id]
-        vals = [v for v in vals if v is not None]
-        if not vals:
-            return 0.0, 0
-        return sum(vals), len(vals)
-
-    blue_raw, blue_n = team_sum(100)
-    red_raw, red_n   = team_sum(200)
-
-    # Equipo con MENOS desviación negativa-respecto-a-baseline gana (menos tumor).
-    diff = blue_raw - red_raw
+    # diff > 0  ⇒  blue tiene MÁS tumor (peor)  ⇒  gana red
+    # diff < 0  ⇒  blue tiene MENOS tumor (mejor) ⇒  gana blue
+    diff = red_tumor - blue_tumor
     abs_diff = abs(diff)
 
     winner = "tie"
-    if abs_diff >= 6:  # umbral mínimo normalizado
-        winner = "blue" if diff < 0 else "red"
+    if abs_diff >= 4:  # umbral en escala 0-100
+        winner = "blue" if blue_tumor < red_tumor else "red"
 
-    # Confianza: escalada con la diferencia. 0 si están igualados, 99 max.
-    confidence = min(99, round(abs_diff * confidence_scale))
-
-    # Suma "raw" para retrocompat con el frontend antiguo (blue_sum / red_sum).
-    blue_legacy = sum(p.get("avg_tumor_score") or 0 for p in players if p.get("team_id") == 100)
-    red_legacy  = sum(p.get("avg_tumor_score") or 0 for p in players if p.get("team_id") == 200)
+    # Confianza: 4 puntos de diferencia = 24%, 20+ = 99%
+    confidence = min(99, round(abs_diff * 6))
 
     return {
-        "blue_score": round(blue_raw, 1),
-        "red_score":  round(red_raw, 1),
-        "blue_sum":   blue_legacy,
-        "red_sum":    red_legacy,
-        "winner":     winner,
-        "confidence": confidence,
-        "diff":       round(diff, 1),
+        "blue_team_tumor": blue_tumor,
+        "red_team_tumor":  red_tumor,
+        "winner":          winner,
+        "confidence":      confidence,
+        "diff":            diff,
+        "blue_breakdown":  blue_breakdown,
+        "red_breakdown":   red_breakdown,
     }
 
 
@@ -1326,10 +1357,10 @@ def _compute_live_game(game_name, tag_line, job_id=None):
             "viewer_puuid": me_puuid,
             "viewer_name": f"{game_name}#{tag_line}",
             "viewer_team": viewer_team,
-            "blue_sum": prediction["blue_sum"],
-            "red_sum": prediction["red_sum"],
-            "blue_score": prediction["blue_score"],
-            "red_score": prediction["red_score"],
+            "blue_sum": prediction["blue_team_tumor"],
+            "red_sum": prediction["red_team_tumor"],
+            "blue_score": prediction["blue_team_tumor"],
+            "red_score": prediction["red_team_tumor"],
             "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
             "confidence": prediction["confidence"],
             "created_at": now,

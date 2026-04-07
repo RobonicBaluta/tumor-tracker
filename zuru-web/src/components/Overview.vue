@@ -581,23 +581,26 @@
 
           <!-- Scorecard -->
           <div v-else-if="matchDetail" class="p-4 space-y-3">
-            <!-- Tumor prediction vs actual -->
-            <div class="grid grid-cols-3 gap-3 items-center bg-black/30 border border-white/10 rounded-xl p-3">
-              <div class="text-center">
-                <p class="text-blue-400 text-[10px] font-mono tracking-widest">AZUL</p>
-                <p class="text-blue-200 text-xl font-mono font-black">{{ matchPrediction.blueSum }}</p>
-              </div>
-              <div class="text-center">
-                <p class="text-white/40 text-[9px] font-mono tracking-widest">PREDICCIÓN</p>
-                <p class="text-xl">{{ matchPrediction.winner === 'blue' ? '🔵' : matchPrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
-                <p :class="matchPrediction.correct ? 'text-green-400' : matchPrediction.winner === 'tie' ? 'text-white/40' : 'text-red-400'"
-                  class="text-[9px] font-mono font-bold mt-0.5">
-                  {{ matchPrediction.winner === 'tie' ? 'IGUALADO' : matchPrediction.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}
-                </p>
-              </div>
-              <div class="text-center">
-                <p class="text-red-400 text-[10px] font-mono tracking-widest">ROJO</p>
-                <p class="text-red-200 text-xl font-mono font-black">{{ matchPrediction.redSum }}</p>
+            <!-- Predicción retroactiva: tumor histórico de cada equipo antes de jugar -->
+            <div class="bg-black/30 border border-white/10 rounded-xl p-3">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2 text-center">PREDICCIÓN PRE-PARTIDA · TUMOR HISTÓRICO DE EQUIPO</p>
+              <div class="grid grid-cols-3 gap-3 items-center">
+                <div class="text-center">
+                  <p class="text-blue-400 text-[10px] font-mono tracking-widest">AZUL</p>
+                  <p :class="tumorColor(matchPrediction.blueTumor)" class="text-2xl font-mono font-black">{{ matchPrediction.blueTumor }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-xl">{{ matchPrediction.winner === 'blue' ? '🔵' : matchPrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
+                  <p :class="matchPrediction.correct ? 'text-green-400' : matchPrediction.winner === 'tie' ? 'text-white/40' : 'text-red-400'"
+                    class="text-[10px] font-mono font-bold mt-0.5">
+                    {{ matchPrediction.winner === 'tie' ? 'IGUALADO' : matchPrediction.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}
+                  </p>
+                  <p class="text-white/30 text-[9px] font-mono">{{ matchPrediction.confidence }}% conf.</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-red-400 text-[10px] font-mono tracking-widest">ROJO</p>
+                  <p :class="tumorColor(matchPrediction.redTumor)" class="text-2xl font-mono font-black">{{ matchPrediction.redTumor }}</p>
+                </div>
               </div>
             </div>
             <!-- Team label helper -->
@@ -661,9 +664,15 @@
                         <p class="text-white/20 text-[9px] font-mono">VIS</p>
                       </div>
                     </div>
-                    <div class="text-center shrink-0 w-12 border-l border-white/10 pl-2 ml-1">
-                      <p :class="tumorColor(p.tumor_score ?? 0)" class="text-base font-mono font-black leading-none">{{ p.tumor_score ?? '?' }}</p>
-                      <p :class="tumorColor(p.tumor_score ?? 0)" class="text-[8px] font-mono font-bold mt-0.5">{{ tumorLabel(p.tumor_score ?? 0) }}</p>
+                    <div class="text-center shrink-0 w-20 border-l border-white/10 pl-2 ml-1 grid grid-cols-2 gap-1">
+                      <div :title="'Tumor de partida: cómo jugó hoy'">
+                        <p :class="tumorColor(p.tumor_score ?? 0)" class="text-base font-mono font-black leading-none">{{ p.tumor_score ?? '·' }}</p>
+                        <p class="text-white/30 text-[8px] font-mono mt-0.5">PART.</p>
+                      </div>
+                      <div :title="'Tumor histórico: media pre-partida'">
+                        <p :class="tumorColor(p.prior_tumor_score ?? 0)" class="text-base font-mono font-black leading-none opacity-70">{{ p.prior_tumor_score ?? '·' }}</p>
+                        <p class="text-white/30 text-[8px] font-mono mt-0.5">HIST.</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -736,13 +745,13 @@
               </div>
             </div>
 
-            <!-- Win prediction -->
+            <!-- Win prediction · tumor de equipo en escala 0-100 (menor = mejor) -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 items-center">
               <div class="bg-blue-950/40 border rounded-xl px-4 py-3 text-center"
                 :class="livePrediction.winner === 'blue' ? 'border-blue-400/70 shadow-lg shadow-blue-500/20' : 'border-blue-500/20'">
                 <p class="text-blue-400 text-[10px] font-mono tracking-widest">EQUIPO AZUL</p>
-                <p class="text-blue-200 text-2xl font-mono font-black mt-1">{{ livePrediction.blueSum }}</p>
-                <p class="text-blue-300/60 text-[9px] font-mono">índice tumor (↓ mejor)</p>
+                <p :class="tumorColor(livePrediction.blueTumor)" class="text-3xl font-mono font-black mt-1">{{ livePrediction.blueTumor }}</p>
+                <p class="text-blue-300/60 text-[9px] font-mono">tumor de equipo</p>
               </div>
               <div class="text-center">
                 <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">PREDICCIÓN</p>
@@ -756,8 +765,8 @@
               <div class="bg-red-950/40 border rounded-xl px-4 py-3 text-center"
                 :class="livePrediction.winner === 'red' ? 'border-red-400/70 shadow-lg shadow-red-500/20' : 'border-red-500/20'">
                 <p class="text-red-400 text-[10px] font-mono tracking-widest">EQUIPO ROJO</p>
-                <p class="text-red-200 text-2xl font-mono font-black mt-1">{{ livePrediction.redSum }}</p>
-                <p class="text-red-300/60 text-[9px] font-mono">índice tumor (↓ mejor)</p>
+                <p :class="tumorColor(livePrediction.redTumor)" class="text-3xl font-mono font-black mt-1">{{ livePrediction.redTumor }}</p>
+                <p class="text-red-300/60 text-[9px] font-mono">tumor de equipo</p>
               </div>
             </div>
 
@@ -1494,6 +1503,7 @@ onUnmounted(() => {
   if (scanInterval) clearInterval(scanInterval)
   stopGlobalPoller()
   stopBacktestPoller()
+  if (typeof document !== 'undefined') document.body.style.overflow = ''
 })
 
 const excuseText = ref('')
@@ -1580,6 +1590,11 @@ const scanMessage = ref(SCAN_MESSAGES[0])
 let scanInterval: ReturnType<typeof setInterval> | null = null
 
 watch(scanning, (v) => {
+  // Lock scroll del body mientras corre el X-Ray para que no se pueda
+  // scrollear el contenido detrás del overlay.
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = v ? 'hidden' : ''
+  }
   if (v) {
     let i = 0
     scanMessage.value = SCAN_MESSAGES[Math.floor(Math.random() * SCAN_MESSAGES.length)]
@@ -1902,14 +1917,23 @@ interface BanInfo {
   pick_turn: number
 }
 
+interface PlayerBreakdown {
+  puuid: string
+  score: number
+  role: string
+  role_weight: number
+  sample_weight: number
+  weight: number
+  weighted_contribution: number
+}
 interface Prediction {
-  blue_score: number
-  red_score: number
-  blue_sum: number
-  red_sum: number
+  blue_team_tumor: number
+  red_team_tumor: number
   winner: 'blue' | 'red' | 'tie'
   confidence: number
   diff: number
+  blue_breakdown: PlayerBreakdown[]
+  red_breakdown: PlayerBreakdown[]
 }
 interface LiveGame {
   game_id: number
@@ -2207,55 +2231,35 @@ const laneMatchups = computed(() => {
 
 
 const matchPrediction = computed(() => {
-  if (!matchDetail.value) return { blueSum: 0, redSum: 0, winner: 'tie', correct: false }
-  // Usa la predicción del backend (mismo modelo que el live: role/volume/elo
-  // weighted) sobre los prior_tumor_score. Si no viene, fallback a suma simple.
+  // Predicción retroactiva del partido (basada en histórico pre-partida).
+  // Todos los números en escala 0-100. Sin negativos.
+  if (!matchDetail.value) return { blueTumor: 0, redTumor: 0, winner: 'tie' as const, correct: false, confidence: 0 }
   const md: any = matchDetail.value
   const actualBlueWon = md.blue_win
-  const p = md.prediction
-  if (p) {
-    const correct = (p.winner === 'blue' && actualBlueWon) || (p.winner === 'red' && !actualBlueWon)
-    return {
-      blueSum: Math.round(p.blue_score),
-      redSum: Math.round(p.red_score),
-      winner: p.winner,
-      correct,
-    }
+  const p: Prediction | undefined = md.prediction
+  if (!p) return { blueTumor: 0, redTumor: 0, winner: 'tie' as const, correct: false, confidence: 0 }
+  const correct = (p.winner === 'blue' && actualBlueWon) || (p.winner === 'red' && !actualBlueWon)
+  return {
+    blueTumor: p.blue_team_tumor,
+    redTumor: p.red_team_tumor,
+    winner: p.winner,
+    confidence: p.confidence,
+    correct,
   }
-  const pick = (x: any) => x.prior_tumor_score ?? x.tumor_score ?? 0
-  const blueSum = md.team_blue.reduce((s: number, x: any) => s + pick(x), 0)
-  const redSum = md.team_red.reduce((s: number, x: any) => s + pick(x), 0)
-  const diff = Math.abs(blueSum - redSum)
-  let winner: 'blue' | 'red' | 'tie' = 'tie'
-  if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
-  const correct = (winner === 'blue' && actualBlueWon) || (winner === 'red' && !actualBlueWon)
-  return { blueSum, redSum, winner, correct }
 })
 
 const livePrediction = computed(() => {
-  if (!liveGame.value) return { blueSum: 0, redSum: 0, winner: 'tie', confidence: 0 }
-  // Usa los scores ponderados (rol + elo + muestra) que decide el ganador.
-  // Estos pueden ser negativos: equipo con score MÁS BAJO gana (menos tumor).
-  const p = liveGame.value.prediction
-  if (p) {
-    return {
-      blueSum: Math.round(p.blue_score),
-      redSum: Math.round(p.red_score),
-      winner: p.winner,
-      confidence: p.confidence,
-    }
+  // Predicción del live. team_tumor en 0-100, gana el menor.
+  if (!liveGame.value || !liveGame.value.prediction) {
+    return { blueTumor: 0, redTumor: 0, winner: 'tie' as const, confidence: 0 }
   }
-  const blue = liveGame.value.players.filter(x => x.team_id === 100)
-  const red = liveGame.value.players.filter(x => x.team_id === 200)
-  const sum = (arr: LivePlayer[]) => arr.reduce((s, x) => s + (x.avg_tumor_score ?? 0), 0)
-  const blueSum = sum(blue)
-  const redSum = sum(red)
-  const diff = Math.abs(blueSum - redSum)
-  const total = blueSum + redSum
-  const confidence = total > 0 ? Math.min(99, Math.round((diff / total) * 200)) : 0
-  let winner: 'blue' | 'red' | 'tie' = 'tie'
-  if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
-  return { blueSum, redSum, winner, confidence }
+  const p = liveGame.value.prediction
+  return {
+    blueTumor: p.blue_team_tumor,
+    redTumor: p.red_team_tumor,
+    winner: p.winner,
+    confidence: p.confidence,
+  }
 })
 
 const liveLoading = ref(false)
