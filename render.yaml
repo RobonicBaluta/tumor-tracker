@@ -1,6 +1,8 @@
 # Render Blueprint para tumor-tracker.
-# Crea un servicio web Python (Flask via gunicorn) con disco persistente
-# para los .db SQLite y los .json de estado.
+# Free tier: sin disco persistente. Los .db y .json viven en /tmp y se pierden
+# cada vez que el servicio se duerme tras 15 min de inactividad. El match cache
+# se reconstruye solo. Para persistencia real, sube a plan Starter y reactiva
+# la sección `disk:` apuntando a /var/data + DATA_DIR=/var/data.
 
 services:
   - type: web
@@ -16,12 +18,8 @@ services:
       - key: PYTHON_VERSION
         value: "3.11"
       - key: DATA_DIR
-        value: /var/data
+        value: /tmp/tumor-data
       - key: CORS_ORIGINS
         sync: false   # Vercel URL — la rellenas a mano cuando el frontend esté
       - key: RIOT_API_TOKEN
         sync: false   # secret manual
-    disk:
-      name: tumor-data
-      mountPath: /var/data
-      sizeGB: 1
