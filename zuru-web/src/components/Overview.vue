@@ -734,7 +734,7 @@
                 :class="livePrediction.winner === 'blue' ? 'border-blue-400/70 shadow-lg shadow-blue-500/20' : 'border-blue-500/20'">
                 <p class="text-blue-400 text-[10px] font-mono tracking-widest">EQUIPO AZUL</p>
                 <p class="text-blue-200 text-2xl font-mono font-black mt-1">{{ livePrediction.blueSum }}</p>
-                <p class="text-blue-300/60 text-[9px] font-mono">tumor total</p>
+                <p class="text-blue-300/60 text-[9px] font-mono">índice tumor (↓ mejor)</p>
               </div>
               <div class="text-center">
                 <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">PREDICCIÓN</p>
@@ -749,7 +749,7 @@
                 :class="livePrediction.winner === 'red' ? 'border-red-400/70 shadow-lg shadow-red-500/20' : 'border-red-500/20'">
                 <p class="text-red-400 text-[10px] font-mono tracking-widest">EQUIPO ROJO</p>
                 <p class="text-red-200 text-2xl font-mono font-black mt-1">{{ livePrediction.redSum }}</p>
-                <p class="text-red-300/60 text-[9px] font-mono">tumor total</p>
+                <p class="text-red-300/60 text-[9px] font-mono">índice tumor (↓ mejor)</p>
               </div>
             </div>
 
@@ -1069,10 +1069,22 @@
                 <p class="text-white/30 text-[10px] font-mono tracking-widest">🧪 BACKTEST DEL PREDICTOR</p>
                 <button @click="runBacktest" :disabled="backtestLoading"
                   class="text-[11px] font-mono px-2.5 py-1 border border-purple-500/40 text-purple-300 hover:border-purple-400/80 rounded disabled:opacity-40">
-                  {{ backtestLoading ? 'Procesando...' : 'Ejecutar' }}
+                  {{ backtestLoading ? 'Procesando...' : (backtestData ? 'Volver a ejecutar' : 'Ejecutar') }}
                 </button>
               </div>
-              <div v-if="backtestData" class="bg-black/30 border border-purple-500/20 rounded-xl p-4">
+
+              <!-- Progress bar mientras corre -->
+              <div v-if="backtestLoading" class="bg-black/30 border border-purple-500/20 rounded-xl p-4 space-y-3">
+                <p class="text-purple-200 font-mono text-xs">{{ backtestProgress.step || 'Procesando...' }}</p>
+                <div class="w-full bg-white/5 border border-white/10 rounded-full h-2 overflow-hidden">
+                  <div class="h-full bg-gradient-to-r from-purple-500 to-fuchsia-400 transition-all duration-500"
+                    :style="{ width: `${Math.min(100, (backtestProgress.progress / Math.max(1, backtestProgress.total)) * 100)}%` }"></div>
+                </div>
+                <p class="text-white/40 font-mono text-[10px]">{{ backtestProgress.progress }}/{{ backtestProgress.total }} partidas — sigue navegando, te avisamos al terminar 🔔</p>
+              </div>
+
+              <!-- Resultado -->
+              <div v-else-if="backtestData" class="bg-black/30 border border-purple-500/20 rounded-xl p-4">
                 <div class="flex items-baseline gap-6">
                   <div>
                     <p :class="backtestData.accuracy >= 60 ? 'text-green-400' : backtestData.accuracy >= 50 ? 'text-yellow-400' : 'text-red-400'"
@@ -1155,19 +1167,19 @@
             <section v-if="analyticsData.hour_stats.length">
               <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🕒 HORARIO TÓXICO</p>
               <div class="bg-black/30 border border-white/10 rounded-xl p-4">
-                <div class="flex items-end gap-1 h-32">
-                  <div v-for="h in analyticsData.hour_stats" :key="h.hour"
-                    class="flex-1 flex flex-col items-center gap-1 group relative">
-                    <div class="w-full rounded-t transition"
-                      :class="h.winrate >= 60 ? 'bg-green-500/60' : h.winrate >= 50 ? 'bg-yellow-500/60' : 'bg-red-500/60'"
-                      :style="{ height: `${Math.max(6, h.avg_tumor * 1.2)}%` }"></div>
-                    <span class="text-white/40 text-[9px] font-mono">{{ String(h.hour).padStart(2, '0') }}h</span>
-                    <div class="hidden group-hover:block absolute bottom-full mb-1 bg-black/90 border border-white/20 rounded px-2 py-1 text-[9px] font-mono text-white whitespace-nowrap z-10">
-                      {{ h.games }}g · {{ h.winrate }}% WR · tumor {{ h.avg_tumor }}
+                <div class="flex items-end gap-[2px]" style="height: 140px;">
+                  <div v-for="h in hourly24" :key="h.hour"
+                    class="flex-1 h-full flex flex-col items-center justify-end gap-1 group relative">
+                    <div class="w-full rounded-t transition-all relative"
+                      :class="h.games === 0 ? 'bg-white/5' : h.winrate >= 60 ? 'bg-green-500/70' : h.winrate >= 50 ? 'bg-yellow-500/70' : 'bg-red-500/70'"
+                      :style="{ height: h.games === 0 ? '4px' : `${Math.max(8, (h.avg_tumor / hourMaxTumor) * 100)}%` }"></div>
+                    <span class="text-white/30 text-[8px] font-mono">{{ String(h.hour).padStart(2, '0') }}</span>
+                    <div v-if="h.games > 0" class="hidden group-hover:block absolute -top-12 left-1/2 -translate-x-1/2 bg-black/95 border border-white/20 rounded px-2 py-1 text-[10px] font-mono text-white whitespace-nowrap z-10 shadow-xl">
+                      {{ String(h.hour).padStart(2,'0') }}h · {{ h.games }}g · {{ h.winrate }}% WR · {{ h.avg_tumor }} tumor
                     </div>
                   </div>
                 </div>
-                <p class="text-white/30 text-[9px] font-mono mt-2">Altura = tumor medio · Color = winrate</p>
+                <p class="text-white/30 text-[9px] font-mono mt-2">Altura = tumor medio · Color = winrate · Pasa el ratón por encima</p>
               </div>
             </section>
 
@@ -1470,6 +1482,7 @@ onUnmounted(() => {
   if (loadingFlavorInterval) clearInterval(loadingFlavorInterval)
   if (scanInterval) clearInterval(scanInterval)
   stopGlobalPoller()
+  stopBacktestPoller()
 })
 
 const excuseText = ref('')
@@ -1930,6 +1943,8 @@ const analyticsFilters = ref({
 })
 const backtestData = ref<any>(null)
 const backtestLoading = ref(false)
+const backtestProgress = ref({ step: '', progress: 0, total: 1 })
+let backtestPollerId: ReturnType<typeof setInterval> | null = null
 
 const loadAnalytics = async () => {
   analyticsLoading.value = true
@@ -1963,20 +1978,73 @@ const openAnalytics = async () => {
   await loadAnalytics()
 }
 
+const stopBacktestPoller = () => {
+  if (backtestPollerId) {
+    clearInterval(backtestPollerId)
+    backtestPollerId = null
+  }
+}
+
 const runBacktest = async () => {
+  if (backtestLoading.value) return
   backtestLoading.value = true
   backtestData.value = null
+  backtestProgress.value = { step: 'Iniciando...', progress: 0, total: 20 }
   try {
-    const params = new URLSearchParams({
-      game_name: summoner.value.split('#')[0],
-      tag_line: summoner.value.split('#')[1],
-      count: '20',
+    const startRes = await fetch('http://localhost:5000/backtest/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_name: summoner.value.split('#')[0],
+        tag_line: summoner.value.split('#')[1],
+        count: 20,
+      }),
     })
-    const res = await fetch(`http://localhost:5000/backtest?${params}`)
-    const data = await res.json()
-    if (res.ok && !data.error) backtestData.value = data
-  } catch {}
-  finally { backtestLoading.value = false }
+    const start = await startRes.json()
+    if (!startRes.ok || start.error) throw new Error(start.error || 'Error')
+    const jobId = start.job_id
+    backtestProgress.value = { step: 'Procesando partidas...', progress: 0, total: start.total || 20 }
+
+    // Polling cada 500ms para que el frontend siga vivo aunque el backtest tarde mucho.
+    stopBacktestPoller()
+    backtestPollerId = setInterval(async () => {
+      try {
+        const pRes = await fetch(`http://localhost:5000/backtest/progress/${jobId}`)
+        if (!pRes.ok) return
+        const p = await pRes.json()
+        backtestProgress.value = {
+          step: p.step || '',
+          progress: p.progress || 0,
+          total: p.total || 1,
+        }
+        if (p.status === 'done') {
+          stopBacktestPoller()
+          backtestData.value = p.result
+          backtestLoading.value = false
+          // Notificación al terminar
+          const acc = p.result?.accuracy ?? 0
+          pushNotification({
+            id: `backtest-${Date.now()}`,
+            icon: '🧪',
+            title: 'Backtest completado',
+            body: `${acc}% de acierto sobre ${p.result?.total ?? 0} partidas decididas.`,
+          })
+        } else if (p.status === 'error') {
+          stopBacktestPoller()
+          backtestLoading.value = false
+          pushNotification({
+            id: `backtest-error-${Date.now()}`,
+            icon: '⚠️',
+            title: 'Backtest fallido',
+            body: p.error || 'Error desconocido',
+          })
+        }
+      } catch {}
+    }, 500)
+  } catch (e) {
+    backtestLoading.value = false
+    stopBacktestPoller()
+  }
 }
 
 const closeAnalytics = () => {
@@ -1984,6 +2052,24 @@ const closeAnalytics = () => {
   analyticsData.value = null
   analyticsError.value = ''
 }
+
+// Rellena las 24 horas con ceros para que el chart sea continuo.
+const hourly24 = computed(() => {
+  const map = new Map<number, any>()
+  for (const h of analyticsData.value?.hour_stats ?? []) map.set(h.hour, h)
+  const out = []
+  for (let i = 0; i < 24; i++) {
+    out.push(map.get(i) ?? { hour: i, games: 0, winrate: 0, avg_tumor: 0 })
+  }
+  return out
+})
+
+// Tope para normalizar las alturas: el tumor máximo de la muestra (mín 30
+// para que no exploten valores muy bajos).
+const hourMaxTumor = computed(() => {
+  const max = Math.max(0, ...(analyticsData.value?.hour_stats ?? []).map(h => h.avg_tumor))
+  return Math.max(30, max)
+})
 
 const weekDelta = computed(() => {
   const t = analyticsData.value?.week_stats.this
@@ -2111,28 +2197,39 @@ const laneMatchups = computed(() => {
 
 const matchPrediction = computed(() => {
   if (!matchDetail.value) return { blueSum: 0, redSum: 0, winner: 'tie', correct: false }
-  // Usa prior_tumor_score (score pre-partida) para que sea una predicción real,
-  // no un análisis post-mortem. Fallback al tumor de la propia partida si falta.
-  const pick = (p: any) => p.prior_tumor_score ?? p.tumor_score ?? 0
-  const blueSum = matchDetail.value.team_blue.reduce((s: number, p: any) => s + pick(p), 0)
-  const redSum = matchDetail.value.team_red.reduce((s: number, p: any) => s + pick(p), 0)
+  // Usa la predicción del backend (mismo modelo que el live: role/volume/elo
+  // weighted) sobre los prior_tumor_score. Si no viene, fallback a suma simple.
+  const md: any = matchDetail.value
+  const actualBlueWon = md.blue_win
+  const p = md.prediction
+  if (p) {
+    const correct = (p.winner === 'blue' && actualBlueWon) || (p.winner === 'red' && !actualBlueWon)
+    return {
+      blueSum: Math.round(p.blue_score),
+      redSum: Math.round(p.red_score),
+      winner: p.winner,
+      correct,
+    }
+  }
+  const pick = (x: any) => x.prior_tumor_score ?? x.tumor_score ?? 0
+  const blueSum = md.team_blue.reduce((s: number, x: any) => s + pick(x), 0)
+  const redSum = md.team_red.reduce((s: number, x: any) => s + pick(x), 0)
   const diff = Math.abs(blueSum - redSum)
   let winner: 'blue' | 'red' | 'tie' = 'tie'
   if (diff >= 5) winner = blueSum < redSum ? 'blue' : 'red'
-  const actualBlueWon = matchDetail.value.blue_win
   const correct = (winner === 'blue' && actualBlueWon) || (winner === 'red' && !actualBlueWon)
   return { blueSum, redSum, winner, correct }
 })
 
 const livePrediction = computed(() => {
   if (!liveGame.value) return { blueSum: 0, redSum: 0, winner: 'tie', confidence: 0 }
-  // Preferir la predicción que el backend calcula con el modelo nuevo
-  // (role/volume weighted, elo-normalized). Fallback a suma simple.
+  // Usa los scores ponderados (rol + elo + muestra) que decide el ganador.
+  // Estos pueden ser negativos: equipo con score MÁS BAJO gana (menos tumor).
   const p = liveGame.value.prediction
   if (p) {
     return {
-      blueSum: Math.round(p.blue_sum),
-      redSum: Math.round(p.red_sum),
+      blueSum: Math.round(p.blue_score),
+      redSum: Math.round(p.red_score),
       winner: p.winner,
       confidence: p.confidence,
     }

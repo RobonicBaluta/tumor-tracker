@@ -1637,11 +1637,20 @@ def backtest_endpoint():
         return jsonify({"error": "No se pudieron obtener partidas"}), 400
     match_ids = ids_res.json()
 
+    payload = _run_backtest(puuid, tier, match_ids, game_name, tag_line)
+    return jsonify(payload)
+
+
+def _run_backtest(puuid, tier, match_ids, game_name, tag_line, job_id=None):
+    """Ejecuta el backtest sobre `match_ids`. Si se pasa job_id, publica progreso."""
     results = []
     correct = 0
     total = 0
     pending = 0
-    for mid in match_ids:
+    n = len(match_ids)
+    for i, mid in enumerate(match_ids):
+        if job_id:
+            job_update(job_id, step=f"Procesando partida {i+1}/{n}...", progress=i, total=n)
         mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
         if mres.status_code != 200:
             continue
@@ -1679,8 +1688,10 @@ def backtest_endpoint():
             "confidence": prediction["confidence"],
             "diff": prediction["diff"],
         })
+    if job_id:
+        job_update(job_id, step="Listo", progress=n, total=n)
 
-    return jsonify({
+    return {
         "summoner": f"{game_name}#{tag_line}",
         "sample_size": len(results),
         "total": total,
@@ -1688,7 +1699,50 @@ def backtest_endpoint():
         "accuracy": round(correct / total * 100) if total else 0,
         "ties": pending,
         "results": results,
-    })
+    }
+
+
+@app.route('/backtest/start', methods=['POST'])
+def backtest_start():
+    data = request.get_json() or {}
+    game_name = data.get("game_name")
+    tag_line = data.get("tag_line")
+    count = int(data.get("count", 20))
+    if not game_name or not tag_line:
+        return jsonify({"error": "Falta game_name y/o tag_line"}), 400
+
+    acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc_res.status_code != 200:
+        return jsonify({"error": "No se pudo obtener la cuenta"}), 400
+    puuid = acc_res.json()["puuid"]
+    tier, _ = get_player_rank(puuid)
+
+    ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={count}&queue={QUEUE_RANKED_SOLO}")
+    if ids_res.status_code != 200:
+        return jsonify({"error": "No se pudieron obtener partidas"}), 400
+    match_ids = ids_res.json() or []
+
+    job_cleanup()
+    jid = job_create()
+    job_update(jid, step="Iniciando backtest...", progress=0, total=len(match_ids))
+
+    def _worker():
+        try:
+            payload = _run_backtest(puuid, tier, match_ids, game_name, tag_line, job_id=jid)
+            job_update(jid, status="done", result=payload)
+        except Exception as e:
+            job_update(jid, status="error", error=str(e))
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"job_id": jid, "total": len(match_ids)})
+
+
+@app.route('/backtest/progress/<jid>', methods=['GET'])
+def backtest_progress(jid):
+    job = job_get(jid)
+    if not job:
+        return jsonify({"error": "Job no encontrado"}), 404
+    return jsonify(job)
 
 
 @app.route('/championBlacklist', methods=['GET'])
@@ -1917,6 +1971,32 @@ def match_detail_endpoint(match_id):
     team_blue = [summarize(p) for p in participants if p["teamId"] == 100]
     team_red  = [summarize(p) for p in participants if p["teamId"] == 200]
 
+    # Predicción retroactiva con el MISMO modelo que usa el live (role/volume/elo).
+    synthetic_players = []
+    for p, summary in zip(
+        [pp for pp in participants if pp["teamId"] == 100],
+        team_blue,
+    ):
+        synthetic_players.append({
+            "team_id": 100,
+            "avg_tumor_score": summary["prior_tumor_score"],
+            "tier": viewer_tier,
+            "role": p.get("teamPosition") or "",
+            "champion_total_sample": 5 if summary["prior_tumor_score"] is not None else 0,
+        })
+    for p, summary in zip(
+        [pp for pp in participants if pp["teamId"] == 200],
+        team_red,
+    ):
+        synthetic_players.append({
+            "team_id": 200,
+            "avg_tumor_score": summary["prior_tumor_score"],
+            "tier": viewer_tier,
+            "role": p.get("teamPosition") or "",
+            "champion_total_sample": 5 if summary["prior_tumor_score"] is not None else 0,
+        })
+    prediction = predict_team_outcome(synthetic_players)
+
     return jsonify({
         "match_id": match_id,
         "game_duration": info["gameDuration"],
@@ -1924,6 +2004,7 @@ def match_detail_endpoint(match_id):
         "blue_win": team_blue[0]["win"] if team_blue else False,
         "team_blue": team_blue,
         "team_red": team_red,
+        "prediction": prediction,
     })
 
 
