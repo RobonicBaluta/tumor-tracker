@@ -208,3 +208,25 @@ __marimo__/
 
 
 Tibetan.webm
+
+# Frontend
+zuru-web/node_modules/
+zuru-web/dist/
+zuru-web/.vite/
+zuru-web/.env
+zuru-web/.env.local
+
+# Backend runtime data (persisted on Render disk, not in repo)
+zuru-web-backend/src/*.db
+zuru-web-backend/src/*.db-shm
+zuru-web-backend/src/*.db-wal
+zuru-web-backend/src/*.json.migrated
+zuru-web-backend/src/recent_summoners.json
+zuru-web-backend/src/leaderboard.json
+zuru-web-backend/src/saved_accounts.json
+zuru-web-backend/src/watch_list.json
+zuru-web-backend/src/predictions.json
+zuru-web-backend/src/champion_blacklist.json
+zuru-web-backend/src/live_game_cache.json
+zuru-web-backend/venv/
+zuru-web-backend/src/.env

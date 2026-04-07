@@ -143,7 +143,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed } from 'vue'
+import { API_BASE } from '../composables/useApi'
 
 const ddragonVersion = ref('15.1.1')
 fetch('https://ddragon.leagueoflegends.com/api/versions.json')
@@ -170,7 +171,8 @@ const fakeReportId = ref('')
 
 // Swipe state
 const cardRef = ref<HTMLElement | null>(null)
-const shareCardRef = ref<HTMLElement | null>(null)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const shareCardRef = ref<HTMLElement | null>(null); void shareCardRef;
 const dragX = ref(0)
 const isDragging = ref(false)
 const startX = ref(0)
@@ -351,7 +353,7 @@ const fetchPlayer = async () => {
       game_name: formData.value.gameName,
       tag_line: formData.value.tagLine
     })
-    const response = await fetch(`http://localhost:5000/getElPeor?${params}`)
+    const response = await fetch(`${API_BASE}/getElPeor?${params}`)
     if (!response.ok) throw new Error(`Error: ${response.statusText}`)
     playerData.value = await response.json()
   } catch (err) {

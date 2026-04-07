@@ -184,6 +184,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { API_BASE } from '../composables/useApi'
 
 interface ComparePlayer {
   campeon: string
@@ -236,7 +237,7 @@ const search = async () => {
   error.value = ''
   try {
     const params = new URLSearchParams({ game_name1: gameName1, tag_line1: tagLine1, game_name2: gameName2, tag_line2: tagLine2 })
-    const res = await fetch(`http://localhost:5000/compare?${params}`)
+    const res = await fetch(`${API_BASE}/compare?${params}`)
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Error al comparar')
     result.value = data

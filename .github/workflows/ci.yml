@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, server-fix]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zuru-web-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: zuru-web-backend/requirements.txt
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Syntax check
+        run: python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('src').rglob('*.py')]"
+      - name: Import smoke test
+        env:
+          RIOT_API_TOKEN: dummy
+          DATA_DIR: /tmp/tumor-data
+        run: |
+          mkdir -p /tmp/tumor-data
+          cd src && python -c "import main; print('flask app ok:', main.app.name)"
+
+  frontend:
+    name: Frontend (Vite build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zuru-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: zuru-web/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Type check + build
+        env:
+          VITE_API_BASE: https://tumor-tracker-api.onrender.com
+        run: npm run build

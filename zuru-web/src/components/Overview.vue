@@ -1301,6 +1301,7 @@ import {
   ROLE_ORDER, ROLE_LABEL, TIER_COLORS,
   tumorColor, tumorLabel,
 } from '../composables/overviewConstants'
+import { API_BASE } from '../composables/useApi'
 
 interface TeamAvg {
   kda: number
@@ -1394,6 +1395,8 @@ interface DetailPlayer {
   champ_level: number
   time_dead: number
   win: boolean
+  tumor_score?: number
+  prior_tumor_score?: number
 }
 
 interface MatchDetail {
@@ -1406,7 +1409,7 @@ interface MatchDetail {
 }
 
 // Theme
-const theme = inject<ReturnType<typeof computed>>('theme')!
+const theme = inject('theme') as any
 
 const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
 
@@ -1626,7 +1629,7 @@ const openMatchDetail = async (matchId: string) => {
   loadingDetail.value = true
   matchDetail.value = null
   try {
-    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
+    const res = await fetch(`${API_BASE}/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
     matchDetail.value = await res.json()
   } catch {}
   loadingDetail.value = false
@@ -1699,21 +1702,21 @@ const losingStreak = computed(() => {
 
 const fetchRecent = async () => {
   try {
-    const res = await fetch('http://localhost:5000/recentSummoners')
+    const res = await fetch(`${API_BASE}/recentSummoners`)
     recentSummoners.value = await res.json()
   } catch {}
 }
 
 const fetchLeaderboard = async () => {
   try {
-    const res = await fetch('http://localhost:5000/leaderboard')
+    const res = await fetch(`${API_BASE}/leaderboard`)
     leaderboard.value = await res.json()
   } catch {}
 }
 
 const fetchSavedAccounts = async () => {
   try {
-    const res = await fetch('http://localhost:5000/savedAccounts')
+    const res = await fetch(`${API_BASE}/savedAccounts`)
     savedAccounts.value = await res.json()
   } catch {}
 }
@@ -1723,7 +1726,7 @@ const isSaved = computed(() => summoner.value && savedAccounts.value.includes(su
 const toggleSaveAccount = async () => {
   const method = isSaved.value ? 'DELETE' : 'POST'
   try {
-    const res = await fetch('http://localhost:5000/savedAccounts', {
+    const res = await fetch(`${API_BASE}/savedAccounts`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summoner: summoner.value })
@@ -1735,7 +1738,7 @@ const toggleSaveAccount = async () => {
 const fetchWatchList = async () => {
   if (!summoner.value) return
   try {
-    const res = await fetch(`http://localhost:5000/watchList?summoner=${encodeURIComponent(summoner.value)}`)
+    const res = await fetch(`${API_BASE}/watchList?summoner=${encodeURIComponent(summoner.value)}`)
     watchList.value = await res.json()
   } catch {}
 }
@@ -1745,7 +1748,7 @@ const isWatched = (nombre: string) => watchList.value.includes(nombre)
 const toggleWatch = async (nombre: string) => {
   const method = isWatched(nombre) ? 'DELETE' : 'POST'
   try {
-    const res = await fetch('http://localhost:5000/watchList', {
+    const res = await fetch(`${API_BASE}/watchList`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summoner: summoner.value, tumor: nombre })
@@ -1756,7 +1759,7 @@ const toggleWatch = async (nombre: string) => {
 
 const saveRecent = async (name: string) => {
   try {
-    await fetch('http://localhost:5000/recentSummoners', {
+    await fetch(`${API_BASE}/recentSummoners`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summoner: name })
@@ -1794,7 +1797,7 @@ const login = async () => {
       tag_line: formData.value.tagLine,
     })
 
-    const res = await fetch(`http://localhost:5000/getOverview?${params}`)
+    const res = await fetch(`${API_BASE}/getOverview?${params}`)
     const data = await res.json()
 
     if (!res.ok || data.error) throw new Error(data.error || 'Error al cargar el overview')
@@ -1834,7 +1837,7 @@ const loadMore = async () => {
       tier: tier.value,
     })
 
-    const res = await fetch(`http://localhost:5000/getOverview?${params}`)
+    const res = await fetch(`${API_BASE}/getOverview?${params}`)
     const data = await res.json()
 
     if (!res.ok || data.error) throw new Error(data.error)
@@ -1959,7 +1962,7 @@ const loadAnalytics = async () => {
     if (analyticsFilters.value.role) params.role = analyticsFilters.value.role
     if (analyticsFilters.value.result) params.result = analyticsFilters.value.result
     const qs = new URLSearchParams(params).toString()
-    const res = await fetch(`http://localhost:5000/playerAnalytics?${qs}`)
+    const res = await fetch(`${API_BASE}/playerAnalytics?${qs}`)
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Error')
     analyticsData.value = data
@@ -1991,7 +1994,7 @@ const runBacktest = async () => {
   backtestData.value = null
   backtestProgress.value = { step: 'Iniciando...', progress: 0, total: 20 }
   try {
-    const startRes = await fetch('http://localhost:5000/backtest/start', {
+    const startRes = await fetch(`${API_BASE}/backtest/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2009,7 +2012,7 @@ const runBacktest = async () => {
     stopBacktestPoller()
     backtestPollerId = setInterval(async () => {
       try {
-        const pRes = await fetch(`http://localhost:5000/backtest/progress/${jobId}`)
+        const pRes = await fetch(`${API_BASE}/backtest/progress/${jobId}`)
         if (!pRes.ok) return
         const p = await pRes.json()
         backtestProgress.value = {
@@ -2132,7 +2135,7 @@ const championBlacklist = ref<string[]>([])
 const fetchBlacklist = async () => {
   if (!summoner.value) return
   try {
-    const res = await fetch(`http://localhost:5000/championBlacklist?summoner=${encodeURIComponent(summoner.value)}`)
+    const res = await fetch(`${API_BASE}/championBlacklist?summoner=${encodeURIComponent(summoner.value)}`)
     if (res.ok) championBlacklist.value = await res.json()
   } catch {}
 }
@@ -2140,7 +2143,7 @@ const fetchBlacklist = async () => {
 const toggleBlacklist = async (champion: string) => {
   const method = championBlacklist.value.includes(champion) ? 'DELETE' : 'POST'
   try {
-    const res = await fetch('http://localhost:5000/championBlacklist', {
+    const res = await fetch(`${API_BASE}/championBlacklist`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summoner: summoner.value, champion }),
@@ -2154,7 +2157,7 @@ const predictionStats = ref<{ total: number, correct: number, accuracy: number, 
 
 const fetchPredictionStats = async () => {
   try {
-    const res = await fetch('http://localhost:5000/predictionStats')
+    const res = await fetch(`${API_BASE}/predictionStats`)
     if (res.ok) predictionStats.value = await res.json()
   } catch {}
 }
@@ -2322,7 +2325,7 @@ const pickJoke = (champion: string, correct: boolean): string => {
 // Dado un match_id busca el peor champion (mayor tumor) del equipo perdedor
 const fetchWorstChampion = async (matchId: string): Promise<string> => {
   try {
-    const res = await fetch(`http://localhost:5000/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
+    const res = await fetch(`${API_BASE}/matchDetail/${matchId}?viewer_tier=${encodeURIComponent(tier.value || 'GOLD')}`)
     if (!res.ok) return ''
     const data = await res.json()
     const losingBlue = !data.blue_win
@@ -2342,7 +2345,7 @@ const startGlobalPoller = () => {
   if (globalPollerId) return
   const tick = async () => {
     try {
-      const res = await fetch('http://localhost:5000/predictionStats')
+      const res = await fetch(`${API_BASE}/predictionStats`)
       if (!res.ok) return
       const data = await res.json()
       predictionStats.value = data
@@ -2391,7 +2394,7 @@ const resolveLivePrediction = async () => {
   resolving.value = true
   resolveResult.value = null
   try {
-    const res = await fetch('http://localhost:5000/resolvePrediction', {
+    const res = await fetch(`${API_BASE}/resolvePrediction`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2427,7 +2430,7 @@ const searchLiveGame = async () => {
   liveAbort = false
   fetchPredictionStats()
   try {
-    const startRes = await fetch('http://localhost:5000/liveGame/start', {
+    const startRes = await fetch(`${API_BASE}/liveGame/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2442,7 +2445,7 @@ const searchLiveGame = async () => {
     // Poll every 600ms
     while (!liveAbort) {
       await new Promise(r => setTimeout(r, 600))
-      const pRes = await fetch(`http://localhost:5000/liveGame/progress/${jobId}`)
+      const pRes = await fetch(`${API_BASE}/liveGame/progress/${jobId}`)
       if (!pRes.ok) continue
       const pData = await pRes.json()
       liveProgress.value = {
@@ -2481,7 +2484,7 @@ const refresh = async () => {
       game_name: summoner.value.split('#')[0],
       tag_line: summoner.value.split('#')[1],
     })
-    const res = await fetch(`http://localhost:5000/getOverview?${params}`)
+    const res = await fetch(`${API_BASE}/getOverview?${params}`)
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Error al refrescar')
     await new Promise(r => setTimeout(r, 1500))
