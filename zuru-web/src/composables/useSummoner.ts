@@ -2,7 +2,7 @@
 // exponer helpers genéricos de "login" que cualquier vista puede usar.
 
 import { ref } from 'vue'
-import { apiGet } from './useApi'
+import { apiGet, API_BASE } from './useApi'
 
 export interface SummonerInput {
   gameName: string
@@ -37,7 +37,7 @@ export function useRecentSummoners() {
 
   async function save(name: string) {
     try {
-      await fetch('http://localhost:5000/recentSummoners', {
+      await fetch(`${API_BASE}/recentSummoners`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ summoner: name }),

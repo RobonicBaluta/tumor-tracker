@@ -15,7 +15,10 @@ import time
 
 import requests
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "riot_cache.db")
+DB_PATH = os.path.join(
+    os.environ.get("DATA_DIR", os.path.dirname(__file__)),
+    "riot_cache.db",
+)
 
 
 # ---------------------------------------------------------------------------

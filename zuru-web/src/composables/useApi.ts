@@ -1,7 +1,9 @@
 // Fetch helpers compartidos por todos los componentes para llamar al backend.
 // Unifica la URL base y el parseo de errores.
 
-export const API_BASE = 'http://localhost:5000'
+// Lee VITE_API_BASE en build (Vercel), fallback a localhost en dev.
+export const API_BASE: string =
+  (import.meta as any).env?.VITE_API_BASE || 'http://localhost:5000'
 
 export async function apiGet<T = any>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
   const qs = params

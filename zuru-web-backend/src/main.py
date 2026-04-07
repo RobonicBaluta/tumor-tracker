@@ -123,9 +123,22 @@ def champ_id_to_name(champ_id):
     return _champ_id_name_cache.get(int(champ_id), "")
 
 app = Flask(__name__)
-CORS(app)
+# CORS restringible vía CORS_ORIGINS env var ("*" por defecto en dev).
+_cors_origins = os.getenv("CORS_ORIGINS", "*")
+if _cors_origins == "*":
+    CORS(app)
+else:
+    CORS(app, origins=[o.strip() for o in _cors_origins.split(",") if o.strip()])
 
-LIVE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "live_game_cache.json")
+# Healthcheck para Render.
+@app.route("/healthz")
+def healthz():
+    return {"ok": True}
+
+# Directorio de datos: en Render se monta /var/data, en dev usa src/.
+DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
+os.makedirs(DATA_DIR, exist_ok=True)
+LIVE_CACHE_FILE = os.path.join(DATA_DIR, "live_game_cache.json")
 LIVE_CACHE_TTL = 6 * 3600  # 6 horas para éxitos
 LIVE_CACHE_TTL_FAIL = 30 * 60  # 30 min para fallos (rate limit, etc)
 LIVE_CACHE_SCHEMA_VERSION = 3  # bump esto cuando cambie la forma de los entries
@@ -157,12 +170,12 @@ def save_live_cache(cache):
         pass
 
 
-RECENT_FILE = os.path.join(os.path.dirname(__file__), "recent_summoners.json")
-LEADERBOARD_FILE = os.path.join(os.path.dirname(__file__), "leaderboard.json")
-SAVED_ACCOUNTS_FILE = os.path.join(os.path.dirname(__file__), "saved_accounts.json")
-WATCH_LIST_FILE = os.path.join(os.path.dirname(__file__), "watch_list.json")
-PREDICTIONS_FILE = os.path.join(os.path.dirname(__file__), "predictions.json")
-BLACKLIST_FILE = os.path.join(os.path.dirname(__file__), "champion_blacklist.json")
+RECENT_FILE = os.path.join(DATA_DIR, "recent_summoners.json")
+LEADERBOARD_FILE = os.path.join(DATA_DIR, "leaderboard.json")
+SAVED_ACCOUNTS_FILE = os.path.join(DATA_DIR, "saved_accounts.json")
+WATCH_LIST_FILE = os.path.join(DATA_DIR, "watch_list.json")
+PREDICTIONS_FILE = os.path.join(DATA_DIR, "predictions.json")
+BLACKLIST_FILE = os.path.join(DATA_DIR, "champion_blacklist.json")
 
 
 def load_blacklist():
@@ -181,7 +194,7 @@ def save_blacklist(data):
 
 
 import sqlite3 as _sqlite3
-_PRED_DB_PATH = os.path.join(os.path.dirname(__file__), "predictions.db")
+_PRED_DB_PATH = os.path.join(DATA_DIR, "predictions.db")
 _pred_conn = None
 
 
