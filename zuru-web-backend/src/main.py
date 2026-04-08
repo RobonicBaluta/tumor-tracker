@@ -1080,7 +1080,7 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
             "champion_total_sample": total_games,
             "champion_pct": champ_pct,
             "champion_winrate": champ_wr,
-            "is_main": champ_pct >= 40,
+            "is_main": False,  # se recalcula en el live endpoint con mastery
             "teammate_history": recent_match_puuids,
         }
     except Exception:
@@ -1176,6 +1176,15 @@ def _compute_live_game(game_name, tag_line, job_id=None):
             ):
                 entry["streamer_mode"] = True
                 entry["nombre"] = "🥷 Anónimo"
+            # Recalcular is_main por si la entrada se cacheó con la fórmula vieja
+            mp = entry.get("mastery_points", 0) or 0
+            ml = entry.get("mastery_level", 0) or 0
+            cg = entry.get("champion_games", 0) or 0
+            entry["is_main"] = (
+                (mp >= 50000 and cg >= 1)
+                or mp >= 150000
+                or ml >= 7
+            )
             players.append(entry)
             continue
 
@@ -1241,7 +1250,18 @@ def _compute_live_game(game_name, tag_line, job_id=None):
             "champion_total_sample": profile["champion_total_sample"] if profile else 0,
             "champion_pct": profile["champion_pct"] if profile else 0,
             "champion_winrate": profile["champion_winrate"] if profile else None,
-            "is_main": profile["is_main"] if profile else False,
+            # Main = jugador con experiencia REAL en el champion. Combina mastery
+            # (señal de muchas partidas históricas) con presencia en la muestra
+            # reciente (señal de que sigue jugándolo). Evita falsos positivos
+            # de "3 partidas seguidas en un champ nuevo".
+            "is_main": (
+                # Mastery alto + al menos una partida reciente con ese champ
+                (mastery_points >= 50000 and (profile and profile.get("champion_games", 0) >= 1))
+                # O mastery muy alto, suficiente por sí solo
+                or mastery_points >= 150000
+                # O mucha mastery por nivel (level 7+ del sistema antiguo)
+                or mastery_level >= 7
+            ),
             "is_tilted": profile["is_tilted"] if profile else False,
             "is_hotstreak": profile.get("is_hotstreak", False) if profile else False,
             "recent_losses": profile["recent_losses"] if profile else 0,
