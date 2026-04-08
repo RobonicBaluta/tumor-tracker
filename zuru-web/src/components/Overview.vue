@@ -779,7 +779,7 @@
               <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2"
                 :class="resolveResult.correct ? 'text-green-400' : 'text-red-400'">
                 <span>{{ resolveResult.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}</span>
-                <span class="text-white/40">ganó {{ resolveResult.actual === 'blue' ? '🔵' : '🔴' }}</span>
+                <span class="text-white/40">predijo {{ resolveResult.predicted === 'blue' ? '🔵' : resolveResult.predicted === 'red' ? '🔴' : '⚖️' }} · ganó {{ resolveResult.actual === 'blue' ? '🔵' : '🔴' }}</span>
               </div>
             </div>
 
