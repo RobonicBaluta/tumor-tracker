@@ -11,6 +11,12 @@ from config import (
     LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL
 )
 from riot_infra import riot_get as _riot_get, cache_stats
+from tumor_engine import (
+    compute_match_tumor_from_stats as _engine_match_score,
+    compute_prior_tumor as _engine_prior,
+    compute_team_tumor as _engine_team,
+    predict_team_outcome as _engine_predict,
+)
 
 
 def riot_get(url, max_retries=4):
@@ -141,7 +147,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 LIVE_CACHE_FILE = os.path.join(DATA_DIR, "live_game_cache.json")
 LIVE_CACHE_TTL = 6 * 3600  # 6 horas para éxitos
 LIVE_CACHE_TTL_FAIL = 30 * 60  # 30 min para fallos (rate limit, etc)
-LIVE_CACHE_SCHEMA_VERSION = 3  # bump esto cuando cambie la forma de los entries
+LIVE_CACHE_SCHEMA_VERSION = 4  # bumped tras rewrite del tumor_engine
 
 
 def load_live_cache():
@@ -247,6 +253,16 @@ def _pred_db():
                 os.rename(PREDICTIONS_FILE, PREDICTIONS_FILE + ".migrated")
             except Exception:
                 pass
+    # Limpieza one-shot al inicio: borrar predicciones que tienen scores en la
+    # escala vieja (negativos o > 100). Tras el rewrite del tumor_engine ya no
+    # son comparables con las nuevas. Se ejecuta cada vez que se abre la DB,
+    # es idempotente.
+    try:
+        _pred_conn.execute(
+            "DELETE FROM predictions WHERE blue_score < 0 OR red_score < 0"
+        )
+    except Exception:
+        pass
     return _pred_conn
 
 
@@ -484,159 +500,29 @@ def get_player_rank(puuid):
     return "UNRANKED", ""
 
 
-ROLE_PROFILES = {
-    # weights:  kda, cs, dmg, dead, vision        (suman 100)
-    # mults:    multiplicador a aplicar al threshold base por rango
-    "TOP":     {"weights": (28, 22, 22, 15, 13),  "cs_mult": 1.0,  "dmg_mult": 1.0,  "vision_mult": 0.7},
-    "JUNGLE":  {"weights": (28, 18, 18, 15, 21),  "cs_mult": 0.7,  "dmg_mult": 1.0,  "vision_mult": 1.2},
-    "MIDDLE":  {"weights": (28, 22, 25, 15, 10),  "cs_mult": 1.0,  "dmg_mult": 1.1,  "vision_mult": 0.7},
-    "BOTTOM":  {"weights": (28, 25, 27, 15, 5),   "cs_mult": 1.1,  "dmg_mult": 1.2,  "vision_mult": 0.5},
-    "UTILITY": {"weights": (30, 5,  10, 15, 40),  "cs_mult": 0.25, "dmg_mult": 0.45, "vision_mult": 2.5},
-    # default si no se conoce el rol
-    "DEFAULT": {"weights": (30, 25, 20, 15, 10),  "cs_mult": 1.0,  "dmg_mult": 1.0,  "vision_mult": 1.0},
-}
-
-
-# Peso por rol en la predicción del equipo.
-# Jungle/mid tienen más impacto en el resultado que un top aislado.
-ROLE_IMPACT_WEIGHTS = {
-    "TOP":     0.85,
-    "JUNGLE":  1.20,
-    "MIDDLE":  1.15,
-    "BOTTOM":  1.05,
-    "UTILITY": 0.95,
-    "DEFAULT": 1.00,
-    "":        1.00,
-}
-
-# Tumor score medio "esperado" por tier. Se usa para normalizar al elo del
-# conjunto: un jugador con score 60 en challenger no es lo mismo que en iron.
-TIER_BASELINE_TUMOR = {
-    "IRON": 45, "BRONZE": 42, "SILVER": 40, "GOLD": 38, "PLATINUM": 36,
-    "EMERALD": 34, "DIAMOND": 32, "MASTER": 30, "GRANDMASTER": 28, "CHALLENGER": 26,
-    "UNRANKED": 40, "": 40,
-}
-
-
-def to_display_score(value):
-    """Asegura un score 0-100 sin negativos. Acepta None y devuelve None."""
-    if value is None:
-        return None
-    return max(0, min(100, int(round(value))))
-
-
-def sample_weight_for(sample):
-    """Peso por tamaño de muestra: 0.4 con 1 partida, lineal hasta 1.0 con 6+."""
-    s = max(int(sample or 0), 1)
-    return min(1.0, 0.4 + (s - 1) * 0.12)
-
-
-def role_weight_for(role):
-    return ROLE_IMPACT_WEIGHTS.get(role or "", 1.0)
-
-
 def predict_team_outcome(players):
-    """Predicción del resultado de la partida usando una sola escala 0-100.
+    """Wrapper. La lógica vive en tumor_engine.predict_team_outcome.
 
-    Reglas claras:
-      • Cada jugador aporta su `avg_tumor_score` (ya está en 0-100).
-      • Se pondera por rol (jungla/mid pesan más) y por volumen de muestra
-        (jugadores con muchas partidas tienen más peso). Los pesos suman a 1.
-      • `team_tumor` = media ponderada de los jugadores del equipo. Sigue siendo 0-100.
-      • Gana el equipo con MENOR `team_tumor`.
-      • `confidence` = magnitud de la diferencia, mapeada a 0-99.
-
-    Devuelve un dict con:
-      - blue_team_tumor / red_team_tumor (0-100)
-      - winner ("blue"|"red"|"tie")
-      - confidence (0-100)
-      - diff (red - blue, positivo si blue es mejor)
-      - blue_breakdown / red_breakdown: lista de detalles por jugador
+    Acepta el shape histórico (`avg_tumor_score`) de los callers de main.py
+    y lo traduce al formato que espera el engine (`prior_tumor`).
     """
-    def player_breakdown(p):
-        score = p.get("avg_tumor_score")
-        if score is None:
-            return None
-        role = p.get("role") or "DEFAULT"
-        role_w = role_weight_for(role)
-        sample_w = sample_weight_for(p.get("champion_total_sample", 0))
-        weight = role_w * sample_w
-        return {
+    translated = []
+    for p in players:
+        translated.append({
+            "team_id": p.get("team_id"),
             "puuid": p.get("puuid"),
-            "score": int(score),                      # 0-100, base
-            "role": role,
-            "role_weight": round(role_w, 2),
-            "sample_weight": round(sample_w, 2),
-            "weight": round(weight, 3),
-            "weighted_contribution": round(score * weight, 2),
-        }
-
-    def team_stats(team_id):
-        rows = [player_breakdown(p) for p in players if p.get("team_id") == team_id]
-        rows = [r for r in rows if r is not None]
-        if not rows:
-            return 50, 0, []
-        total_w = sum(r["weight"] for r in rows)
-        if total_w <= 0:
-            return 50, 0, rows
-        team_tumor = sum(r["weighted_contribution"] for r in rows) / total_w
-        return round(team_tumor), len(rows), rows
-
-    blue_tumor, _blue_n, blue_breakdown = team_stats(100)
-    red_tumor, _red_n, red_breakdown = team_stats(200)
-
-    # diff > 0  ⇒  blue tiene MÁS tumor (peor)  ⇒  gana red
-    # diff < 0  ⇒  blue tiene MENOS tumor (mejor) ⇒  gana blue
-    diff = red_tumor - blue_tumor
-    abs_diff = abs(diff)
-
-    winner = "tie"
-    if abs_diff >= 4:  # umbral en escala 0-100
-        winner = "blue" if blue_tumor < red_tumor else "red"
-
-    # Confianza: 4 puntos de diferencia = 24%, 20+ = 99%
-    confidence = min(99, round(abs_diff * 6))
-
-    return {
-        "blue_team_tumor": blue_tumor,
-        "red_team_tumor":  red_tumor,
-        "winner":          winner,
-        "confidence":      confidence,
-        "diff":            diff,
-        "blue_breakdown":  blue_breakdown,
-        "red_breakdown":   red_breakdown,
-    }
+            "name": p.get("nombre") or p.get("name"),
+            "role": p.get("role"),
+            "prior_tumor": p.get("avg_tumor_score"),
+            "is_tilted": p.get("is_tilted", False),
+            "is_hotstreak": p.get("is_hotstreak", False),
+        })
+    return _engine_predict(translated)
 
 
 def calculate_tumor_score(player, game_duration, tier="GOLD", role="DEFAULT"):
-    """
-    Score 0-100 que mide lo malo que fue un jugador relativo a su rango y rol.
-    Los umbrales se ajustan por tier y rol: a un support se le exige visión,
-    no farm; a un ADC daño y CS, no visión.
-    """
-    base = RANK_THRESHOLDS.get(tier, RANK_THRESHOLDS["GOLD"])
-    profile = ROLE_PROFILES.get(role, ROLE_PROFILES["DEFAULT"])
-    w_kda, w_cs, w_dmg, w_dead, w_vis = profile["weights"]
-
-    cs_thr = base["cs_per_min"] * profile["cs_mult"]
-    dmg_thr = base["dmg_per_min"] * profile["dmg_mult"]
-    vis_thr = base["vision_per_min"] * profile["vision_mult"]
-
-    mins = max(game_duration / 60, 1)
-
-    def pct_below(value, threshold, max_pts):
-        if threshold == 0:
-            return 0.0
-        return max(0.0, min(float(max_pts), (threshold - value) / threshold * max_pts))
-
-    kda_pts = pct_below(player["kda"], base["kda"], w_kda)
-    cs_pts = pct_below(player["cs"] / mins, cs_thr, w_cs)
-    dmg_pts = pct_below(player["damage"] / mins, dmg_thr, w_dmg)
-    dead_pct = player["time_dead"] / max(game_duration, 1)
-    dead_pts = min(float(w_dead), dead_pct * (w_dead * 2.5))
-    vision_pts = pct_below(player["vision_score"] / mins, vis_thr, w_vis)
-
-    return round(kda_pts + cs_pts + dmg_pts + dead_pts + vision_pts)
+    """Wrapper retrocompatible. Toda la lógica vive en tumor_engine.py."""
+    return _engine_match_score(player, game_duration, tier, role)
 
 
 def get_worst_player_in_match(participants, puuid):
