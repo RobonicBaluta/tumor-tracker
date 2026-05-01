@@ -1473,6 +1473,27 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
     if cache_dirty:
         save_live_cache(cache)
 
+    # Notificar al user logueado si algún jugador en watchlist aparece en partida.
+    # Solo se hace una vez por (match_id, watched_name) gracias al ID estable.
+    try:
+        watched_in_game = [p for p in players if p.get("is_watched") and p.get("nombre") in watched]
+        if watched_in_game:
+            cur = _users._exec("SELECT id FROM users WHERE riot_puuid=?", (me_puuid,))
+            urow = cur.fetchone()
+            if urow:
+                user_id = urow[0]
+                for w in watched_in_game:
+                    nid = f"watch-{game.get('gameId')}-{w['nombre']}"
+                    _users.push_notification(
+                        user_id,
+                        notif_type="watchlist_alert",
+                        title=f"☢ {w['nombre']} en tu partida",
+                        body=f"juega {w.get('champion_name', '?')} ({'azul' if w.get('team_id') == 100 else 'rojo'})",
+                        link="#/", icon="☢",
+                    )
+    except Exception:
+        pass
+
     # Duo detection: para cada equipo, cruza los teammate_history.
     # Si el puuid de A aparece en la historia de B >=2 veces (y viceversa), son duo.
     duo_groups = {}  # team_id -> list of sets of puuids
@@ -1721,6 +1742,7 @@ def player_analytics_endpoint():
     role_combo_stats = {}
     duo_stats = {}
     champion_pool = {}  # championName -> {games, wins, tumor_sum}
+    lane_diff_stats = {"games": 0, "won_lane": 0, "cs_diff_sum": 0, "dmg_diff_sum": 0, "kda_diff_sum": 0}
 
     now_ts = time.time()
     this_week_start = now_ts - 7 * 86400
@@ -1820,6 +1842,29 @@ def player_analytics_endpoint():
                 rc = role_combo_stats.setdefault(key, {"games": 0, "wins": 0})
                 rc["games"] += 1
                 rc["wins"] += int(win)
+
+        # Lane diff: compara stats con tu oponente en la misma posición del equipo enemigo
+        if role and role != "DEFAULT":
+            opponent = next(
+                (p for p in info["participants"]
+                 if p["teamId"] != me["teamId"] and (p.get("teamPosition") or "") == role),
+                None,
+            )
+            if opponent:
+                my_cs = me["totalMinionsKilled"] + me["neutralMinionsKilled"]
+                op_cs = opponent["totalMinionsKilled"] + opponent["neutralMinionsKilled"]
+                my_dmg = me["totalDamageDealtToChampions"]
+                op_dmg = opponent["totalDamageDealtToChampions"]
+                my_kda = (me["kills"] + me["assists"]) / max(1, me["deaths"])
+                op_kda = (opponent["kills"] + opponent["assists"]) / max(1, opponent["deaths"])
+                lane_diff_stats["games"] += 1
+                # "ganaste tu lane" si superaste a tu rival en al menos 2 de 3 métricas
+                wins_in_lane = sum([my_cs > op_cs, my_dmg > op_dmg, my_kda > op_kda])
+                if wins_in_lane >= 2:
+                    lane_diff_stats["won_lane"] += 1
+                lane_diff_stats["cs_diff_sum"] += (my_cs - op_cs)
+                lane_diff_stats["dmg_diff_sum"] += (my_dmg - op_dmg)
+                lane_diff_stats["kda_diff_sum"] += (my_kda - op_kda)
 
     def pack_week(w):
         if not w or not w["games"]:
@@ -1934,6 +1979,18 @@ def player_analytics_endpoint():
         ),
     }
 
+    # Lane diff: cómo te va contra el oponente directo de tu lane
+    lane_out = None
+    if lane_diff_stats["games"] > 0:
+        n = lane_diff_stats["games"]
+        lane_out = {
+            "games": n,
+            "win_lane_rate": round(lane_diff_stats["won_lane"] / n * 100),
+            "avg_cs_diff": round(lane_diff_stats["cs_diff_sum"] / n, 1),
+            "avg_dmg_diff": round(lane_diff_stats["dmg_diff_sum"] / n),
+            "avg_kda_diff": round(lane_diff_stats["kda_diff_sum"] / n, 2),
+        }
+
     return jsonify({
         "summoner": f"{game_name}#{tag_line}",
         "tier": tier,
@@ -1950,6 +2007,7 @@ def player_analytics_endpoint():
         "best_teammates": best_teammates,
         "worst_nemesis": worst_nemesis,
         "tilt_forecast": tilt_forecast,
+        "lane_diff": lane_out,
     })
 
 
@@ -2176,6 +2234,55 @@ def auth_discord_callback():
         username=user_info.get("username", "unknown"),
         avatar_hash=user_info.get("avatar"),
     )
+    jwt = _auth.issue_jwt({"user_id": user["id"], "discord_id": user["discord_id"]})
+    return redirect(f"{_auth.FRONTEND_URL}?token={jwt}")
+
+
+@app.route('/auth/rso/login', methods=['GET'])
+def auth_rso_login():
+    """RSO login. Solo activo si tienes credenciales de Riot."""
+    url = _auth.rso_auth_redirect_url()
+    if not url:
+        return jsonify({"error": "RSO no está configurado. Pide approval a Riot."}), 503
+    return redirect(url)
+
+
+@app.route('/auth/rso/callback', methods=['GET'])
+def auth_rso_callback():
+    """RSO callback: vincula el Riot account al user logueado por Discord.
+    Si no hay sesión activa, crea un user nuevo basado en el sub de RSO."""
+    code = request.args.get("code")
+    if not code:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=no_code")
+    token_data = _auth.rso_exchange_code(code)
+    if not token_data or "access_token" not in token_data:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=rso_token_failed")
+    info = _auth.rso_fetch_user(token_data["access_token"])
+    if not info or "sub" not in info:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=rso_userinfo_failed")
+    # info["sub"] es el puuid de Riot
+    puuid = info["sub"]
+    # Recuperar gameName/tagLine vía account-v1
+    acc_res = riot_get(f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-puuid/{puuid}")
+    if acc_res.status_code != 200:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=riot_account_failed")
+    acc = acc_res.json()
+    riot_id = f"{acc.get('gameName', '?')}#{acc.get('tagLine', '?')}"
+
+    # Si hay JWT en query → vincula al user existente. Si no, crea uno con discord_id=riot_puuid
+    existing_token = request.args.get("state")  # opcional: pasaríamos jwt como state
+    if existing_token:
+        payload = _auth.verify_jwt(existing_token)
+        if payload and payload.get("user_id"):
+            _users.link_riot_account(payload["user_id"], puuid, riot_id)
+            return redirect(f"{_auth.FRONTEND_URL}?riot_linked=1")
+    # Sin sesión: usa puuid como discord_id ficticio (workaround si solo usa RSO)
+    user = _users.upsert_user_from_discord(
+        discord_id=f"rso_{puuid[:16]}",
+        username=acc.get("gameName", "RiotUser"),
+        avatar_hash=None,
+    )
+    _users.link_riot_account(user["id"], puuid, riot_id)
     jwt = _auth.issue_jwt({"user_id": user["id"], "discord_id": user["discord_id"]})
     return redirect(f"{_auth.FRONTEND_URL}?token={jwt}")
 

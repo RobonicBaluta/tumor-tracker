@@ -551,9 +551,10 @@
 
     <!-- Match detail modal -->
     <Transition name="modal">
-      <div v-if="selectedMatchId" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
         @click.self="closeMatchDetail">
-        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeMatchDetail">
+        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto my-auto">
 
           <!-- Modal header -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
@@ -689,14 +690,16 @@
             </template>
           </div>
         </div>
+        </div>
       </div>
     </Transition>
 
     <!-- Live game modal -->
     <Transition name="modal">
-      <div v-if="showLiveGame" class="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
         @click.self="closeLiveGame">
-        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
+        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeLiveGame">
+        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto my-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
@@ -980,6 +983,7 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
     </Transition>
 
@@ -1044,9 +1048,10 @@
 
     <!-- Analytics modal -->
     <Transition name="modal">
-      <div v-if="showAnalytics" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
         @click.self="closeAnalytics">
-        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
+        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeAnalytics">
+        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto my-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0d1b2a]/95 backdrop-blur z-10">
             <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
             <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
@@ -1144,6 +1149,38 @@
                 </div>
               </div>
               <p v-else class="text-white/30 font-mono text-xs">Ejecuta el modelo sobre tus últimas 20 partidas ya acabadas para ver su acierto real.</p>
+            </section>
+
+            <!-- Lane diff -->
+            <section v-if="(analyticsData as any).lane_diff">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">⚔ DIFF VS TU LANER</p>
+              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
+                <div class="grid grid-cols-4 gap-4 text-center">
+                  <div>
+                    <p :class="(analyticsData as any).lane_diff.win_lane_rate >= 50 ? 'text-green-400' : 'text-red-400'"
+                      class="text-3xl font-mono font-black">{{ (analyticsData as any).lane_diff.win_lane_rate }}%</p>
+                    <p class="text-white/40 text-[10px] font-mono">ganaste lane</p>
+                  </div>
+                  <div>
+                    <p :class="(analyticsData as any).lane_diff.avg_cs_diff > 0 ? 'text-green-400' : 'text-red-400'"
+                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_cs_diff > 0 ? '+' : '' }}{{ (analyticsData as any).lane_diff.avg_cs_diff }}</p>
+                    <p class="text-white/40 text-[10px] font-mono">CS diff</p>
+                  </div>
+                  <div>
+                    <p :class="(analyticsData as any).lane_diff.avg_dmg_diff > 0 ? 'text-green-400' : 'text-red-400'"
+                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_dmg_diff > 0 ? '+' : '' }}{{ Math.round((analyticsData as any).lane_diff.avg_dmg_diff / 1000) }}k</p>
+                    <p class="text-white/40 text-[10px] font-mono">DMG diff</p>
+                  </div>
+                  <div>
+                    <p :class="(analyticsData as any).lane_diff.avg_kda_diff > 0 ? 'text-green-400' : 'text-red-400'"
+                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_kda_diff > 0 ? '+' : '' }}{{ (analyticsData as any).lane_diff.avg_kda_diff }}</p>
+                    <p class="text-white/40 text-[10px] font-mono">KDA diff</p>
+                  </div>
+                </div>
+                <p class="text-white/30 text-[9px] font-mono mt-3 text-center">
+                  Promedio sobre {{ (analyticsData as any).lane_diff.games }} partidas comparando contigo y tu rival directo en la misma posición.
+                </p>
+              </div>
             </section>
 
             <!-- Tilt forecast -->
@@ -1353,6 +1390,7 @@
             </section>
 
           </div>
+        </div>
         </div>
       </div>
     </Transition>
