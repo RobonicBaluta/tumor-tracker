@@ -144,7 +144,7 @@
             class="px-3 py-2 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30">
             📊 {{ analyticsLoading ? 'Analizando...' : 'Analíticas' }}
           </button>
-          <button @click="searchLiveGame" :disabled="liveLoading"
+          <button @click="() => searchLiveGame()" :disabled="liveLoading"
             class="px-3 py-2 text-sm text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30">
             <span class="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 align-middle"></span>{{ liveLoading ? 'Buscando...' : 'En directo' }}
           </button>
@@ -588,18 +588,22 @@
                 <div class="text-center">
                   <p class="text-blue-400 text-[10px] font-mono tracking-widest">AZUL</p>
                   <p :class="tumorColor(matchPrediction.blueTumor)" class="text-2xl font-mono font-black">{{ matchPrediction.blueTumor }}</p>
+                  <p class="text-white/30 text-[9px] font-mono">tumor equipo</p>
                 </div>
                 <div class="text-center">
-                  <p class="text-xl">{{ matchPrediction.winner === 'blue' ? '🔵' : matchPrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
+                  <p class="text-[10px] font-mono text-white/40 mb-1">Predijo {{ matchPrediction.winner === 'blue' ? '🔵' : matchPrediction.winner === 'red' ? '🔴' : '⚖️' }}</p>
                   <p :class="matchPrediction.correct ? 'text-green-400' : matchPrediction.winner === 'tie' ? 'text-white/40' : 'text-red-400'"
-                    class="text-[10px] font-mono font-bold mt-0.5">
+                    class="text-sm font-mono font-bold">
                     {{ matchPrediction.winner === 'tie' ? 'IGUALADO' : matchPrediction.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}
                   </p>
-                  <p class="text-white/30 text-[9px] font-mono">{{ matchPrediction.confidence }}% conf.</p>
+                  <p class="text-white/50 text-[10px] font-mono mt-1">
+                    Ganó {{ matchDetail.blue_win ? '🔵 Azul' : '🔴 Rojo' }}
+                  </p>
                 </div>
                 <div class="text-center">
                   <p class="text-red-400 text-[10px] font-mono tracking-widest">ROJO</p>
                   <p :class="tumorColor(matchPrediction.redTumor)" class="text-2xl font-mono font-black">{{ matchPrediction.redTumor }}</p>
+                  <p class="text-white/30 text-[9px] font-mono">tumor equipo</p>
                 </div>
               </div>
             </div>
@@ -776,10 +780,19 @@
                 class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40 rounded transition disabled:opacity-30">
                 {{ resolving ? 'Comprobando...' : '✅ Comprobar resultado' }}
               </button>
-              <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2"
-                :class="resolveResult.correct ? 'text-green-400' : 'text-red-400'">
-                <span>{{ resolveResult.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}</span>
-                <span class="text-white/40">predijo {{ resolveResult.predicted === 'blue' ? '🔵' : resolveResult.predicted === 'red' ? '🔴' : '⚖️' }} · ganó {{ resolveResult.actual === 'blue' ? '🔵' : '🔴' }}</span>
+              <button @click="searchLiveGame(true)" :disabled="liveLoading"
+                class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40 rounded transition disabled:opacity-30"
+                title="Recalcula priors saltando la caché de 6h">
+                ↻ Forzar refresh
+              </button>
+              <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2">
+                <template v-if="(resolveResult as any).pending">
+                  <span class="text-yellow-400">⏳ {{ (resolveResult as any).pending }}</span>
+                </template>
+                <template v-else>
+                  <span :class="resolveResult.correct ? 'text-green-400' : 'text-red-400'">{{ resolveResult.correct ? '✓ ACERTÓ' : '✗ FALLÓ' }}</span>
+                  <span class="text-white/40">predijo {{ resolveResult.predicted === 'blue' ? '🔵' : resolveResult.predicted === 'red' ? '🔴' : '⚖️' }} · ganó {{ resolveResult.actual === 'blue' ? '🔵' : '🔴' }}</span>
+                </template>
               </div>
             </div>
 
@@ -2319,6 +2332,49 @@ const CHAMPION_JOKES_HIT = [
   (c: string) => `${c} olvidó que tenía keyboard. El modelo no.`,
   (c: string) => `Confirmado, ${c} fue el paciente cero de la partida.`,
   (c: string) => `${c} jugando así debería pagar una cuota al seguro médico.`,
+  (c: string) => `El modelo huele a ${c} a 10 partidas de distancia.`,
+  (c: string) => `${c} convirtió su lane en un hospital. Sin anestesia.`,
+  (c: string) => `Diagnóstico correcto: ${c} era el tumor primario.`,
+  (c: string) => `Si ${c} fuera médico, ya le habrían quitado la licencia.`,
+  (c: string) => `${c} era el culpable. Como siempre. Siguiente caso.`,
+  (c: string) => `Te lo dije yo, te lo dice el modelo: ${c} es ratchet.`,
+  (c: string) => `${c} se ha dejado el alma en la grieta. Por desgracia, la suya.`,
+  (c: string) => `Detectar a ${c} era fácil: el KDA hablaba por sí solo.`,
+  (c: string) => `Otra partida con ${c} de trending topic en el chat del equipo.`,
+  (c: string) => `Tras el escáner: ${c} tenía metástasis en todos los mapas.`,
+  (c: string) => `${c} y yo estamos de acuerdo: él es el problema.`,
+  (c: string) => `Checkmate. ${c} fue justo el jugador que predije.`,
+  (c: string) => `Si ${c} jugara peor habría que darle medalla.`,
+  (c: string) => `El modelo le vio los últimos 3 games a ${c} y se frotó las manos.`,
+  // Memes / referencias
+  (c: string) => `${c} ha hecho lo que mejor sabe hacer: nada.`,
+  (c: string) => `Bro, ${c} jugó como si tuviera 200 ping de WiFi de aeropuerto.`,
+  (c: string) => `${c} when minute 5 hits: I sleep. Minute 25: real shit.`,
+  (c: string) => `POV: eres ${c} y has elegido inting como personalidad.`,
+  (c: string) => `${c} es la prueba viva de que en LoL no hay requisito mínimo de IQ.`,
+  (c: string) => `${c} stop. Stop. Stop. Stop. Stop.`,
+  (c: string) => `${c} jugando la partida que un domingo a las 3 AM, evidente.`,
+  (c: string) => `Riot debería buscar a ${c} y agradecerle por inflar mi LP.`,
+  (c: string) => `${c} pickea el champ, ${c} pickea el feed.`,
+  (c: string) => `Ese ${c} salió del champ select directamente al 0/12.`,
+  (c: string) => `${c} jugó sin ratón. Y aún así perdió contra una pared.`,
+  (c: string) => `El historial de ${c} es un crime scene tape rodeando ARAM.`,
+  (c: string) => `${c} en el late game: existe. Y poco más.`,
+  (c: string) => `${c} se descargó LoL ayer y eligió ranked. Iconic.`,
+  (c: string) => `Ese aura de "voy a perder por ${c}" la noté desde el loading screen.`,
+  (c: string) => `${c} no sabe qué es un tower-dive y le dive cada partida.`,
+  (c: string) => `${c} jugaba con la mano izquierda y tomando cerveza. Confirmed.`,
+  (c: string) => `${c} se merece su propio capítulo en el DSM-5: "Mecánicas Negativas".`,
+  (c: string) => `${c} streameaba para que mami lo viera. Mami se desconectó.`,
+  (c: string) => `${c} promised a comeback. ${c} delivered a tutorial of how to lose.`,
+  (c: string) => `${c} cuando ve un tumor: 👀 espejo.`,
+  (c: string) => `Si Riot baneara por inting, ${c} ya sería un summoner free agent.`,
+  (c: string) => `${c} jugó la partida con fe. Y solo eso.`,
+  (c: string) => `${c}: el real "1v9" pero del lado equivocado.`,
+  (c: string) => `Te juro que ${c} estaba leyendo TikToks entre cada teamfight.`,
+  (c: string) => `${c} debe pensar que las wards son objetos decorativos.`,
+  (c: string) => `${c} llegó al lane vacío y aún encontró forma de feedearse.`,
+  (c: string) => `${c} se estaba defendiendo de fantasmas. Sus minions tampoco existían.`,
 ]
 const CHAMPION_JOKES_MISS = [
   (c: string) => `Error de cálculo: ${c} tuvo un día lúcido.`,
@@ -2326,6 +2382,38 @@ const CHAMPION_JOKES_MISS = [
   (c: string) => `${c} se puso serio y el modelo se cayó del stack.`,
   (c: string) => `Felicitaciones a ${c} por trolear al predictor.`,
   (c: string) => `¿Quién iba a pensar que ${c} iba a funcionar? No yo.`,
+  (c: string) => `${c} decidió hoy que no quería ser tumor. Raro.`,
+  (c: string) => `El modelo pide disculpas a ${c}. Una vez. Solo hoy.`,
+  (c: string) => `${c} te ha gaslighteado al predictor, enhorabuena.`,
+  (c: string) => `Increíble: ${c} subió la nota desde el suspenso.`,
+  (c: string) => `Error 404: tumor de ${c} not found. Esta vez.`,
+  (c: string) => `${c} ha leído Sun Tzu entre partida y partida.`,
+  (c: string) => `El modelo predijo feed, ${c} predijo MVP. Gana ${c}.`,
+  (c: string) => `Hoy ${c} no tilteó. Mañana ya veremos.`,
+  (c: string) => `${c} se saltó su promesa diaria de inting.`,
+  (c: string) => `Hipótesis rechazada: ${c} no siempre es el peor.`,
+  // Memes / referencias
+  (c: string) => `${c} dijo "hold my beer" y carreó. Sad meta.`,
+  (c: string) => `Plot twist: ${c} estaba alt-tabbed mirando guías esta vez.`,
+  (c: string) => `${c} did the impossible: tener un día bueno. Calendario it.`,
+  (c: string) => `${c}: "I am the storm that is approaching." El modelo: 😶`,
+  (c: string) => `${c} ascended. Por una partida. Cobardes los que dudaron.`,
+  (c: string) => `Bro, ${c} cooked. El predictor está reportado por fake news.`,
+  (c: string) => `Una vez al año, ${c} es Faker. Hoy fue ese día.`,
+  (c: string) => `${c} se medicó antes de la partida. Plot armor activado.`,
+  (c: string) => `El modelo le debe un café (o un Panteón) a ${c}.`,
+  (c: string) => `${c} just hit different today. Inexplicable.`,
+  (c: string) => `Random ${c} buff: 100% winrate desde el cementerio del modelo.`,
+  (c: string) => `${c} carried like un challenger borracho con suerte.`,
+  (c: string) => `Confidential: ${c} ha estado practicando en mejores campos. Aquí.`,
+  (c: string) => `${c} demostró que el modelo NO es Skynet. Aún.`,
+  (c: string) => `Excusa del modelo: el clima, la luna, ${c} mejorando.`,
+  (c: string) => `${c} se ha leído un libro y ahora es coach de Riot.`,
+  (c: string) => `Trust the process. Hoy el process tenía nombre: ${c}.`,
+  (c: string) => `${c} mid: "shut up and dance". Y bailó la partida.`,
+  (c: string) => `${c} jugó como un challenger. Mañana volverá a ser ${c}.`,
+  (c: string) => `Por primera vez, alguien le dio importancia al elo y se llamaba ${c}.`,
+  (c: string) => `${c} sacó de su mochila un manual y se acordó de jugar.`,
 ]
 
 const pickJoke = (champion: string, correct: boolean): string => {
@@ -2415,25 +2503,48 @@ const resolveLivePrediction = async () => {
       }),
     })
     const data = await res.json()
-    if (res.ok && data.resolved) {
+    if (data.resolved) {
       resolveResult.value = {
         predicted: data.predicted_winner,
         actual: data.actual_winner,
         correct: data.correct,
       }
       fetchPredictionStats()
+      // Push notificación inmediata
+      const matchId = liveGame.value?.match_id || ''
+      fetchWorstChampion(matchId).then(champ => {
+        pushNotification({
+          id: `pred-${matchId}`,
+          icon: data.correct ? '✅' : '❌',
+          title: data.correct ? 'Predicción acertada' : 'Predicción fallada',
+          body: pickJoke(champ, !!data.correct),
+          match_id: matchId,
+          correct: !!data.correct,
+        })
+      })
+    } else if (data.error) {
+      resolveResult.value = { predicted: '?', actual: '?', correct: false, pending: data.error } as any
+    } else if (res.status === 404) {
+      resolveResult.value = { predicted: '?', actual: '?', correct: false, pending: 'No se encontró la predicción. ¿Abriste live para esta partida?' } as any
     } else {
-      resolveResult.value = null
+      resolveResult.value = { predicted: '?', actual: '?', correct: false, pending: 'La partida aún no ha terminado' } as any
     }
   } catch {
-    resolveResult.value = null
+    resolveResult.value = { predicted: '?', actual: '?', correct: false, pending: 'Error de conexión' } as any
   } finally {
     resolving.value = false
   }
 }
 
 
-const searchLiveGame = async () => {
+let lastLiveMatchId: string | null = null
+
+const searchLiveGame = async (forceRefresh = false) => {
+  // Si ya habías visto otra partida en esta sesión, fuerza refresh para evitar
+  // que la caché de priors (6h TTL) muestre la misma predicción.
+  if (!forceRefresh && lastLiveMatchId) {
+    forceRefresh = true
+  }
   showLiveGame.value = true
   liveLoading.value = true
   liveError.value = ''
@@ -2448,6 +2559,7 @@ const searchLiveGame = async () => {
       body: JSON.stringify({
         game_name: summoner.value.split('#')[0],
         tag_line: summoner.value.split('#')[1],
+        force_refresh: forceRefresh,
       }),
     })
     const startData = await startRes.json()
@@ -2467,6 +2579,7 @@ const searchLiveGame = async () => {
       }
       if (pData.status === 'done') {
         liveGame.value = pData.result
+        lastLiveMatchId = pData.result?.match_id || null
         return
       }
       if (pData.status === 'error') {
@@ -2482,9 +2595,37 @@ const searchLiveGame = async () => {
 
 const closeLiveGame = () => {
   liveAbort = true
+  // Intenta resolver la predicción en background al cerrar (si no se hizo ya)
+  if (liveGame.value?.match_id && liveGame.value?.viewer_puuid && !resolveResult.value) {
+    const matchId = liveGame.value.match_id
+    const viewerPuuid = liveGame.value.viewer_puuid
+    fetch(`${API_BASE}/resolvePrediction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ match_id: matchId, viewer_puuid: viewerPuuid }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.resolved) {
+          fetchWorstChampion(matchId).then(champ => {
+            pushNotification({
+              id: `pred-${matchId}`,
+              icon: data.correct ? '✅' : '❌',
+              title: data.correct ? 'Predicción acertada' : 'Predicción fallada',
+              body: pickJoke(champ, !!data.correct),
+              match_id: matchId,
+              correct: !!data.correct,
+            })
+          })
+          fetchPredictionStats()
+        }
+      })
+      .catch(() => {})
+  }
   showLiveGame.value = false
   liveGame.value = null
   liveError.value = ''
+  resolveResult.value = null
 }
 
 const refresh = async () => {

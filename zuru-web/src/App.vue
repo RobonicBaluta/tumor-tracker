@@ -10,7 +10,7 @@ import Compare from './components/Compare.vue';
 const initialPage = (() => {
   const h = window.location.hash || ''
   if (h.startsWith('#/summoner/')) return 'overview'
-  return 'oncologico'
+  return 'overview'  // Top Tumores como default
 })()
 const currentPage = ref(initialPage);
 

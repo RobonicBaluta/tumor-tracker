@@ -305,20 +305,26 @@ def compute_prior_tumor(match_scores):
 
 def compute_team_tumor(prior_scores):
     """
-    Args:
-      prior_scores: lista de int (algunos pueden ser None).
+    Devuelve la MEDIANA de los priors válidos del equipo.
 
-    Returns:
-      int 0-100. Si todos son None devuelve 50.
+    Por qué mediana y no media:
+      - Robusta a outliers: un jugador con tumor 95 no dispara el equipo entero
+      - Neutra al modo streamer: los jugadores sin prior (None) se excluyen
+        directamente, no se rellenan con la media (que sí afectaría)
+      - 5 jugadores → siempre hay una mediana bien definida (el de la posición 3
+        tras ordenar). Si hay pares (4 con prior), promedia los 2 del medio.
 
-    Garantía: el resultado está en [min(prior_scores válidos), max(prior_scores válidos)]
-    porque es una media simple sin pesos.
+    Returns: int 0-100. Si no hay priors válidos devuelve 50.
     """
-    valid = [s for s in prior_scores if s is not None]
+    valid = sorted(s for s in prior_scores if s is not None)
     if not valid:
         return 50
-    avg = sum(valid) / len(valid)
-    return max(0, min(100, int(round(avg))))
+    n = len(valid)
+    if n % 2 == 1:
+        median = valid[n // 2]
+    else:
+        median = (valid[n // 2 - 1] + valid[n // 2]) / 2
+    return max(0, min(100, int(round(median))))
 
 
 # ---------------------------------------------------------------------------
@@ -380,41 +386,48 @@ def predict_team_outcome(players, tie_threshold=4, confidence_scale=6):
     blue_priors = [r["adjusted_tumor"] for r in blue]
     red_priors  = [r["adjusted_tumor"] for r in red]
 
-    # Streamer mode fallback: jugadores sin prior usan la media de su equipo.
-    def fill_nones(rows, priors):
-        valid = [p for p in priors if p is not None]
-        if not valid:
-            return priors
-        avg = sum(valid) / len(valid)
-        return [p if p is not None else avg for p in priors]
+    # Streamers (prior=None) se EXCLUYEN del cálculo directamente. No se
+    # rellenan. compute_team_tumor hace mediana de los válidos, así que
+    # contribuyen 0 al resultado del equipo.
+    blue_team_tumor = compute_team_tumor(blue_priors)
+    red_team_tumor  = compute_team_tumor(red_priors)
 
-    blue_filled = fill_nones(blue, blue_priors)
-    red_filled  = fill_nones(red, red_priors)
-
-    blue_team_tumor = compute_team_tumor(blue_filled)
-    red_team_tumor  = compute_team_tumor(red_filled)
-
-    # contribución de cada jugador al equipo: 1/N de la media simple
-    n_blue = max(1, len([1 for p in blue_filled if p is not None]))
-    n_red  = max(1, len([1 for p in red_filled if p is not None]))
-
-    for r, p in zip(blue, blue_filled):
-        r["effective_tumor"] = int(round(p)) if p is not None else None
-        r["contribution"] = round(p / n_blue, 2) if p is not None else None
-    for r, p in zip(red, red_filled):
-        r["effective_tumor"] = int(round(p)) if p is not None else None
-        r["contribution"] = round(p / n_red, 2) if p is not None else None
+    for r in blue:
+        r["effective_tumor"] = r["adjusted_tumor"]
+        r["contribution"] = r["adjusted_tumor"]
+    for r in red:
+        r["effective_tumor"] = r["adjusted_tumor"]
+        r["contribution"] = r["adjusted_tumor"]
 
     diff = red_team_tumor - blue_team_tumor
     abs_diff = abs(diff)
-    winner = "tie"
+
+    # Tiebreaker: si las medianas son iguales, usar suma total de priors.
+    # Solo se declara "tie" (no hay predicción, no cuenta para accuracy) si
+    # las medianas Y las sumas son EXACTAMENTE iguales.
+    blue_sum = sum(p for p in blue_priors if p is not None)
+    red_sum  = sum(p for p in red_priors  if p is not None)
+    sum_diff = red_sum - blue_sum
+
     if abs_diff >= tie_threshold:
         winner = "blue" if blue_team_tumor < red_team_tumor else "red"
+    elif abs_diff > 0 or abs(sum_diff) > 0:
+        # Medianas cerca o iguales → desempata por suma (menos tumor total gana)
+        if abs(sum_diff) > 0:
+            winner = "blue" if blue_sum < red_sum else "red"
+        else:
+            winner = "blue" if blue_team_tumor < red_team_tumor else "red"
+    else:
+        # Absolutamente idénticos en mediana Y suma: no hay prediccion
+        winner = "tie"
+
     confidence = min(99, abs_diff * confidence_scale)
 
     return {
         "blue_team_tumor": blue_team_tumor,
         "red_team_tumor":  red_team_tumor,
+        "blue_team_sum":   blue_sum,
+        "red_team_sum":    red_sum,
         "winner":          winner,
         "confidence":      confidence,
         "diff":            diff,

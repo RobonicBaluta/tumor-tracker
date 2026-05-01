@@ -8,7 +8,9 @@ from flask_cors import CORS
 from config import (
     headers, ACCOUNT_BY_RIOT_ID_URL, MATCHES_BY_PUUID_URL,
     MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
-    LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL
+    LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL,
+    RIOT_PLATFORM_URL, PLATFORM_HOSTS, platform_url_for,
+    league_url, spectator_url, mastery_url,
 )
 from riot_infra import riot_get as _riot_get, cache_stats
 from tumor_engine import (
@@ -21,6 +23,21 @@ from tumor_engine import (
 
 def riot_get(url, max_retries=4):
     return _riot_get(url, headers=headers, max_retries=max_retries)
+
+
+def detect_platform(puuid):
+    """Auto-detecta la plataforma del jugador mirando el prefijo de su último match ID.
+    Devuelve la URL base de la plataforma (e.g. https://eun1.api.riotgames.com).
+    Fallback a EUW si no se puede determinar."""
+    ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count=1")
+    if ids_res.status_code == 200:
+        ids = ids_res.json()
+        if ids:
+            prefix = ids[0].split("_")[0].upper()
+            host = PLATFORM_HOSTS.get(prefix)
+            if host:
+                return host
+    return RIOT_PLATFORM_URL
 
 
 import uuid
@@ -263,7 +280,165 @@ def _pred_db():
         )
     except Exception:
         pass
+    # Tabla para guardar snapshots del live: cuando miras una partida en vivo,
+    # se persisten los priors + predicción para no recalcular en matchDetail.
+    _pred_conn.execute("""
+        CREATE TABLE IF NOT EXISTS live_snapshots (
+            match_id TEXT PRIMARY KEY,
+            snapshot TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+    """)
+    # Tabla de logs detallados por predicción: se usa para auditar y afinar
+    # empíricamente el modelo (mediante /tuningReport).
+    # Backtest histórico — cada partida replayed se persiste para acumular
+    # datos empíricos. Deduplicado por (match_id, viewer_puuid).
+    _pred_conn.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_logs (
+            match_id TEXT NOT NULL,
+            viewer_puuid TEXT NOT NULL,
+            viewer_name TEXT,
+            created_at REAL NOT NULL,
+            predicted_winner TEXT,
+            actual_winner TEXT,
+            correct INTEGER,
+            confidence INTEGER,
+            median_diff REAL,
+            sum_diff REAL,
+            blue_team_tumor REAL,
+            red_team_tumor REAL,
+            blue_team_sum REAL,
+            red_team_sum REAL,
+            used_sum_tiebreaker INTEGER DEFAULT 0,
+            blue_priors TEXT,
+            red_priors TEXT,
+            blue_roles TEXT,
+            red_roles TEXT,
+            PRIMARY KEY (match_id, viewer_puuid)
+        )
+    """)
+    _pred_conn.execute("""
+        CREATE TABLE IF NOT EXISTS prediction_logs (
+            match_id TEXT NOT NULL,
+            viewer_puuid TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            -- Predicción
+            predicted_winner TEXT,
+            confidence INTEGER,
+            blue_team_tumor REAL,
+            red_team_tumor REAL,
+            blue_team_sum REAL,
+            red_team_sum REAL,
+            median_diff REAL,
+            sum_diff REAL,
+            used_sum_tiebreaker INTEGER DEFAULT 0,
+            -- Composición de cada equipo (priors individuales)
+            blue_priors TEXT,      -- JSON array de ints
+            red_priors TEXT,
+            blue_roles TEXT,       -- JSON array de strings
+            red_roles TEXT,
+            blue_streamers INTEGER DEFAULT 0,
+            red_streamers INTEGER DEFAULT 0,
+            -- Resolución
+            resolved INTEGER DEFAULT 0,
+            actual_winner TEXT,
+            correct INTEGER,
+            resolved_at REAL,
+            PRIMARY KEY (match_id, viewer_puuid)
+        )
+    """)
     return _pred_conn
+
+
+def log_prediction(entry):
+    """Graba una predicción con todo su detalle (priors por jugador, roles, sumas)."""
+    db = _pred_db()
+    db.execute(
+        """INSERT OR REPLACE INTO prediction_logs (
+            match_id, viewer_puuid, created_at,
+            predicted_winner, confidence,
+            blue_team_tumor, red_team_tumor, blue_team_sum, red_team_sum,
+            median_diff, sum_diff, used_sum_tiebreaker,
+            blue_priors, red_priors, blue_roles, red_roles,
+            blue_streamers, red_streamers,
+            resolved
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+        (
+            entry["match_id"], entry["viewer_puuid"], entry.get("created_at", time.time()),
+            entry.get("predicted_winner"), entry.get("confidence", 0),
+            entry.get("blue_team_tumor"), entry.get("red_team_tumor"),
+            entry.get("blue_team_sum"), entry.get("red_team_sum"),
+            entry.get("median_diff"), entry.get("sum_diff"),
+            1 if entry.get("used_sum_tiebreaker") else 0,
+            json.dumps(entry.get("blue_priors") or []),
+            json.dumps(entry.get("red_priors") or []),
+            json.dumps(entry.get("blue_roles") or []),
+            json.dumps(entry.get("red_roles") or []),
+            entry.get("blue_streamers", 0),
+            entry.get("red_streamers", 0),
+        ),
+    )
+
+
+def log_backtest_match(entry):
+    """Guarda una fila de backtest (una partida replayed)."""
+    db = _pred_db()
+    db.execute(
+        """INSERT OR REPLACE INTO backtest_logs (
+            match_id, viewer_puuid, viewer_name, created_at,
+            predicted_winner, actual_winner, correct, confidence,
+            median_diff, sum_diff,
+            blue_team_tumor, red_team_tumor, blue_team_sum, red_team_sum,
+            used_sum_tiebreaker,
+            blue_priors, red_priors, blue_roles, red_roles
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            entry["match_id"], entry["viewer_puuid"], entry.get("viewer_name"),
+            entry.get("created_at", time.time()),
+            entry.get("predicted_winner"), entry.get("actual_winner"),
+            1 if entry.get("correct") else (0 if entry.get("correct") is False else None),
+            entry.get("confidence", 0),
+            entry.get("median_diff"), entry.get("sum_diff"),
+            entry.get("blue_team_tumor"), entry.get("red_team_tumor"),
+            entry.get("blue_team_sum"), entry.get("red_team_sum"),
+            1 if entry.get("used_sum_tiebreaker") else 0,
+            json.dumps(entry.get("blue_priors") or []),
+            json.dumps(entry.get("red_priors") or []),
+            json.dumps(entry.get("blue_roles") or []),
+            json.dumps(entry.get("red_roles") or []),
+        ),
+    )
+
+
+def log_resolve(match_id, viewer_puuid, actual_winner, correct):
+    db = _pred_db()
+    db.execute(
+        """UPDATE prediction_logs
+           SET resolved=1, actual_winner=?, correct=?, resolved_at=?
+           WHERE match_id=? AND viewer_puuid=?""",
+        (actual_winner, 1 if correct else 0, time.time(), match_id, viewer_puuid),
+    )
+
+
+def save_live_snapshot(match_id, snapshot_data):
+    """Guarda el snapshot completo del live (players + prediction) para reutilizar en matchDetail."""
+    db = _pred_db()
+    db.execute(
+        "INSERT OR REPLACE INTO live_snapshots (match_id, snapshot, created_at) VALUES (?, ?, ?)",
+        (match_id, json.dumps(snapshot_data), time.time()),
+    )
+
+
+def get_live_snapshot(match_id):
+    """Recupera un snapshot guardado. Devuelve None si no existe."""
+    db = _pred_db()
+    row = db.execute("SELECT snapshot FROM live_snapshots WHERE match_id=?", (match_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
 
 
 def predictions_add(entry):
@@ -299,6 +474,12 @@ def predictions_mark_resolved(match_id, viewer_puuid, actual_winner, predicted_w
         "UPDATE predictions SET resolved=1, actual_winner=?, correct=? WHERE match_id=? AND viewer_puuid=?",
         (actual_winner, correct, match_id, viewer_puuid),
     )
+    # Log detallado: refleja la resolución en prediction_logs
+    try:
+        if predicted_winner:
+            log_resolve(match_id, viewer_puuid, actual_winner, predicted_winner == actual_winner)
+    except Exception:
+        pass
 
 
 def load_predictions():
@@ -487,9 +668,10 @@ RANK_THRESHOLDS = {
 }
 
 
-def get_player_rank(puuid):
+def get_player_rank(puuid, platform_host=None):
     """Obtiene el tier SoloQ actual del jugador (e.g. 'GOLD')."""
-    entries_res = riot_get(f"{LEAGUE_ENTRIES_BY_PUUID_URL}/{puuid}")
+    url = f"{league_url(platform_host or RIOT_PLATFORM_URL)}/{puuid}"
+    entries_res = riot_get(url)
     if entries_res.status_code != 200:
         return "GOLD", "IV"  # fallback
 
@@ -526,8 +708,12 @@ def calculate_tumor_score(player, game_duration, tier="GOLD", role="DEFAULT"):
 
 
 def get_worst_player_in_match(participants, puuid):
-    """Encuentra el peor aliado en una partida"""
-    my_player = next(p for p in participants if p["puuid"] == puuid)
+    """Encuentra el peor aliado en una partida.
+    Devuelve None si el jugador no está en la partida (caso raro: cambio de
+    region, match corrupto, etc)."""
+    my_player = next((p for p in participants if p["puuid"] == puuid), None)
+    if my_player is None:
+        return None
     my_team_id = my_player["teamId"]
 
     worst_player = None
@@ -717,6 +903,9 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         account = account_res.json()
         puuid = account["puuid"]
 
+        # Auto-detectar plataforma del jugador
+        platform_host = detect_platform(puuid)
+
         # Warmup silencioso: cachea match details en background para acelerar analytics
         if start == 0:
             warmup_prefetch(puuid, count=30)
@@ -725,7 +914,7 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         if tier_override:
             tier, division = tier_override, ""
         else:
-            tier, division = get_player_rank(puuid)
+            tier, division = get_player_rank(puuid, platform_host)
 
         # 3. Obtener rankeds (SoloQ) desde el offset pedido
         matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start={start}&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
@@ -754,7 +943,9 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
                 continue
 
             # Datos del propio jugador en esa partida
-            my_data = next(p for p in participants if p["puuid"] == puuid)
+            my_data = next((p for p in participants if p["puuid"] == puuid), None)
+            if my_data is None:
+                continue
             my_kda = calculate_kda(my_data["kills"], my_data["deaths"], my_data["assists"])
             my_cs = my_data["totalMinionsKilled"] + my_data["neutralMinionsKilled"]
 
@@ -850,7 +1041,8 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         }
 
     except Exception as e:
-        return {"error": str(e)}, 500
+        import traceback
+        return {"error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()}, 500
 
 
 def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_id=None):
@@ -973,7 +1165,7 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
         return None
 
 
-def _compute_live_game(game_name, tag_line, job_id=None):
+def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
     """Extrae la lógica del endpoint /liveGame para poder reutilizarla en modo async.
 
     Si se pasa job_id, va publicando progreso en el job store.
@@ -994,12 +1186,21 @@ def _compute_live_game(game_name, tag_line, job_id=None):
         return {"error": "No se pudo obtener la cuenta"}, 400
     me_puuid = acc_res.json()["puuid"]
 
+    # Auto-detectar plataforma del jugador (EUW, EUNE, NA, etc)
+    step("Detectando región...")
+    platform_host = detect_platform(me_puuid)
+
     step("Buscando partida activa...")
-    spec_res = riot_get(f"{ACTIVE_GAME_URL}/{me_puuid}")
+    spec_res = riot_get(f"{spectator_url(platform_host)}/{me_puuid}")
     if spec_res.status_code == 404:
         return {"error": "El jugador no está en partida ahora mismo"}, 404
+    if spec_res.status_code in (502, 503, 504):
+        return {"error": "Riot está caído (502/503). Espera unos segundos e intenta otra vez."}, 503
+    if spec_res.status_code == 429:
+        return {"error": "Rate limit. Espera 1-2 minutos."}, 429
     if spec_res.status_code != 200:
-        return {"error": f"Error spectator: {spec_res.text}"}, 400
+        body = (spec_res.text or "")[:200].replace("\n", " ")
+        return {"error": f"Spectator error {spec_res.status_code}: {body}"}, 502
 
     game = spec_res.json()
     participants = game.get("participants", []) or []
@@ -1041,7 +1242,7 @@ def _compute_live_game(game_name, tag_line, job_id=None):
         champ_id = p.get("championId")
         cache_key = f"{p_puuid}:{champ_id}"
         cached = cache.get(cache_key)
-        if cached and cached["data"].get("avg_tumor_score") is not None and (now - cached.get("ts", 0)) < LIVE_CACHE_TTL:
+        if not force_refresh and cached and cached["data"].get("avg_tumor_score") is not None and (now - cached.get("ts", 0)) < LIVE_CACHE_TTL:
             entry = dict(cached["data"])
             # Campos específicos de esta partida: siempre sobrescribir desde spectator
             entry["team_id"] = p.get("teamId")
@@ -1074,7 +1275,7 @@ def _compute_live_game(game_name, tag_line, job_id=None):
             players.append(entry)
             continue
 
-        tier, division = get_player_rank(p_puuid)
+        tier, division = get_player_rank(p_puuid, platform_host)
 
         raw_riot_id = p.get("riotId", "") or ""
         streamer_mode = False
@@ -1113,7 +1314,7 @@ def _compute_live_game(game_name, tag_line, job_id=None):
         mastery_points = 0
         mastery_level = 0
         try:
-            m_res = riot_get(f"{CHAMPION_MASTERY_URL}/{p_puuid}/by-champion/{champ_id}")
+            m_res = riot_get(f"{mastery_url(platform_host)}/{p_puuid}/by-champion/{champ_id}")
             if m_res.status_code == 200:
                 m = m_res.json()
                 mastery_points = m.get("championPoints", 0)
@@ -1250,7 +1451,15 @@ def _compute_live_game(game_name, tag_line, job_id=None):
 
     game_id = game.get("gameId")
     queue_id = game.get("gameQueueConfigId")
-    platform = "EUW1"
+    # Derivar platform ID del host detectado (e.g. "https://eun1.api..." → "EUN1")
+    platform = game.get("platformId") or ""
+    if not platform:
+        for pid, host in PLATFORM_HOSTS.items():
+            if host == platform_host:
+                platform = pid
+                break
+        if not platform:
+            platform = "EUW1"
     match_id = f"{platform}_{game_id}"
 
     me = next((p for p in players if p["is_me"]), None)
@@ -1274,8 +1483,40 @@ def _compute_live_game(game_name, tag_line, job_id=None):
     except Exception:
         pass
 
+    # Log detallado para afinación empírica
+    try:
+        blue_players = [p for p in players if p.get("team_id") == 100]
+        red_players  = [p for p in players if p.get("team_id") == 200]
+        blue_priors = [p.get("avg_tumor_score") for p in blue_players]
+        red_priors  = [p.get("avg_tumor_score") for p in red_players]
+        median_diff = (prediction.get("red_team_tumor", 0) or 0) - (prediction.get("blue_team_tumor", 0) or 0)
+        sum_diff_raw = (prediction.get("red_team_sum", 0) or 0) - (prediction.get("blue_team_sum", 0) or 0)
+        log_prediction({
+            "match_id": match_id,
+            "viewer_puuid": me_puuid,
+            "created_at": now,
+            "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
+            "confidence": prediction["confidence"],
+            "blue_team_tumor": prediction["blue_team_tumor"],
+            "red_team_tumor":  prediction["red_team_tumor"],
+            "blue_team_sum":   prediction.get("blue_team_sum"),
+            "red_team_sum":    prediction.get("red_team_sum"),
+            "median_diff":     median_diff,
+            "sum_diff":        sum_diff_raw,
+            "used_sum_tiebreaker": abs(median_diff) < 4 and prediction["winner"] != "tie",
+            "blue_priors": blue_priors,
+            "red_priors":  red_priors,
+            "blue_roles":  [p.get("role") or "" for p in blue_players],
+            "red_roles":   [p.get("role") or "" for p in red_players],
+            "blue_streamers": sum(1 for p in blue_players if p.get("streamer_mode")),
+            "red_streamers":  sum(1 for p in red_players  if p.get("streamer_mode")),
+        })
+    except Exception:
+        pass
+
     step("Listo", progress=total_players, total=total_players)
-    return {
+
+    result = {
         "game_id": game_id,
         "match_id": match_id,
         "queue_id": queue_id,
@@ -1283,7 +1524,28 @@ def _compute_live_game(game_name, tag_line, job_id=None):
         "players": players,
         "bans": bans,
         "prediction": prediction,
-    }, 200
+    }
+
+    # Persistir snapshot: priors + predicción para reutilizar en matchDetail.
+    try:
+        snapshot = {
+            "prediction": prediction,
+            "player_priors": {
+                p["puuid"]: {
+                    "prior_tumor": p.get("avg_tumor_score"),
+                    "role": p.get("role"),
+                    "tier": p.get("tier"),
+                    "is_tilted": p.get("is_tilted"),
+                    "is_hotstreak": p.get("is_hotstreak"),
+                }
+                for p in players if p.get("puuid")
+            },
+        }
+        save_live_snapshot(match_id, snapshot)
+    except Exception:
+        pass
+
+    return result, 200
 
 
 @app.route('/liveGame', methods=['GET'])
@@ -1301,6 +1563,7 @@ def live_game_start():
     data = request.get_json() or {}
     game_name = data.get("game_name")
     tag_line = data.get("tag_line")
+    force_refresh = bool(data.get("force_refresh", False))
     if not game_name or not tag_line:
         return jsonify({"error": "Falta game_name y/o tag_line"}), 400
     job_cleanup()
@@ -1308,7 +1571,7 @@ def live_game_start():
 
     def _worker():
         try:
-            result, status = _compute_live_game(game_name, tag_line, job_id=jid)
+            result, status = _compute_live_game(game_name, tag_line, job_id=jid, force_refresh=force_refresh)
             if status == 200:
                 job_update(jid, status="done", result=result, progress=1, total=1)
             else:
@@ -1556,6 +1819,218 @@ def player_analytics_endpoint():
     })
 
 
+@app.route('/tuningReport', methods=['GET'])
+def tuning_report_endpoint():
+    """Reporte empírico para afinar el modelo.
+
+    Devuelve accuracy segmentada por:
+      - Banda de confianza (low/medium/high)
+      - Magnitud de median_diff (cerca del tie / claro)
+      - Si se usó el tiebreaker por suma o no
+      - Por número de streamers en cada equipo
+      - Por rol predominante del equipo (si los hay)
+      - Sesgo blue vs red (¿el modelo favorece una lado?)
+      - Errores destacados (más recientes)
+
+    Se puede invocar manualmente; también sirve para que un agent lea el JSON
+    y proponga cambios en pesos/umbrales del engine.
+    """
+    db = _pred_db()
+    source = request.args.get("source", "all")  # "live" | "backtest" | "all"
+
+    live_rows = db.execute("""
+        SELECT match_id, predicted_winner, actual_winner, correct, confidence,
+               blue_team_tumor, red_team_tumor, blue_team_sum, red_team_sum,
+               median_diff, sum_diff, used_sum_tiebreaker,
+               blue_priors, red_priors, blue_roles, red_roles,
+               blue_streamers, red_streamers, created_at, resolved
+        FROM prediction_logs
+        WHERE resolved = 1 AND predicted_winner IS NOT NULL
+    """).fetchall() if source in ("live", "all") else []
+
+    backtest_rows = db.execute("""
+        SELECT match_id, predicted_winner, actual_winner, correct, confidence,
+               blue_team_tumor, red_team_tumor, blue_team_sum, red_team_sum,
+               median_diff, sum_diff, used_sum_tiebreaker,
+               blue_priors, red_priors, blue_roles, red_roles,
+               0 AS blue_streamers, 0 AS red_streamers, created_at, 1 AS resolved
+        FROM backtest_logs
+        WHERE predicted_winner IS NOT NULL
+    """).fetchall() if source in ("backtest", "all") else []
+
+    rows = list(live_rows) + list(backtest_rows)
+
+    if not rows:
+        return jsonify({
+            "total_resolved": 0,
+            "message": "Aún no hay predicciones resueltas para analizar. Juega y comprueba algunas."
+        })
+
+    def pct(n, d):
+        return round(n / d * 100, 1) if d else 0.0
+
+    def bucket_by(key_fn):
+        buckets = {}
+        for r in rows:
+            k = key_fn(r)
+            b = buckets.setdefault(k, {"n": 0, "hits": 0})
+            b["n"] += 1
+            if r[3]:
+                b["hits"] += 1
+        return {
+            k: {"n": v["n"], "correct": v["hits"], "accuracy": pct(v["hits"], v["n"])}
+            for k, v in buckets.items()
+        }
+
+    total = len(rows)
+    correct = sum(1 for r in rows if r[3])
+    accuracy = pct(correct, total)
+
+    # Confianza
+    def conf_band(r):
+        c = r[4] or 0
+        if c < 30:  return "low (<30)"
+        if c < 60:  return "med (30-59)"
+        return "high (60+)"
+    by_confidence = bucket_by(conf_band)
+
+    # Magnitud de diferencia de medianas
+    def med_band(r):
+        d = abs(r[9] or 0)
+        if d < 5:    return "very close (0-4)"
+        if d < 10:   return "close (5-9)"
+        if d < 20:   return "clear (10-19)"
+        return "obvious (20+)"
+    by_median_gap = bucket_by(med_band)
+
+    # Si el tiebreaker por suma se usó
+    by_tiebreaker = bucket_by(lambda r: "sum_tiebreaker" if r[11] else "median_only")
+
+    # Sesgo blue vs red
+    blue_wins = sum(1 for r in rows if r[1] == "blue")
+    red_wins  = sum(1 for r in rows if r[1] == "red")
+    blue_correct = sum(1 for r in rows if r[1] == "blue" and r[3])
+    red_correct  = sum(1 for r in rows if r[1] == "red"  and r[3])
+    side_bias = {
+        "predicted_blue":  {"n": blue_wins, "correct": blue_correct, "accuracy": pct(blue_correct, blue_wins)},
+        "predicted_red":   {"n": red_wins,  "correct": red_correct,  "accuracy": pct(red_correct,  red_wins)},
+    }
+
+    # Streamers en los equipos
+    def streamer_band(r):
+        total_streamers = (r[16] or 0) + (r[17] or 0)
+        if total_streamers == 0: return "no streamers"
+        if total_streamers == 1: return "1 streamer"
+        return "2+ streamers"
+    by_streamers = bucket_by(streamer_band)
+
+    # Casos de fallo reciente (para inspección manual)
+    misses = [r for r in rows if not r[3]]
+    misses_recent = sorted(misses, key=lambda r: r[18] or 0, reverse=True)[:10]
+    def miss_summary(r):
+        return {
+            "match_id": r[0],
+            "predicted": r[1],
+            "actual": r[2],
+            "confidence": r[4],
+            "blue_tumor": r[5],
+            "red_tumor": r[6],
+            "median_diff": r[9],
+            "sum_diff": r[10],
+            "used_sum_tiebreaker": bool(r[11]),
+            "blue_priors": json.loads(r[12] or "[]"),
+            "red_priors":  json.loads(r[13] or "[]"),
+            "blue_roles": json.loads(r[14] or "[]"),
+            "red_roles":  json.loads(r[15] or "[]"),
+            "streamers": (r[16] or 0) + (r[17] or 0),
+        }
+
+    return jsonify({
+        "generated_at": time.time(),
+        "source": source,
+        "total_resolved": total,
+        "total_correct": correct,
+        "accuracy_overall": accuracy,
+        "sources_breakdown": {
+            "live_predictions": len(live_rows),
+            "backtest_replays": len(backtest_rows),
+        },
+        "by_confidence_band": by_confidence,
+        "by_median_gap": by_median_gap,
+        "by_tiebreaker": by_tiebreaker,
+        "side_bias": side_bias,
+        "by_streamer_count": by_streamers,
+        "misses_recent_10": [miss_summary(r) for r in misses_recent],
+        "suggestions_hints": _tuning_suggestions(by_confidence, by_median_gap, by_tiebreaker, side_bias, accuracy),
+    })
+
+
+def _tuning_suggestions(by_conf, by_med, by_tie, side_bias, overall):
+    """Reglas heurísticas que devuelven hints para humanos o agents."""
+    hints = []
+    if overall < 55:
+        hints.append(f"Accuracy overall {overall}% es bajo (<55). El modelo casi tira moneda, revisar pesos de ejes.")
+    # Confidence que no correlaciona con accuracy
+    high = by_conf.get("high (60+)", {})
+    low  = by_conf.get("low (<30)", {})
+    if high and low and high.get("accuracy", 0) < low.get("accuracy", 0) + 5:
+        hints.append("High-confidence no mejora mucho sobre low-confidence. La escala de confidence está mal calibrada — bajar confidence_scale o subir tie_threshold.")
+    # Sesgo blue/red
+    b = side_bias["predicted_blue"]["accuracy"]
+    r = side_bias["predicted_red"]["accuracy"]
+    if abs(b - r) > 10:
+        hints.append(f"Sesgo detectado: predicciones blue tienen {b}% acierto y red {r}%. Desequilibrio, revisar si algo depende del team_id.")
+    # Very close casos que sí aciertan mucho
+    vc = by_med.get("very close (0-4)", {})
+    if vc and vc.get("accuracy", 0) > 55:
+        hints.append("Las predicciones 'very close' aciertan decentemente — considerar bajar tie_threshold para cubrir más casos.")
+    # Tiebreaker útil o no
+    st = by_tie.get("sum_tiebreaker", {})
+    mo = by_tie.get("median_only", {})
+    if st and mo:
+        d = st.get("accuracy", 0) - mo.get("accuracy", 0)
+        if d < -5:
+            hints.append("El tiebreaker por suma acierta peor que las predicciones por mediana. Reconsiderar el tiebreaker.")
+        elif d > 5:
+            hints.append("El tiebreaker por suma mejora accuracy. Mantenerlo.")
+    if not hints:
+        hints.append("Nada obvio que tocar. Sigue acumulando datos.")
+    return hints
+
+
+@app.route('/backtestHistory', methods=['GET'])
+def backtest_history_endpoint():
+    """Estadísticas acumuladas del histórico de backtests."""
+    db = _pred_db()
+    rows = db.execute("""
+        SELECT predicted_winner, actual_winner, correct, confidence, created_at
+        FROM backtest_logs
+    """).fetchall()
+
+    decided = [r for r in rows if r[0]]
+    correct = sum(1 for r in decided if r[2])
+    ties = sum(1 for r in rows if not r[0])
+
+    # Últimos 30 días
+    import time as _time
+    cutoff_30d = _time.time() - 30 * 86400
+    recent = [r for r in decided if (r[4] or 0) >= cutoff_30d]
+    recent_correct = sum(1 for r in recent if r[2])
+
+    return jsonify({
+        "total_backtested": len(rows),
+        "decided": len(decided),
+        "ties_excluded": ties,
+        "correct": correct,
+        "accuracy_all_time": round(correct / len(decided) * 100, 1) if decided else 0.0,
+        "last_30_days": {
+            "decided": len(recent),
+            "correct": recent_correct,
+            "accuracy": round(recent_correct / len(recent) * 100, 1) if recent else 0.0,
+        },
+    })
+
+
 @app.route('/cacheStats', methods=['GET'])
 def cache_stats_endpoint():
     return jsonify(cache_stats())
@@ -1638,6 +2113,37 @@ def _run_backtest(puuid, tier, match_ids, game_name, tag_line, job_id=None):
             "confidence": prediction["confidence"],
             "diff": prediction["diff"],
         })
+
+        # Persistir backtest para acumular datos empíricos
+        try:
+            blue_players = [x for x in parts if x["teamId"] == 100]
+            red_players  = [x for x in parts if x["teamId"] == 200]
+            blue_priors = [sp.get("avg_tumor_score") for sp in synthetic_players if sp["team_id"] == 100]
+            red_priors  = [sp.get("avg_tumor_score") for sp in synthetic_players if sp["team_id"] == 200]
+            median_diff = (prediction.get("red_team_tumor", 0) or 0) - (prediction.get("blue_team_tumor", 0) or 0)
+            sum_diff_raw = (prediction.get("red_team_sum", 0) or 0) - (prediction.get("blue_team_sum", 0) or 0)
+            log_backtest_match({
+                "match_id": mid,
+                "viewer_puuid": puuid,
+                "viewer_name": f"{game_name}#{tag_line}",
+                "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
+                "actual_winner": actual,
+                "correct": hit,
+                "confidence": prediction["confidence"],
+                "median_diff": median_diff,
+                "sum_diff": sum_diff_raw,
+                "blue_team_tumor": prediction["blue_team_tumor"],
+                "red_team_tumor": prediction["red_team_tumor"],
+                "blue_team_sum": prediction.get("blue_team_sum"),
+                "red_team_sum": prediction.get("red_team_sum"),
+                "used_sum_tiebreaker": abs(median_diff) < 4 and prediction["winner"] != "tie",
+                "blue_priors": blue_priors,
+                "red_priors": red_priors,
+                "blue_roles": [p.get("teamPosition") or "" for p in blue_players],
+                "red_roles":  [p.get("teamPosition") or "" for p in red_players],
+            })
+        except Exception:
+            pass
     if job_id:
         job_update(job_id, step="Listo", progress=n, total=n)
 
@@ -1887,6 +2393,11 @@ def match_detail_endpoint(match_id):
     game_creation = info.get("gameCreation", 0)
     viewer_tier = request.args.get("viewer_tier", "GOLD") or "GOLD"
 
+    # Intentar recuperar snapshot del live (si este match se vio en directo)
+    snapshot = get_live_snapshot(match_id)
+    snapshot_priors = snapshot.get("player_priors", {}) if snapshot else {}
+    cached_prediction = snapshot.get("prediction") if snapshot else None
+
     def summarize(p):
         kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
         cs = p["totalMinionsKilled"] + p["neutralMinionsKilled"]
@@ -1899,7 +2410,14 @@ def match_detail_endpoint(match_id):
         }
         role = p.get("teamPosition") or "DEFAULT"
         match_tumor = calculate_tumor_score(stats, game_duration, viewer_tier, role)
-        prior_tumor = compute_prior_tumor_score(p["puuid"], viewer_tier, game_creation, num=5)
+
+        # Reutilizar prior del snapshot si existe; si no, calcular fresco
+        sp = snapshot_priors.get(p["puuid"])
+        if sp is not None:
+            prior_tumor = sp.get("prior_tumor")
+        else:
+            prior_tumor = compute_prior_tumor_score(p["puuid"], viewer_tier, game_creation, num=5)
+
         return {
             "puuid": p["puuid"],
             "nombre": f"{p['riotIdGameName']}#{p['riotIdTagline']}",
@@ -1921,31 +2439,32 @@ def match_detail_endpoint(match_id):
     team_blue = [summarize(p) for p in participants if p["teamId"] == 100]
     team_red  = [summarize(p) for p in participants if p["teamId"] == 200]
 
-    # Predicción retroactiva con el MISMO modelo que usa el live (role/volume/elo).
-    synthetic_players = []
-    for p, summary in zip(
-        [pp for pp in participants if pp["teamId"] == 100],
-        team_blue,
-    ):
-        synthetic_players.append({
-            "team_id": 100,
-            "avg_tumor_score": summary["prior_tumor_score"],
-            "tier": viewer_tier,
-            "role": p.get("teamPosition") or "",
-            "champion_total_sample": 5 if summary["prior_tumor_score"] is not None else 0,
-        })
-    for p, summary in zip(
-        [pp for pp in participants if pp["teamId"] == 200],
-        team_red,
-    ):
-        synthetic_players.append({
-            "team_id": 200,
-            "avg_tumor_score": summary["prior_tumor_score"],
-            "tier": viewer_tier,
-            "role": p.get("teamPosition") or "",
-            "champion_total_sample": 5 if summary["prior_tumor_score"] is not None else 0,
-        })
-    prediction = predict_team_outcome(synthetic_players)
+    # Usar predicción cacheada del live si existe; si no, calcular con priors
+    if cached_prediction:
+        prediction = cached_prediction
+    else:
+        synthetic_players = []
+        for p, summary in zip(
+            [pp for pp in participants if pp["teamId"] == 100],
+            team_blue,
+        ):
+            synthetic_players.append({
+                "team_id": 100,
+                "avg_tumor_score": summary["prior_tumor_score"],
+                "tier": viewer_tier,
+                "role": p.get("teamPosition") or "",
+            })
+        for p, summary in zip(
+            [pp for pp in participants if pp["teamId"] == 200],
+            team_red,
+        ):
+            synthetic_players.append({
+                "team_id": 200,
+                "avg_tumor_score": summary["prior_tumor_score"],
+                "tier": viewer_tier,
+                "role": p.get("teamPosition") or "",
+            })
+        prediction = predict_team_outcome(synthetic_players)
 
     return jsonify({
         "match_id": match_id,
@@ -1955,6 +2474,7 @@ def match_detail_endpoint(match_id):
         "team_blue": team_blue,
         "team_red": team_red,
         "prediction": prediction,
+        "from_live_snapshot": bool(snapshot),
     })
 
 
