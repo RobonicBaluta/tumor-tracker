@@ -551,10 +551,9 @@
 
     <!-- Match detail modal -->
     <Transition name="modal">
-      <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeMatchDetail">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeMatchDetail">
-        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 
           <!-- Modal header -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
@@ -690,16 +689,14 @@
             </template>
           </div>
         </div>
-        </div>
       </div>
     </Transition>
 
     <!-- Live game modal -->
     <Transition name="modal">
-      <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[6vh] sm:pt-4"
         @click.self="closeLiveGame">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeLiveGame">
-        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
@@ -983,7 +980,6 @@
             </div>
           </div>
         </div>
-        </div>
       </div>
     </Transition>
 
@@ -1048,10 +1044,9 @@
 
     <!-- Analytics modal -->
     <Transition name="modal">
-      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeAnalytics">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeAnalytics">
-        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0d1b2a]/95 backdrop-blur z-10">
             <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
             <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
@@ -1390,7 +1385,6 @@
             </section>
 
           </div>
-        </div>
         </div>
       </div>
     </Transition>

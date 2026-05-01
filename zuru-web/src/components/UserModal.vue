@@ -1,9 +1,8 @@
 <template>
   <Transition name="modal">
-    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm overflow-y-auto"
+    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col my-auto">
+      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col">
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
             <span>{{ activeIcon }}</span>
@@ -115,7 +114,6 @@
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   </Transition>
