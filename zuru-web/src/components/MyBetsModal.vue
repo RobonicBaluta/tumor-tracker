@@ -58,10 +58,19 @@
 
                 <p class="text-white/70 text-xs font-mono mt-1">
                   <span :class="myRole(b) === 'creator' ? 'text-yellow-300' : 'text-cyan-300'" class="font-bold">{{ myRole(b) === 'creator' ? $t('bets.you_created') : $t('bets.you_accepted') }}</span>
-                  · {{ $t('bets.bet_on') }}
-                  <span :class="mySide(b) === 'blue' ? 'text-blue-300' : 'text-red-300'" class="font-bold">
-                    {{ mySide(b) === 'blue' ? '🔵 BLUE' : '🔴 RED' }}
-                  </span>
+                  <template v-if="b.bet_kind === 'stat'">
+                    · 📊 <span class="text-purple-300 font-bold">{{ b.target_name || '?' }}</span>
+                    <span :class="mySide(b) === 'over' ? 'text-green-300' : 'text-orange-300'" class="font-bold">
+                      {{ mySide(b) === 'over' ? ' ▲ MÁS' : ' ▼ MENOS' }}
+                    </span>
+                    de <span class="text-yellow-300">{{ b.threshold }}</span> {{ b.stat_type }}
+                  </template>
+                  <template v-else>
+                    · {{ $t('bets.bet_on') }}
+                    <span :class="mySide(b) === 'blue' ? 'text-blue-300' : 'text-red-300'" class="font-bold">
+                      {{ mySide(b) === 'blue' ? '🔵 BLUE' : '🔴 RED' }}
+                    </span>
+                  </template>
                 </p>
 
                 <p class="text-white/50 text-[11px] font-mono mt-1">
@@ -74,9 +83,15 @@
 
                 <!-- Resultado -->
                 <p v-if="b.status === 'resolved'" class="text-xs font-mono mt-1.5"
-                  :class="didIWin(b) ? 'text-green-400' : 'text-red-400'">
-                  {{ didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
-                  · {{ $t('bets.won_team') }} {{ b.winner_side === 'blue' ? '🔵' : '🔴' }}
+                  :class="isPush(b) ? 'text-white/50' : didIWin(b) ? 'text-green-400' : 'text-red-400'">
+                  <template v-if="b.bet_kind === 'stat'">
+                    {{ isPush(b) ? '↻ Push (refund)' : didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    · actual: <span class="font-bold">{{ b.stat_actual }}</span> / target {{ b.threshold }}
+                  </template>
+                  <template v-else>
+                    {{ didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    · {{ $t('bets.won_team') }} {{ b.winner_side === 'blue' ? '🔵' : '🔴' }}
+                  </template>
                 </p>
 
                 <!-- Acciones -->
@@ -125,15 +140,21 @@ interface Bet {
   match_id: string
   game_id?: number
   creator_user_id: number
-  creator_side: 'blue' | 'red'
+  creator_side: 'blue' | 'red' | 'over' | 'under'
   amount: number
   taker_user_id?: number | null
   status: 'open' | 'matched' | 'resolved' | 'cancelled'
-  winner_side?: 'blue' | 'red' | null
+  winner_side?: 'blue' | 'red' | 'over' | 'under' | null
   resolved_at?: number | null
   created_at: number
   creator?: { username: string, discord_id: string, avatar: string | null }
   taker?: { username: string, discord_id: string, avatar: string | null } | null
+  bet_kind?: 'match' | 'stat'
+  target_puuid?: string | null
+  target_name?: string | null
+  stat_type?: 'kills' | 'deaths' | 'assists' | 'kda' | null
+  threshold?: number | null
+  stat_actual?: number | null
 }
 
 const bets = ref<Bet[]>([])
@@ -178,10 +199,13 @@ function myRole(b: Bet): 'creator' | 'taker' {
   return b.creator_user_id === myUserId.value ? 'creator' : 'taker'
 }
 
-function mySide(b: Bet): 'blue' | 'red' {
-  return myRole(b) === 'creator'
-    ? b.creator_side
-    : (b.creator_side === 'blue' ? 'red' : 'blue')
+function mySide(b: Bet): 'blue' | 'red' | 'over' | 'under' {
+  if (myRole(b) === 'creator') return b.creator_side
+  // Taker takes opposite side
+  if (b.creator_side === 'blue') return 'red'
+  if (b.creator_side === 'red') return 'blue'
+  if (b.creator_side === 'over') return 'under'
+  return 'over'
 }
 
 function opponent(b: Bet) {
@@ -191,6 +215,10 @@ function opponent(b: Bet) {
 function didIWin(b: Bet) {
   if (b.status !== 'resolved' || !b.winner_side) return false
   return mySide(b) === b.winner_side
+}
+
+function isPush(b: Bet) {
+  return b.status === 'resolved' && b.bet_kind === 'stat' && !b.winner_side
 }
 
 function statusIcon(b: Bet) {
@@ -240,7 +268,8 @@ async function onCancel(b: Bet) {
 }
 
 const summary = computed(() => {
-  const resolved = bets.value.filter(b => b.status === 'resolved')
+  // Pushes (stat bet ties) no cuentan como win ni loss; sólo refund.
+  const resolved = bets.value.filter(b => b.status === 'resolved' && !isPush(b))
   if (!resolved.length) return null
   const won = resolved.filter(b => didIWin(b)).length
   const lost = resolved.length - won

@@ -14,9 +14,24 @@
 
         <!-- Crear apuesta -->
         <div v-if="mode === 'create'" class="p-5 space-y-4">
+          <!-- Toggle entre tipos de apuesta -->
+          <div v-if="participants && participants.length" class="grid grid-cols-2 gap-2">
+            <button @click="betKind = 'match'"
+              :class="betKind === 'match' ? 'bg-yellow-900/40 border-yellow-500/50 text-yellow-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
+              class="text-xs font-mono px-3 py-2 rounded border transition">
+              ⚔ Equipo (azul/rojo)
+            </button>
+            <button @click="betKind = 'stat'"
+              :class="betKind === 'stat' ? 'bg-yellow-900/40 border-yellow-500/50 text-yellow-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
+              class="text-xs font-mono px-3 py-2 rounded border transition">
+              📊 Stat (KDA)
+            </button>
+          </div>
+
           <p class="text-white/60 text-xs font-mono">{{ $t('bets.share_link_msg') }}</p>
 
-          <div>
+          <!-- MATCH BET -->
+          <div v-if="betKind === 'match'">
             <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">{{ $t('bets.bet_on').toUpperCase() }}</p>
             <div class="grid grid-cols-2 gap-2">
               <button @click="side = 'blue'"
@@ -29,6 +44,57 @@
                 class="px-4 py-3 rounded-lg border font-mono font-bold transition">
                 🔴 {{ $t('bets.red_wins') }}
               </button>
+            </div>
+          </div>
+
+          <!-- STAT BET -->
+          <div v-else class="space-y-3">
+            <div>
+              <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">JUGADOR</p>
+              <select v-model="targetPuuid"
+                class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none">
+                <option value="">— Elige —</option>
+                <option v-for="p in (participants || [])" :key="p.puuid" :value="p.puuid"
+                  :class="p.teamId === 100 ? 'text-blue-300' : 'text-red-300'">
+                  {{ p.teamId === 100 ? '🔵' : '🔴' }} {{ p.name }}{{ p.championName ? ' · ' + p.championName : '' }}
+                </option>
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">STAT</p>
+                <select v-model="statType"
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none">
+                  <option value="kills">🗡 Kills</option>
+                  <option value="deaths">💀 Deaths</option>
+                  <option value="assists">🤝 Assists</option>
+                  <option value="kda">📈 KDA</option>
+                </select>
+              </div>
+              <div>
+                <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">UMBRAL</p>
+                <input type="number" v-model.number="threshold" :step="statType === 'kda' ? 0.5 : 1" :min="0"
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none" />
+              </div>
+            </div>
+            <div>
+              <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">APUESTO POR</p>
+              <div class="grid grid-cols-2 gap-2">
+                <button @click="overUnder = 'over'"
+                  :class="overUnder === 'over' ? 'bg-green-700 border-green-500 text-white' : 'bg-green-950/30 border-green-500/30 text-green-300/70 hover:border-green-400/60'"
+                  class="px-3 py-2 rounded-lg border font-mono font-bold transition text-sm">
+                  ▲ MÁS de {{ threshold }}
+                </button>
+                <button @click="overUnder = 'under'"
+                  :class="overUnder === 'under' ? 'bg-orange-700 border-orange-500 text-white' : 'bg-orange-950/30 border-orange-500/30 text-orange-300/70 hover:border-orange-400/60'"
+                  class="px-3 py-2 rounded-lg border font-mono font-bold transition text-sm">
+                  ▼ MENOS de {{ threshold }}
+                </button>
+              </div>
+              <p v-if="overUnder && targetParticipant" class="text-white/50 text-[11px] font-mono mt-2 text-center">
+                {{ targetParticipant.name }} {{ overUnder === 'over' ? '>' : '<' }} {{ threshold }} {{ statType }}
+                <span class="text-white/30"> · empate (=) refunda ambos</span>
+              </p>
             </div>
           </div>
 
@@ -52,9 +118,15 @@
 
           <p v-if="error" class="text-red-400 text-xs font-mono">{{ error }}</p>
 
-          <button @click="onCreate" :disabled="creating || !side || amount <= 0 || amount > balance"
+          <button @click="onCreate"
+            :disabled="creating || amount <= 0 || amount > balance || (betKind === 'match' ? !side : !canCreateStat)"
             class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold px-4 py-3 rounded-lg transition">
-            {{ creating ? $t('bets.creating') : `${amount} TC ${side === 'blue' ? '🔵' : '🔴'}` }}
+            {{
+              creating ? $t('bets.creating') :
+              betKind === 'match'
+                ? `${amount} TC ${side === 'blue' ? '🔵' : side === 'red' ? '🔴' : ''}`
+                : `${amount} TC · ${overUnder === 'over' ? '▲' : overUnder === 'under' ? '▼' : '?'} ${threshold} ${statType}`
+            }}
           </button>
         </div>
 
@@ -125,6 +197,7 @@ const props = defineProps<{
   matchId?: string
   gameId?: number
   betToAccept?: any
+  participants?: Array<{ puuid: string; name: string; championName?: string; teamId?: number }>
 }>()
 
 const emit = defineEmits<{
@@ -135,13 +208,24 @@ const emit = defineEmits<{
 const auth = inject<any>('auth')
 const { t } = useI18n()
 
+type BetKind = 'match' | 'stat'
+type StatType = 'kills' | 'deaths' | 'assists' | 'kda'
+
+const betKind = ref<BetKind>('match')
 const side = ref<'blue' | 'red' | ''>('')
+const overUnder = ref<'over' | 'under' | ''>('')
+const targetPuuid = ref<string>('')
+const statType = ref<StatType>('kills')
+const threshold = ref<number>(5)
 const amount = ref(50)
 const creating = ref(false)
 const accepting = ref(false)
 const error = ref('')
 const createdBet = ref<any>(null)
 const copied = ref(false)
+
+const targetParticipant = computed(() => props.participants?.find(p => p.puuid === targetPuuid.value))
+const canCreateStat = computed(() => !!targetPuuid.value && !!overUnder.value && threshold.value > 0)
 
 const balance = computed(() => auth?.user.value?.currency ?? 0)
 
@@ -159,7 +243,12 @@ const shareLink = computed(() => {
 
 watch(() => props.show, v => {
   if (v) {
+    betKind.value = 'match'
     side.value = ''
+    overUnder.value = ''
+    targetPuuid.value = ''
+    statType.value = 'kills'
+    threshold.value = 5
     amount.value = 50
     error.value = ''
     createdBet.value = null
@@ -167,14 +256,36 @@ watch(() => props.show, v => {
   }
 })
 
+watch(statType, (s) => {
+  // Defaults sensatos por tipo de stat
+  if (s === 'kills' || s === 'assists') threshold.value = 7
+  else if (s === 'deaths') threshold.value = 6
+  else if (s === 'kda') threshold.value = 2.5
+})
+
 async function onCreate() {
   if (!props.matchId) return
   creating.value = true
   error.value = ''
   try {
-    const bet = await auth.createBet(props.matchId, props.gameId, side.value, amount.value)
+    let bet
+    if (betKind.value === 'match') {
+      if (!side.value) throw new Error('Elige un lado')
+      bet = await auth.createBet(props.matchId, props.gameId, side.value, amount.value)
+    } else {
+      if (!canCreateStat.value) throw new Error('Completa los campos de la apuesta')
+      bet = await auth.createStatBet({
+        matchId: props.matchId,
+        gameId: props.gameId,
+        side: overUnder.value as 'over' | 'under',
+        amount: amount.value,
+        targetPuuid: targetPuuid.value,
+        targetName: targetParticipant.value?.name || '',
+        statType: statType.value,
+        threshold: threshold.value,
+      })
+    }
     createdBet.value = bet
-    // Mode change handled by parent re-emitting with mode='created'
     emit('refresh')
   } catch (e: any) {
     error.value = e.message || 'Error'

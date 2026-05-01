@@ -161,6 +161,22 @@ def _init_sqlite(conn):
             updated_at REAL NOT NULL
         )
     """)
+    # Migración stat bets en SQLite: PRAGMA + ALTER TABLE selectivo.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()}
+    new_cols = [
+        ("bet_kind", "TEXT NOT NULL DEFAULT 'match'"),
+        ("target_puuid", "TEXT"),
+        ("target_name", "TEXT"),
+        ("stat_type", "TEXT"),
+        ("threshold", "REAL"),
+        ("stat_actual", "REAL"),
+    ]
+    for name, ddl in new_cols:
+        if name not in existing_cols:
+            try:
+                conn.execute(f"ALTER TABLE bets ADD COLUMN {name} {ddl}")
+            except Exception:
+                pass
 
 
 def _init_pg(conn):
@@ -269,6 +285,19 @@ def _init_pg(conn):
             updated_at DOUBLE PRECISION NOT NULL
         )
     """)
+    # Migración stat bets: añade columnas idempotentemente.
+    for col_def in [
+        "bet_kind TEXT NOT NULL DEFAULT 'match'",
+        "target_puuid TEXT",
+        "target_name TEXT",
+        "stat_type TEXT",
+        "threshold DOUBLE PRECISION",
+        "stat_actual DOUBLE PRECISION",
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE bets ADD COLUMN IF NOT EXISTS {col_def}")
+        except Exception:
+            pass
     cur.close()
 
 
@@ -437,10 +466,37 @@ def _generate_bet_code():
     return "".join(_secrets.choice(alphabet) for _ in range(6))
 
 
-def create_bet(creator_user_id, match_id, game_id, side, amount):
-    """Crea una bet, escrowa el amount del creator. Devuelve dict o None si fallo."""
-    if amount <= 0 or side not in ("blue", "red"):
+VALID_STAT_TYPES = {"kills", "deaths", "assists", "kda"}
+
+
+def create_bet(
+    creator_user_id, match_id, game_id, side, amount,
+    bet_kind="match", target_puuid=None, target_name=None,
+    stat_type=None, threshold=None,
+):
+    """Crea una bet, escrowa el amount del creator. Devuelve dict o None si fallo.
+
+    bet_kind='match': side es 'blue'|'red', sin params extra.
+    bet_kind='stat':  side es 'over'|'under', target_puuid + stat_type + threshold obligatorios.
+    """
+    if amount <= 0:
         return None
+
+    if bet_kind == "match":
+        if side not in ("blue", "red"):
+            return None
+    elif bet_kind == "stat":
+        if side not in ("over", "under"):
+            return None
+        if not target_puuid or stat_type not in VALID_STAT_TYPES or threshold is None:
+            return None
+        try:
+            threshold = float(threshold)
+        except Exception:
+            return None
+    else:
+        return None
+
     # Escrow del creator (resta amount)
     new_balance = add_currency(creator_user_id, -amount, f"bet escrow")
     if new_balance is None:
@@ -455,15 +511,16 @@ def create_bet(creator_user_id, match_id, game_id, side, amount):
             code = candidate
             break
     if not code:
-        # Refund
         add_currency(creator_user_id, amount, "bet refund (code collision)")
         return None
 
     bet_id = _exec_returning(
         """INSERT INTO bets (share_code, match_id, game_id, creator_user_id,
-            creator_side, amount, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', ?)""",
-        (code, match_id, game_id, creator_user_id, side, amount, time.time()),
+            creator_side, amount, status, created_at,
+            bet_kind, target_puuid, target_name, stat_type, threshold)
+            VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)""",
+        (code, match_id, game_id, creator_user_id, side, amount, time.time(),
+         bet_kind, target_puuid, target_name, stat_type, threshold),
     )
     return get_bet_by_id(bet_id)
 
@@ -558,20 +615,97 @@ def resolve_bet(bet_id, winner_side):
 
 
 def resolve_bets_for_match(match_id, winner_side):
-    """Resuelve TODAS las bets matched de ese match_id. Útil al cerrar live."""
+    """Resuelve TODAS las bets de tipo 'match' matched de ese match_id."""
     cur = _exec(
-        "SELECT id FROM bets WHERE match_id=? AND status='matched'",
+        "SELECT id FROM bets WHERE match_id=? AND status='matched' AND bet_kind='match'",
         (match_id,),
     )
     rows = cur.fetchall()
     return [resolve_bet(r[0], winner_side) for r in rows]
 
 
+def resolve_stat_bet(bet_id, actual_value):
+    """Resuelve una stat bet matched. actual_value es la stat real del target_puuid.
+
+    Compara actual vs threshold según el creator_side ('over'/'under').
+    Empate (actual == threshold) → push (refund a ambos).
+    """
+    bet = get_bet_by_id(bet_id)
+    if not bet or bet["status"] != "matched" or bet["bet_kind"] != "stat":
+        return None
+    if bet["threshold"] is None or actual_value is None:
+        return None
+
+    # Determinar ganador
+    creator_won = None
+    if actual_value > bet["threshold"]:
+        creator_won = (bet["creator_side"] == "over")
+    elif actual_value < bet["threshold"]:
+        creator_won = (bet["creator_side"] == "under")
+    # exact tie → push (refund)
+
+    if creator_won is None:
+        # Push: refund a ambos
+        _exec(
+            "UPDATE bets SET status='resolved', resolved_at=?, stat_actual=? WHERE id=?",
+            (time.time(), float(actual_value), bet_id),
+        )
+        add_currency(bet["creator_user_id"], bet["amount"], f"bet push refund · {bet['share_code']}")
+        if bet["taker_user_id"]:
+            add_currency(bet["taker_user_id"], bet["amount"], f"bet push refund · {bet['share_code']}")
+        return get_bet_by_id(bet_id)
+
+    winner_user_id = bet["creator_user_id"] if creator_won else bet["taker_user_id"]
+    loser_user_id = bet["taker_user_id"] if creator_won else bet["creator_user_id"]
+    if winner_user_id is None:
+        return None
+    payout = bet["amount"] * 2
+    add_currency(winner_user_id, payout, f"stat bet won · {bet['share_code']}")
+    # Para stat bets, winner_side contiene 'over'|'under' del lado ganador.
+    winner_side_label = bet["creator_side"] if creator_won else ("over" if bet["creator_side"] == "under" else "under")
+    _exec(
+        "UPDATE bets SET status='resolved', winner_side=?, resolved_at=?, stat_actual=? WHERE id=?",
+        (winner_side_label, time.time(), float(actual_value), bet_id),
+    )
+    try:
+        push_notification(
+            user_id=winner_user_id,
+            notif_type="bet_won",
+            title=f"Ganaste {payout} TC",
+            body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']} (target {bet['threshold']})",
+            link="#/bets", icon="✅",
+        )
+        if loser_user_id:
+            push_notification(
+                user_id=loser_user_id,
+                notif_type="bet_lost",
+                title=f"Perdiste {bet['amount']} TC",
+                body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']}",
+                link="#/bets", icon="❌",
+            )
+    except Exception:
+        pass
+    try:
+        evaluate_achievements(winner_user_id)
+        if loser_user_id:
+            evaluate_achievements(loser_user_id)
+    except Exception:
+        pass
+    return get_bet_by_id(bet_id)
+
+
+def list_stat_bets_for_match(match_id):
+    """Devuelve stat bets matched de ese match_id (para resolver tras la partida)."""
+    cur = _exec(
+        f"SELECT {_BET_COLS} FROM bets WHERE match_id=? AND status='matched' AND bet_kind='stat'",
+        (match_id,),
+    )
+    return [_row_to_bet(r) for r in cur.fetchall()]
+
+
 def get_bet_by_id(bet_id):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE id=?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE id=?",
         (bet_id,),
     )
     row = cur.fetchone()
@@ -580,9 +714,7 @@ def get_bet_by_id(bet_id):
 
 def get_bet_by_code(share_code):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE share_code=?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE share_code=?",
         (share_code,),
     )
     row = cur.fetchone()
@@ -592,10 +724,7 @@ def get_bet_by_code(share_code):
 def list_open_bets(limit=50):
     """Bets abiertas que cualquiera puede aceptar. Las más recientes primero."""
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE status='open'
-           ORDER BY created_at DESC LIMIT ?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE status='open' ORDER BY created_at DESC LIMIT ?",
         (limit,),
     )
     rows = cur.fetchall()
@@ -642,8 +771,7 @@ def leaderboard_top_bet_winners(limit=20):
 
 def get_user_bets(user_id, limit=50):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
+        f"""SELECT {_BET_COLS}
            FROM bets
            WHERE creator_user_id=? OR taker_user_id=?
            ORDER BY created_at DESC LIMIT ?""",
@@ -651,6 +779,13 @@ def get_user_bets(user_id, limit=50):
     )
     rows = cur.fetchall()
     return [_row_to_bet(r) for r in rows]
+
+
+_BET_COLS = (
+    "id, share_code, match_id, game_id, creator_user_id, creator_side, "
+    "amount, taker_user_id, status, winner_side, resolved_at, created_at, "
+    "bet_kind, target_puuid, target_name, stat_type, threshold, stat_actual"
+)
 
 
 def _row_to_bet(row):
@@ -669,6 +804,12 @@ def _row_to_bet(row):
         "winner_side": row[9],
         "resolved_at": row[10],
         "created_at": row[11],
+        "bet_kind": row[12] if len(row) > 12 else "match",
+        "target_puuid": row[13] if len(row) > 13 else None,
+        "target_name": row[14] if len(row) > 14 else None,
+        "stat_type": row[15] if len(row) > 15 else None,
+        "threshold": row[16] if len(row) > 16 else None,
+        "stat_actual": row[17] if len(row) > 17 else None,
     }
 
 

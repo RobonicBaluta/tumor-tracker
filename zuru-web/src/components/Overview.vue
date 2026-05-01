@@ -1402,6 +1402,7 @@
       :match-id="liveGame?.match_id"
       :game-id="liveGame?.game_id"
       :bet-to-accept="betToAccept"
+      :participants="betParticipants"
       @close="betModalShow = false"
       @refresh="onBetRefresh"
     />
@@ -2735,6 +2736,16 @@ const openCreateBet = () => {
 const onBetRefresh = () => {
   if (betModalMode.value === 'create') betModalMode.value = 'created'
 }
+
+const betParticipants = computed(() => {
+  if (!liveGame.value?.players) return []
+  return liveGame.value.players.map(p => ({
+    puuid: p.puuid,
+    name: p.nombre,
+    championName: p.champion_name,
+    teamId: p.team_id,
+  }))
+})
 
 // Listen for bet links in URL hash
 const checkBetHash = async () => {

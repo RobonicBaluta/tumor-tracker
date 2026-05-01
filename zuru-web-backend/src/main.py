@@ -2846,7 +2846,11 @@ def _augment_bet(bet):
 
 @app.route('/bets/create', methods=['POST'])
 def bets_create():
-    """Crea una apuesta sobre la partida actual del user. Body: { match_id, game_id, side, amount }."""
+    """Crea una apuesta. Body:
+      Match bet:  { match_id, game_id, side: 'blue'|'red', amount }
+      Stat bet:   { match_id, game_id, side: 'over'|'under', amount,
+                    bet_kind: 'stat', target_puuid, target_name, stat_type, threshold }
+    """
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
@@ -2855,12 +2859,37 @@ def bets_create():
     game_id = data.get("game_id")
     side = data.get("side")
     amount = int(data.get("amount", 0))
-    if not match_id or side not in ("blue", "red") or amount <= 0:
+    bet_kind = data.get("bet_kind") or "match"
+
+    if not match_id or amount <= 0:
         return jsonify({"error": "Faltan campos o son inválidos"}), 400
     if amount > user["currency"]:
         return jsonify({"error": "Saldo insuficiente"}), 400
 
-    bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+    if bet_kind == "match":
+        if side not in ("blue", "red"):
+            return jsonify({"error": "side debe ser blue|red"}), 400
+        bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+    elif bet_kind == "stat":
+        if side not in ("over", "under"):
+            return jsonify({"error": "side debe ser over|under"}), 400
+        target_puuid = data.get("target_puuid")
+        target_name = data.get("target_name")
+        stat_type = data.get("stat_type")
+        try:
+            threshold = float(data.get("threshold"))
+        except Exception:
+            return jsonify({"error": "threshold inválido"}), 400
+        if not target_puuid or stat_type not in _users.VALID_STAT_TYPES:
+            return jsonify({"error": "stat_type inválido o falta target_puuid"}), 400
+        bet = _users.create_bet(
+            user["id"], match_id, game_id, side, amount,
+            bet_kind="stat", target_puuid=target_puuid, target_name=target_name,
+            stat_type=stat_type, threshold=threshold,
+        )
+    else:
+        return jsonify({"error": "bet_kind inválido"}), 400
+
     if not bet:
         return jsonify({"error": "No se pudo crear la apuesta"}), 500
     return jsonify(_augment_bet(bet))
@@ -3236,9 +3265,36 @@ def resolve_prediction_endpoint():
     actual = "blue" if blue_win else "red"
     predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
 
-    # Auto-resolver apuestas P2P de este match
+    # Auto-resolver apuestas P2P de este match (match bets + stat bets)
     try:
         _users.resolve_bets_for_match(match_id, actual)
+    except Exception:
+        pass
+    try:
+        stat_bets = _users.list_stat_bets_for_match(match_id)
+        if stat_bets:
+            # Indexa participantes por puuid para lookup O(1)
+            by_puuid = {p.get("puuid"): p for p in parts if p.get("puuid")}
+            for sb in stat_bets:
+                tp = sb.get("target_puuid")
+                stype = sb.get("stat_type")
+                p = by_puuid.get(tp)
+                if not p or not stype:
+                    continue
+                k = p.get("kills", 0) or 0
+                d = p.get("deaths", 0) or 0
+                a = p.get("assists", 0) or 0
+                if stype == "kills":
+                    actual_val = float(k)
+                elif stype == "deaths":
+                    actual_val = float(d)
+                elif stype == "assists":
+                    actual_val = float(a)
+                elif stype == "kda":
+                    actual_val = (k + a) / max(d, 1)
+                else:
+                    continue
+                _users.resolve_stat_bet(sb["id"], actual_val)
     except Exception:
         pass
 

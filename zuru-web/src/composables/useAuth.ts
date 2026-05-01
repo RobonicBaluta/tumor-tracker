@@ -99,6 +99,36 @@ async function createBet(matchId: string, gameId: number | undefined, side: 'blu
   return data
 }
 
+async function createStatBet(opts: {
+  matchId: string
+  gameId?: number
+  side: 'over' | 'under'
+  amount: number
+  targetPuuid: string
+  targetName: string
+  statType: 'kills' | 'deaths' | 'assists' | 'kda'
+  threshold: number
+}) {
+  const res = await authedFetch('/bets/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      match_id: opts.matchId,
+      game_id: opts.gameId,
+      side: opts.side,
+      amount: opts.amount,
+      bet_kind: 'stat',
+      target_puuid: opts.targetPuuid,
+      target_name: opts.targetName,
+      stat_type: opts.statType,
+      threshold: opts.threshold,
+    }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
 async function acceptBet(shareCode: string) {
   const res = await authedFetch(`/bets/${shareCode}/accept`, { method: 'POST' })
   const data = await res.json()
@@ -289,6 +319,7 @@ export function useAuth() {
     linkRiot,
     handleAuthRedirect,
     createBet,
+    createStatBet,
     acceptBet,
     cancelBet,
     fetchBet,
