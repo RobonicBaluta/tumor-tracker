@@ -785,6 +785,11 @@
                 title="Recalcula priors saltando la caché de 6h">
                 ↻ Forzar refresh
               </button>
+              <button v-if="liveGame && liveGame.match_id" @click="openCreateBet"
+                class="text-xs font-mono px-3 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/20 hover:border-yellow-400/70 rounded transition"
+                title="Apuesta TC contra otro user sobre el resultado">
+                ☢ Apostar
+              </button>
               <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2">
                 <template v-if="(resolveResult as any).pending">
                   <span class="text-yellow-400">⏳ {{ (resolveResult as any).pending }}</span>
@@ -1319,11 +1324,23 @@
       </div>
     </Transition>
 
+    <!-- Bet modal (crear / created / aceptar) -->
+    <BetModal
+      :show="betModalShow"
+      :mode="betModalMode"
+      :match-id="liveGame?.match_id"
+      :game-id="liveGame?.game_id"
+      :bet-to-accept="betToAccept"
+      @close="betModalShow = false"
+      @refresh="onBetRefresh"
+    />
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
+import BetModal from './BetModal.vue'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
   EXCUSE_STARTERS, EXCUSE_REASONS, EXCUSE_ENDINGS,
@@ -2523,7 +2540,57 @@ const stopGlobalPoller = () => {
 const liveProgress = ref({ step: '', progress: 0, total: 1 })
 let liveAbort = false
 
+const auth = inject<any>('auth')
+
 const resolveResult = ref<{ predicted: string, actual: string, correct: boolean } | null>(null)
+
+// Bet modal state
+const betModalShow = ref(false)
+const betModalMode = ref<'create' | 'created' | 'accept'>('create')
+const betToAccept = ref<any>(null)
+
+const openCreateBet = () => {
+  if (!auth?.isLoggedIn.value) {
+    alert('Necesitas hacer login con Discord para apostar')
+    return
+  }
+  betModalMode.value = 'create'
+  betModalShow.value = true
+}
+
+const onBetRefresh = () => {
+  if (betModalMode.value === 'create') betModalMode.value = 'created'
+}
+
+// Listen for bet links in URL hash
+const checkBetHash = async () => {
+  const m = window.location.hash.match(/^#\/bet\/([A-Z0-9]+)$/)
+  if (!m) return
+  const code = m[1]
+  if (!auth?.isLoggedIn.value) {
+    // Will retry after login; just store the intent
+    return
+  }
+  const bet = await auth.fetchBet(code)
+  if (!bet) {
+    alert(`Apuesta ${code} no encontrada`)
+    history.replaceState(null, '', window.location.pathname)
+    return
+  }
+  if (bet.status !== 'open') {
+    alert(`Esta apuesta ya está ${bet.status}`)
+    history.replaceState(null, '', window.location.pathname)
+    return
+  }
+  betToAccept.value = bet
+  betModalMode.value = 'accept'
+  betModalShow.value = true
+  // Clear hash so refresh doesn't reopen
+  history.replaceState(null, '', window.location.pathname)
+}
+
+onMounted(() => { checkBetHash() })
+window.addEventListener('hashchange', checkBetHash)
 const resolving = ref(false)
 
 const resolveLivePrediction = async () => {

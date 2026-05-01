@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue';
+import { computed, inject, ref, onMounted, onUnmounted } from 'vue';
+import MyBetsModal from './MyBetsModal.vue';
+import SocialModal from './SocialModal.vue';
 
 const props = defineProps<{
   currentPage: string;
@@ -18,6 +20,45 @@ const showThemes = ref(false)
 const showUserMenu = ref(false)
 const claimingDaily = ref(false)
 const dailyResult = ref<{ awarded: number } | null>(null)
+const showMyBets = ref(false)
+const showSocial = ref(false)
+const socialInitialTab = ref<string | undefined>(undefined)
+const notifications = ref<any[]>([])
+const showNotifPanel = ref(false)
+let notifPollerId: ReturnType<typeof setInterval> | null = null
+
+const unreadCount = computed(() => notifications.value.length)
+
+async function pollNotifs() {
+  if (!auth?.isLoggedIn.value) return
+  notifications.value = await auth.fetchNotifications()
+}
+
+async function markAllRead() {
+  if (!notifications.value.length) return
+  const ids = notifications.value.map(n => n.id)
+  await auth.markNotificationsRead(ids)
+  notifications.value = []
+}
+
+function openNotif(n: any) {
+  // Si la notif lleva un link tipo "#/bets" abrir Mis Apuestas, "#/friends" abrir Social>friends, etc
+  if (n.link === '#/bets') showMyBets.value = true
+  else if (n.link === '#/friends') { socialInitialTab.value = 'friends'; showSocial.value = true }
+  // Marcar leída
+  auth.markNotificationsRead([n.id])
+  notifications.value = notifications.value.filter(x => x.id !== n.id)
+}
+
+onMounted(() => {
+  if (auth?.isLoggedIn.value) {
+    pollNotifs()
+    notifPollerId = setInterval(pollNotifs, 30000) // cada 30s
+  }
+})
+onUnmounted(() => {
+  if (notifPollerId) clearInterval(notifPollerId)
+})
 
 const navBgColor = computed(() => {
   const colors: Record<string, string> = {
@@ -71,6 +112,47 @@ const claimDaily = async () => {
 
       <div class="flex-1"></div>
 
+      <!-- Hot bets / leaderboards -->
+      <button v-if="auth && auth.isLoggedIn.value" @click="socialInitialTab = 'hot'; showSocial = true"
+        class="relative px-3 py-2 text-sm rounded-lg border border-white/15 text-white/70 hover:text-yellow-300 hover:border-yellow-500/40 transition font-mono"
+        title="Hot Bets · Leaderboards · Amigos · Salas">
+        🌐
+      </button>
+
+      <!-- Notifications bell -->
+      <div v-if="auth && auth.isLoggedIn.value" class="relative">
+        <button @click="showNotifPanel = !showNotifPanel; if (showNotifPanel) pollNotifs()"
+          class="relative px-3 py-2 text-sm rounded-lg border border-white/15 text-white/70 hover:text-yellow-300 hover:border-yellow-500/40 transition">
+          🔔
+          <span v-if="unreadCount > 0"
+            class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-4 h-4 px-1 flex items-center justify-center">
+            {{ unreadCount }}
+          </span>
+        </button>
+        <Transition name="dropdown">
+          <div v-if="showNotifPanel" class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
+            <div class="flex items-center justify-between px-4 py-2 border-b border-white/10">
+              <p class="text-white/70 text-xs font-mono font-bold">🔔 Notificaciones</p>
+              <button v-if="notifications.length" @click="markAllRead"
+                class="text-[10px] font-mono text-white/40 hover:text-white/70">Marcar leídas</button>
+            </div>
+            <div v-if="!notifications.length" class="px-4 py-8 text-center">
+              <p class="text-white/30 text-xs font-mono">Sin notificaciones nuevas</p>
+            </div>
+            <div v-else class="overflow-y-auto divide-y divide-white/5">
+              <button v-for="n in notifications" :key="n.id" @click="openNotif(n); showNotifPanel = false"
+                class="w-full text-left px-4 py-3 hover:bg-white/5 transition flex items-start gap-3">
+                <span class="text-lg shrink-0">{{ n.icon || '·' }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-white text-xs font-mono font-bold truncate">{{ n.title }}</p>
+                  <p v-if="n.body" class="text-white/40 text-[10px] font-mono truncate">{{ n.body }}</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </Transition>
+      </div>
+
       <!-- Tumor Coins balance + daily reward -->
       <div v-if="auth && auth.isLoggedIn.value" class="flex items-center gap-2">
         <div class="flex items-center gap-1.5 bg-yellow-900/30 border border-yellow-500/40 rounded-lg px-3 py-1.5 font-mono text-yellow-300 text-sm">
@@ -109,6 +191,10 @@ const claimDaily = async () => {
               <p v-if="auth.user.value?.riot_id" class="text-[#c89b3c] text-[10px] font-mono">{{ auth.user.value?.riot_id }}</p>
               <p v-else class="text-white/40 text-[10px] font-mono italic">Sin Riot ID vinculado</p>
             </div>
+            <button @click="showMyBets = true; showUserMenu = false"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-yellow-300 hover:bg-yellow-900/20 transition">
+              ☢ Mis apuestas
+            </button>
             <button @click="auth.refreshBalance(); showUserMenu = false"
               class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-white/60 hover:bg-white/10 hover:text-white transition">
               ↻ Actualizar balance
@@ -150,6 +236,9 @@ const claimDaily = async () => {
         <p class="text-yellow-100 font-mono text-sm font-bold">+{{ dailyResult.awarded }} ☢ TC</p>
       </div>
     </Transition>
+
+    <MyBetsModal :show="showMyBets" @close="showMyBets = false" />
+    <SocialModal :show="showSocial" :initial-tab="socialInitialTab" @close="showSocial = false" />
   </nav>
 </template>
 
