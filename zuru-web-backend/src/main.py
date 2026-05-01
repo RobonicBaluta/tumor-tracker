@@ -19,6 +19,9 @@ from tumor_engine import (
     compute_team_tumor as _engine_team,
     predict_team_outcome as _engine_predict,
 )
+import auth as _auth
+import users_db as _users
+from flask import redirect
 
 
 def riot_get(url, max_retries=4):
@@ -291,6 +294,25 @@ def _pred_db():
     """)
     # Tabla de logs detallados por predicción: se usa para auditar y afinar
     # empíricamente el modelo (mediante /tuningReport).
+    # Cache de priors por jugador — independiente del champion. Se rellena
+    # al procesar live games / backtests / overview, y se reutiliza siempre
+    # que no esté expirado. TTL más largo que el live cache porque el prior
+    # depende del histórico, no del champ actual.
+    _pred_conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_priors_cache (
+            puuid TEXT PRIMARY KEY,
+            tier TEXT,
+            prior_tumor INTEGER,
+            sample_size INTEGER,
+            recent_avg INTEGER,
+            recent_losses INTEGER,
+            recent_wins INTEGER,
+            is_tilted INTEGER DEFAULT 0,
+            is_hotstreak INTEGER DEFAULT 0,
+            likely_role TEXT,
+            cached_at REAL NOT NULL
+        )
+    """)
     # Backtest histórico — cada partida replayed se persiste para acumular
     # datos empíricos. Deduplicado por (match_id, viewer_puuid).
     _pred_conn.execute("""
@@ -376,6 +398,58 @@ def log_prediction(entry):
             json.dumps(entry.get("red_roles") or []),
             entry.get("blue_streamers", 0),
             entry.get("red_streamers", 0),
+        ),
+    )
+
+
+PRIOR_CACHE_TTL = 30 * 60  # 30 minutos: prior cambia poco entre partidas
+
+
+def get_cached_prior(puuid):
+    """Recupera prior cacheado del jugador si está fresco. Devuelve dict o None."""
+    db = _pred_db()
+    row = db.execute(
+        """SELECT tier, prior_tumor, sample_size, recent_avg, recent_losses, recent_wins,
+                  is_tilted, is_hotstreak, likely_role, cached_at
+           FROM player_priors_cache WHERE puuid = ?""",
+        (puuid,),
+    ).fetchone()
+    if not row:
+        return None
+    if time.time() - (row[9] or 0) > PRIOR_CACHE_TTL:
+        return None
+    return {
+        "tier": row[0],
+        "score": row[1],
+        "champion_total_sample": row[2] or 0,
+        "recent_avg_tumor": row[3] or 0,
+        "recent_losses": row[4] or 0,
+        "recent_wins": row[5] or 0,
+        "is_tilted": bool(row[6]),
+        "is_hotstreak": bool(row[7]),
+        "likely_role": row[8] or "",
+    }
+
+
+def save_cached_prior(puuid, profile, tier):
+    """Guarda el prior calculado para reutilización rápida."""
+    db = _pred_db()
+    db.execute(
+        """INSERT OR REPLACE INTO player_priors_cache (
+            puuid, tier, prior_tumor, sample_size, recent_avg,
+            recent_losses, recent_wins, is_tilted, is_hotstreak, likely_role, cached_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            puuid, tier or "",
+            profile.get("score"),
+            profile.get("champion_total_sample", 0),
+            profile.get("recent_avg_tumor", 0),
+            profile.get("recent_losses", 0),
+            profile.get("recent_wins", 0),
+            1 if profile.get("is_tilted") else 0,
+            1 if profile.get("is_hotstreak") else 0,
+            profile.get("likely_role") or "",
+            time.time(),
         ),
     )
 
@@ -1144,7 +1218,7 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
         if is_tilted:
             adjusted_score = min(100, base_score + 15)
 
-        return {
+        result = {
             "score": adjusted_score,
             "base_score": base_score,
             "is_tilted": is_tilted,
@@ -1161,6 +1235,12 @@ def compute_player_profile(puuid, tier="GOLD", num_matches=8, current_champion_i
             "is_main": False,  # se recalcula en el live endpoint con mastery
             "teammate_history": recent_match_puuids,
         }
+        # Persistir prior global del jugador (sin info per-champ)
+        try:
+            save_cached_prior(puuid, result, tier)
+        except Exception:
+            pass
+        return result
     except Exception:
         return None
 
@@ -1217,14 +1297,27 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
     total_players = len(participants)
     step(f"Analizando 0/{total_players} jugadores...", progress=0, total=total_players)
 
-    for _idx, p in enumerate(participants):
-        step(f"Analizando {_idx+1}/{total_players} jugadores...", progress=_idx, total=total_players)
+    # Lock para escritura concurrente al cache JSON
+    cache_lock = threading.Lock()
+    progress_counter = {"done": 0}
+    progress_lock = threading.Lock()
+
+    def _looks_censored(rid: str) -> bool:
+        if not rid:
+            return True
+        if "#" not in rid:
+            return True
+        name_part = rid.split("#", 1)[0].strip()
+        return name_part == "" or name_part in ("?", "-", "Hidden", "hidden")
+
+    def _process_player(p):
+        """Procesa un jugador. Devuelve el entry_out listo para añadir a players."""
+        nonlocal cache_dirty
         p_puuid = p.get("puuid")
         if not p_puuid:
-            # Sin puuid no podemos identificar al jugador, pero igual lo mostramos
             champ_id_fallback = p.get("championId")
             champ_name_fb = champ_id_to_name(champ_id_fallback)
-            players.append({
+            return {
                 "puuid": "", "nombre": "🥷 Anónimo",
                 "champion_id": champ_id_fallback, "champion_name": champ_name_fb,
                 "team_id": p.get("teamId"), "role": "",
@@ -1236,15 +1329,14 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
                 "streamer_mode": True, "is_me": False,
                 "is_watched": False, "is_blacklisted": champ_name_fb in blacklist,
                 "_teammate_history": [],
-            })
-            continue
+            }
 
         champ_id = p.get("championId")
         cache_key = f"{p_puuid}:{champ_id}"
-        cached = cache.get(cache_key)
+        with cache_lock:
+            cached = cache.get(cache_key)
         if not force_refresh and cached and cached["data"].get("avg_tumor_score") is not None and (now - cached.get("ts", 0)) < LIVE_CACHE_TTL:
             entry = dict(cached["data"])
-            # Campos específicos de esta partida: siempre sobrescribir desde spectator
             entry["team_id"] = p.get("teamId")
             entry["champion_id"] = champ_id
             entry["spell1_id"] = p.get("spell1Id")
@@ -1255,7 +1347,6 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             champ_name = champ_id_to_name(champ_id)
             entry["is_blacklisted"] = champ_name in blacklist
             entry["champion_name"] = champ_name
-            # Re-derivar streamer_mode por si la entrada se cacheó antes del flag
             nombre = entry.get("nombre") or ""
             name_part = nombre.split("#", 1)[0].strip() if "#" in nombre else nombre.strip()
             if not entry.get("streamer_mode") and (
@@ -1263,7 +1354,6 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             ):
                 entry["streamer_mode"] = True
                 entry["nombre"] = "🥷 Anónimo"
-            # Recalcular is_main por si la entrada se cacheó con la fórmula vieja
             mp = entry.get("mastery_points", 0) or 0
             ml = entry.get("mastery_level", 0) or 0
             cg = entry.get("champion_games", 0) or 0
@@ -1272,21 +1362,14 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
                 or mp >= 150000
                 or ml >= 7
             )
-            players.append(entry)
-            continue
+            return entry
 
+        # Cache miss → fetch fresco. Las llamadas a riot_get ya están serializadas
+        # por el token bucket, así que la concurrencia es segura.
         tier, division = get_player_rank(p_puuid, platform_host)
 
         raw_riot_id = p.get("riotId", "") or ""
         streamer_mode = False
-
-        def _looks_censored(rid: str) -> bool:
-            if not rid:
-                return True
-            if "#" not in rid:
-                return True
-            name_part = rid.split("#", 1)[0].strip()
-            return name_part == "" or name_part in ("?", "-", "Hidden", "hidden")
 
         if _looks_censored(raw_riot_id):
             acc2 = riot_get(f"{RIOT_BASE_URL}/riot/account/v1/accounts/by-puuid/{p_puuid}")
@@ -1303,7 +1386,6 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
                     riot_id = "🥷 Anónimo"
                     streamer_mode = True
             else:
-                # 403/404 → Riot censura al streamer
                 riot_id = "🥷 Anónimo"
                 streamer_mode = True
         else:
@@ -1337,16 +1419,9 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             "champion_total_sample": profile["champion_total_sample"] if profile else 0,
             "champion_pct": profile["champion_pct"] if profile else 0,
             "champion_winrate": profile["champion_winrate"] if profile else None,
-            # Main = jugador con experiencia REAL en el champion. Combina mastery
-            # (señal de muchas partidas históricas) con presencia en la muestra
-            # reciente (señal de que sigue jugándolo). Evita falsos positivos
-            # de "3 partidas seguidas en un champ nuevo".
             "is_main": (
-                # Mastery alto + al menos una partida reciente con ese champ
                 (mastery_points >= 50000 and (profile and profile.get("champion_games", 0) >= 1))
-                # O mastery muy alto, suficiente por sí solo
                 or mastery_points >= 150000
-                # O mucha mastery por nivel (level 7+ del sistema antiguo)
                 or mastery_level >= 7
             ),
             "is_tilted": profile["is_tilted"] if profile else False,
@@ -1364,8 +1439,9 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             "_teammate_history": profile.get("teammate_history", []) if profile else [],
         }
         if entry["avg_tumor_score"] is not None:
-            cache[cache_key] = {"ts": now, "data": entry}
-            cache_dirty = True
+            with cache_lock:
+                cache[cache_key] = {"ts": now, "data": entry}
+                cache_dirty = True
 
         champ_name = champ_id_to_name(champ_id)
         entry["champion_name"] = champ_name
@@ -1374,7 +1450,23 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
         entry_out["is_me"] = p_puuid == me_puuid
         entry_out["is_watched"] = riot_id in watched
         entry_out["is_blacklisted"] = champ_name in blacklist
-        players.append(entry_out)
+        return entry_out
+
+    def _process_with_progress(p):
+        result = _process_player(p)
+        with progress_lock:
+            progress_counter["done"] += 1
+            done = progress_counter["done"]
+        step(f"Analizando {done}/{total_players} jugadores...", progress=done, total=total_players)
+        return result
+
+    # Procesamiento paralelo: 6 workers son suficientes (Riot rate limit
+    # serializa las llamadas, los threads se turnan en el token bucket)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        # map() preserva el orden de participants → players queda en orden
+        for entry_out in executor.map(_process_with_progress, participants):
+            players.append(entry_out)
 
     if cache_dirty:
         save_live_cache(cache)
@@ -1998,6 +2090,108 @@ def _tuning_suggestions(by_conf, by_med, by_tie, side_bias, overall):
     return hints
 
 
+# ============================================================================
+# AUTH + CURRENCY (Tumor Coins)
+# ============================================================================
+
+def _current_user():
+    """Lee el JWT del header Authorization y devuelve el user dict, o None."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[7:]
+    payload = _auth.verify_jwt(token)
+    if not payload:
+        return None
+    user_id = payload.get("user_id")
+    if not user_id:
+        return None
+    return _users.get_user_by_id(user_id)
+
+
+@app.route('/auth/discord/login', methods=['GET'])
+def auth_discord_login():
+    """Redirige al user a Discord para que autorice."""
+    return redirect(_auth.discord_auth_redirect_url())
+
+
+@app.route('/auth/discord/callback', methods=['GET'])
+def auth_discord_callback():
+    """Callback de Discord. Canjea code → access_token → user info → JWT.
+    Redirige al frontend con ?token=JWT."""
+    code = request.args.get("code")
+    if not code:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=no_code")
+    token_data = _auth.discord_exchange_code(code)
+    if not token_data or "access_token" not in token_data:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=token_exchange_failed")
+    user_info = _auth.discord_fetch_user(token_data["access_token"])
+    if not user_info or "id" not in user_info:
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=user_fetch_failed")
+
+    user = _users.upsert_user_from_discord(
+        discord_id=user_info["id"],
+        username=user_info.get("username", "unknown"),
+        avatar_hash=user_info.get("avatar"),
+    )
+    jwt = _auth.issue_jwt({"user_id": user["id"], "discord_id": user["discord_id"]})
+    return redirect(f"{_auth.FRONTEND_URL}?token={jwt}")
+
+
+@app.route('/auth/me', methods=['GET'])
+def auth_me():
+    """Devuelve el user actual basado en el JWT."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(user)
+
+
+@app.route('/auth/link-riot', methods=['POST'])
+def auth_link_riot():
+    """Vincula un Riot ID al user actual."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json() or {}
+    game_name = data.get("game_name")
+    tag_line = data.get("tag_line")
+    if not game_name or not tag_line:
+        return jsonify({"error": "Falta game_name/tag_line"}), 400
+
+    acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc_res.status_code != 200:
+        return jsonify({"error": "No se pudo obtener la cuenta de Riot"}), 400
+    puuid = acc_res.json()["puuid"]
+    riot_id = f"{game_name}#{tag_line}"
+    _users.link_riot_account(user["id"], puuid, riot_id)
+    return jsonify(_users.get_user_by_id(user["id"]))
+
+
+@app.route('/currency/balance', methods=['GET'])
+def currency_balance():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    txs = _users.get_recent_transactions(user["id"], limit=20)
+    return jsonify({
+        "currency": user["currency"],
+        "can_claim_daily": _users.can_claim_daily(user["id"]),
+        "recent_transactions": txs,
+    })
+
+
+@app.route('/currency/daily', methods=['POST'])
+def currency_daily():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    new_balance = _users.claim_daily(user["id"], amount=100)
+    if new_balance is None:
+        return jsonify({"error": "Ya has reclamado el daily reward hoy"}), 429
+    return jsonify({"currency": new_balance, "awarded": 100})
+
+
 @app.route('/backtestHistory', methods=['GET'])
 def backtest_history_endpoint():
     """Estadísticas acumuladas del histórico de backtests."""
@@ -2312,11 +2506,40 @@ def resolve_prediction_endpoint():
     blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
     actual = "blue" if blue_win else "red"
     predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
+
+    # Premiar Tumor Coins si la predicción acertó y el viewer está logueado
+    is_correct = bool(predicted and predicted == actual)
+    coins_awarded = 0
+    new_balance = None
+    if is_correct:
+        try:
+            cur2 = _users._exec("SELECT id FROM users WHERE riot_puuid=?", (viewer_puuid,))
+            urow = cur2.fetchone()
+            if urow:
+                user_id = urow[0]
+                # Award basado en confianza (mejor predicción = más coins)
+                conf = 0
+                try:
+                    crow = _pred_db().execute(
+                        "SELECT confidence FROM predictions WHERE match_id=? AND viewer_puuid=?",
+                        (match_id, viewer_puuid),
+                    ).fetchone()
+                    conf = (crow[0] if crow else 0) or 0
+                except Exception:
+                    pass
+                # 20 base + bonus por confianza alta (max 50 total)
+                coins_awarded = min(50, 20 + conf // 4)
+                new_balance = _users.add_currency(user_id, coins_awarded, f"prediction hit · {match_id}")
+        except Exception:
+            pass
+
     return jsonify({
         "resolved": True,
         "actual_winner": actual,
-        "correct": bool(predicted and predicted == actual),
+        "correct": is_correct,
         "predicted_winner": predicted,
+        "coins_awarded": coins_awarded,
+        "new_balance": new_balance,
     })
 
 
@@ -2338,7 +2561,18 @@ def get_overview_endpoint():
 
 def compute_prior_tumor_score(puuid, tier, before_ms, num=5):
     """Tumor score promedio del jugador en sus últimas N rankeds ANTES de `before_ms`.
-    Misma lógica que el live, pero filtrado por endTime."""
+    Misma lógica que el live, pero filtrado por endTime.
+
+    Usa player_priors_cache cuando before_ms es reciente (<1h del ahora).
+    Para backtests sobre partidas viejas, no se cachea porque el "antes de X"
+    cambia según la partida que estés analizando.
+    """
+    # Si el corte temporal es muy reciente, podemos usar el cache global
+    now_ms = time.time() * 1000
+    if abs(now_ms - before_ms) < 3600 * 1000:  # < 1h
+        cached = get_cached_prior(puuid)
+        if cached is not None and cached.get("score") is not None:
+            return cached["score"]
     try:
         end_sec = int(before_ms / 1000) - 1
         ids_res = riot_get(

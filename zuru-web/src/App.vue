@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, provide } from 'vue';
+import { ref, computed, provide, onMounted } from 'vue';
 import Navbar from './components/Navbar.vue';
 import DiagnosisForm from './components/DiagnosisForm.vue';
 import Mental from './components/Mental.vue';
 import Tinder from './components/Tinder.vue';
 import Overview from './components/Overview.vue';
 import Compare from './components/Compare.vue';
+import { useAuth } from './composables/useAuth';
+
+const auth = useAuth();
+onMounted(() => {
+  auth.handleAuthRedirect();
+});
+provide('auth', auth);
 
 const initialPage = (() => {
   const h = window.location.hash || ''

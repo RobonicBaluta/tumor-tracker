@@ -1445,22 +1445,59 @@ const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
 
 const champData = ref<Record<string, string>>({})
 
-fetch('https://ddragon.leagueoflegends.com/api/versions.json')
-  .then(r => r.json())
-  .then(versions => {
-    ddragonVersion.value = versions[0]
-    return fetch(`https://ddragon.leagueoflegends.com/cdn/${versions[0]}/data/en_US/champion.json`)
-  })
-  .then(r => r ? r.json() : null)
-  .then(data => {
-    if (!data) return
-    const map: Record<string, string> = {}
-    for (const id in data.data) {
-      map[data.data[id].key] = id
-    }
-    champData.value = map
-  })
-  .catch(() => {})
+// Cache de DDragon en localStorage con TTL de 24h.
+// Versions.json + champion.json son ~250KB combinados; descargarlos cada
+// page load es desperdicio. La data del parche cambia ~1 vez al mes.
+const DDRAGON_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const DDRAGON_CACHE_KEY = 'zuruweb-ddragon-cache'
+
+const loadDDragonFromCache = (): { version: string, champMap: Record<string, string> } | null => {
+  try {
+    const raw = localStorage.getItem(DDRAGON_CACHE_KEY)
+    if (!raw) return null
+    const obj = JSON.parse(raw)
+    if (!obj || typeof obj !== 'object') return null
+    if (Date.now() - (obj.cached_at || 0) > DDRAGON_CACHE_TTL_MS) return null
+    if (!obj.version || !obj.champMap) return null
+    return { version: obj.version, champMap: obj.champMap }
+  } catch {
+    return null
+  }
+}
+
+const saveDDragonToCache = (version: string, champMap: Record<string, string>) => {
+  try {
+    localStorage.setItem(DDRAGON_CACHE_KEY, JSON.stringify({
+      version, champMap, cached_at: Date.now(),
+    }))
+  } catch {}
+}
+
+const cachedDDragon = loadDDragonFromCache()
+if (cachedDDragon) {
+  // Hit: usar datos cacheados sin llamar a DDragon
+  ddragonVersion.value = cachedDDragon.version
+  champData.value = cachedDDragon.champMap
+} else {
+  // Miss: descargar y guardar para los próximos 24h
+  fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+    .then(r => r.json())
+    .then(versions => {
+      ddragonVersion.value = versions[0]
+      return fetch(`https://ddragon.leagueoflegends.com/cdn/${versions[0]}/data/en_US/champion.json`)
+    })
+    .then(r => r ? r.json() : null)
+    .then(data => {
+      if (!data) return
+      const map: Record<string, string> = {}
+      for (const id in data.data) {
+        map[data.data[id].key] = id
+      }
+      champData.value = map
+      saveDDragonToCache(ddragonVersion.value, map)
+    })
+    .catch(() => {})
+}
 
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
@@ -1614,7 +1651,7 @@ watch(scanning, (v) => {
     scanInterval = setInterval(() => {
       i = (i + 1) % SCAN_MESSAGES.length
       scanMessage.value = SCAN_MESSAGES[Math.floor(Math.random() * SCAN_MESSAGES.length)]
-    }, 800)
+    }, 2200)
   } else if (scanInterval) {
     clearInterval(scanInterval)
     scanInterval = null
