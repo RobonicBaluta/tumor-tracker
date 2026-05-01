@@ -1,4 +1,5 @@
 <template>
+  <Teleport to="body">
   <Transition name="modal">
     <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[10vh] sm:pt-4"
       @click.self="emit('close')">
@@ -183,6 +184,7 @@
       </div>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
