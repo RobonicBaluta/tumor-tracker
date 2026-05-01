@@ -1748,7 +1748,8 @@ const exportStatsImage = async () => {
 
 const parseHashAndLoad = () => {
   const hash = window.location.hash || ''
-  const m = hash.match(/^#\/summoner\/(.+)$/)
+  // Accept either #/summoner/{slug} (general search) or #/u/{slug} (public profile)
+  const m = hash.match(/^#\/(?:summoner|u)\/(.+)$/)
   if (!m) return
   const raw = decodeURIComponent(m[1])
   // Acepta "Name-TAG" o "Name#TAG"

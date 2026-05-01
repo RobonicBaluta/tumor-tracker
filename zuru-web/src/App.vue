@@ -20,13 +20,14 @@ provide('auth', auth);
 
 const initialPage = (() => {
   const h = window.location.hash || ''
-  if (h.startsWith('#/summoner/')) return 'overview'
+  if (h.startsWith('#/summoner/') || h.startsWith('#/u/')) return 'overview'
   return 'overview'  // Top Tumores como default
 })()
 const currentPage = ref(initialPage);
 
 window.addEventListener('hashchange', () => {
-  if (window.location.hash.startsWith('#/summoner/')) {
+  const h = window.location.hash
+  if (h.startsWith('#/summoner/') || h.startsWith('#/u/')) {
     currentPage.value = 'overview'
   }
 })
