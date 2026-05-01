@@ -6,10 +6,10 @@
     </div>
     <button @click="emit('update:modelValue', !modelValue)"
       :class="modelValue ? 'bg-yellow-600' : 'bg-white/10'"
-      class="relative w-11 h-6 rounded-full transition shrink-0">
+      class="relative w-11 h-6 rounded-full transition-colors shrink-0">
       <span
-        :class="modelValue ? 'translate-x-[22px]' : 'translate-x-[2px]'"
-        class="absolute top-[2px] w-5 h-5 bg-white rounded-full transition shadow" />
+        class="absolute top-[2px] w-5 h-5 bg-white rounded-full shadow"
+        :style="{ transform: `translateX(${modelValue ? '22px' : '2px'})`, transition: 'transform 0.15s ease' }" />
     </button>
   </div>
 </template>
