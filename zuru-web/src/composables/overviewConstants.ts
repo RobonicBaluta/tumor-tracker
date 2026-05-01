@@ -42,6 +42,15 @@ export const EXCUSE_STARTERS = [
   'La realidad es que',
   'Obviamente',
   'Claramente',
+  'Os lo juro,',
+  'Nadie me cree pero',
+  'El problema fue que',
+  'Con todo el respeto,',
+  'Lo que pasa es que',
+  'Honestamente,',
+  'Si te soy sincero,',
+  'El truco está en que',
+  'No queda otra que admitir que',
 ]
 
 export const EXCUSE_REASONS = [
@@ -65,6 +74,26 @@ export const EXCUSE_REASONS = [
   'el jungla me hizo counterjungle a MI jungla',
   'mi mouse se desconectó',
   'Cereza Furiosa tilteó en el minuto 2',
+  'mi duo se fue a cenar en plena partida',
+  'el client me mostró champ select del futuro',
+  'el enemigo tenía 5 mains de autofill',
+  'mi gato pisó el teclado durante el teamfight',
+  'el matchmaking me puso contra 5 challengers de smurf',
+  'mi silla gamer se rompió justo antes de Baron',
+  'cargó el game con 300 MB de RAM',
+  'mi compañero pickeó Garen jungle sin smite',
+  'el enemigo tenía comms de Discord (yo no)',
+  'me invocaron Tibbers por error',
+  'hubo un pop-up de Windows Update en el clutch',
+  'el servidor EUNE estaba en Rumania (otra vez)',
+  'mi top compró Boots of Mobility contra full AP',
+  'un enemigo hizo hextech flash y no sé cómo funciona',
+  'mi support pickeó Seraphine pero jugaba con los ojos cerrados',
+  'me hackearon la cuenta el minuto 20',
+  'el ADC compró Heartsteel de support item',
+  'nadie supo engage Baron con el enemigo sin objetivos',
+  'mi duo dijo "tranquis que remontamos" desde el minuto 8',
+  'el emoji de "!" no funcionaba',
 ]
 
 export const EXCUSE_ENDINGS = [
@@ -76,6 +105,18 @@ export const EXCUSE_ENDINGS = [
   'pero bueno, GG WP.',
   'y yo era el único intentándolo.',
   '— no tenía sentido insistir.',
+  'y encima no comí antes de la partida.',
+  'así que la culpa fue del meta.',
+  '— Riot tiene que responder por esto.',
+  'y así nadie llega a Master.',
+  'por eso mi MMR está donde está.',
+  'y luego dicen que es elo hell.',
+  '— la próxima partida remontamos.',
+  'pero mi mamá dice que soy bueno.',
+  'y yo llevaba 70% winrate antes de esto.',
+  '— ahora entiendes por qué dodgeo tanto.',
+  ', mi pro player favorito hubiese hecho lo mismo.',
+  ', y además Zeri está rota.',
 ]
 
 // Rune styles (Riot IDs 8000-8400)
