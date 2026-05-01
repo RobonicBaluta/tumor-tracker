@@ -161,6 +161,47 @@ def _init_sqlite(conn):
             updated_at REAL NOT NULL
         )
     """)
+    # Migración stat bets en SQLite: PRAGMA + ALTER TABLE selectivo.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(bets)").fetchall()}
+    new_cols = [
+        ("bet_kind", "TEXT NOT NULL DEFAULT 'match'"),
+        ("target_puuid", "TEXT"),
+        ("target_name", "TEXT"),
+        ("stat_type", "TEXT"),
+        ("threshold", "REAL"),
+        ("stat_actual", "REAL"),
+    ]
+    for name, ddl in new_cols:
+        if name not in existing_cols:
+            try:
+                conn.execute(f"ALTER TABLE bets ADD COLUMN {name} {ddl}")
+            except Exception:
+                pass
+    # 1v1 challenges: dos users, cada uno juega su propia partida, se comparan stats.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS challenges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            share_code TEXT UNIQUE NOT NULL,
+            challenger_user_id INTEGER NOT NULL,
+            challenger_puuid TEXT NOT NULL,
+            challenged_user_id INTEGER,
+            challenged_puuid TEXT,
+            stat_type TEXT NOT NULL,
+            comparison TEXT NOT NULL DEFAULT 'higher_wins',
+            amount INTEGER NOT NULL,
+            challenger_match_id TEXT,
+            challenger_value REAL,
+            challenged_match_id TEXT,
+            challenged_value REAL,
+            status TEXT NOT NULL DEFAULT 'open',
+            winner_user_id INTEGER,
+            created_at REAL NOT NULL,
+            accepted_at REAL,
+            resolved_at REAL,
+            expires_at REAL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status, created_at)")
 
 
 def _init_pg(conn):
@@ -269,6 +310,43 @@ def _init_pg(conn):
             updated_at DOUBLE PRECISION NOT NULL
         )
     """)
+    # Migración stat bets: añade columnas idempotentemente.
+    for col_def in [
+        "bet_kind TEXT NOT NULL DEFAULT 'match'",
+        "target_puuid TEXT",
+        "target_name TEXT",
+        "stat_type TEXT",
+        "threshold DOUBLE PRECISION",
+        "stat_actual DOUBLE PRECISION",
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE bets ADD COLUMN IF NOT EXISTS {col_def}")
+        except Exception:
+            pass
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS challenges (
+            id SERIAL PRIMARY KEY,
+            share_code TEXT UNIQUE NOT NULL,
+            challenger_user_id INTEGER NOT NULL REFERENCES users(id),
+            challenger_puuid TEXT NOT NULL,
+            challenged_user_id INTEGER REFERENCES users(id),
+            challenged_puuid TEXT,
+            stat_type TEXT NOT NULL,
+            comparison TEXT NOT NULL DEFAULT 'higher_wins',
+            amount INTEGER NOT NULL,
+            challenger_match_id TEXT,
+            challenger_value DOUBLE PRECISION,
+            challenged_match_id TEXT,
+            challenged_value DOUBLE PRECISION,
+            status TEXT NOT NULL DEFAULT 'open',
+            winner_user_id INTEGER REFERENCES users(id),
+            created_at DOUBLE PRECISION NOT NULL,
+            accepted_at DOUBLE PRECISION,
+            resolved_at DOUBLE PRECISION,
+            expires_at DOUBLE PRECISION
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status, created_at)")
     cur.close()
 
 
@@ -372,6 +450,13 @@ def link_riot_account(user_id, riot_puuid, riot_id):
     )
 
 
+def unlink_riot_account(user_id):
+    _exec(
+        "UPDATE users SET riot_puuid=NULL, riot_id=NULL WHERE id=?",
+        (user_id,),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Currency
 # ---------------------------------------------------------------------------
@@ -437,10 +522,37 @@ def _generate_bet_code():
     return "".join(_secrets.choice(alphabet) for _ in range(6))
 
 
-def create_bet(creator_user_id, match_id, game_id, side, amount):
-    """Crea una bet, escrowa el amount del creator. Devuelve dict o None si fallo."""
-    if amount <= 0 or side not in ("blue", "red"):
+VALID_STAT_TYPES = {"kills", "deaths", "assists", "kda"}
+
+
+def create_bet(
+    creator_user_id, match_id, game_id, side, amount,
+    bet_kind="match", target_puuid=None, target_name=None,
+    stat_type=None, threshold=None,
+):
+    """Crea una bet, escrowa el amount del creator. Devuelve dict o None si fallo.
+
+    bet_kind='match': side es 'blue'|'red', sin params extra.
+    bet_kind='stat':  side es 'over'|'under', target_puuid + stat_type + threshold obligatorios.
+    """
+    if amount <= 0:
         return None
+
+    if bet_kind == "match":
+        if side not in ("blue", "red"):
+            return None
+    elif bet_kind == "stat":
+        if side not in ("over", "under"):
+            return None
+        if not target_puuid or stat_type not in VALID_STAT_TYPES or threshold is None:
+            return None
+        try:
+            threshold = float(threshold)
+        except Exception:
+            return None
+    else:
+        return None
+
     # Escrow del creator (resta amount)
     new_balance = add_currency(creator_user_id, -amount, f"bet escrow")
     if new_balance is None:
@@ -455,15 +567,16 @@ def create_bet(creator_user_id, match_id, game_id, side, amount):
             code = candidate
             break
     if not code:
-        # Refund
         add_currency(creator_user_id, amount, "bet refund (code collision)")
         return None
 
     bet_id = _exec_returning(
         """INSERT INTO bets (share_code, match_id, game_id, creator_user_id,
-            creator_side, amount, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', ?)""",
-        (code, match_id, game_id, creator_user_id, side, amount, time.time()),
+            creator_side, amount, status, created_at,
+            bet_kind, target_puuid, target_name, stat_type, threshold)
+            VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)""",
+        (code, match_id, game_id, creator_user_id, side, amount, time.time(),
+         bet_kind, target_puuid, target_name, stat_type, threshold),
     )
     return get_bet_by_id(bet_id)
 
@@ -558,20 +671,333 @@ def resolve_bet(bet_id, winner_side):
 
 
 def resolve_bets_for_match(match_id, winner_side):
-    """Resuelve TODAS las bets matched de ese match_id. Útil al cerrar live."""
+    """Resuelve TODAS las bets de tipo 'match' matched de ese match_id."""
     cur = _exec(
-        "SELECT id FROM bets WHERE match_id=? AND status='matched'",
+        "SELECT id FROM bets WHERE match_id=? AND status='matched' AND bet_kind='match'",
         (match_id,),
     )
     rows = cur.fetchall()
     return [resolve_bet(r[0], winner_side) for r in rows]
 
 
+def resolve_stat_bet(bet_id, actual_value):
+    """Resuelve una stat bet matched. actual_value es la stat real del target_puuid.
+
+    Compara actual vs threshold según el creator_side ('over'/'under').
+    Empate (actual == threshold) → push (refund a ambos).
+    """
+    bet = get_bet_by_id(bet_id)
+    if not bet or bet["status"] != "matched" or bet["bet_kind"] != "stat":
+        return None
+    if bet["threshold"] is None or actual_value is None:
+        return None
+
+    # Determinar ganador
+    creator_won = None
+    if actual_value > bet["threshold"]:
+        creator_won = (bet["creator_side"] == "over")
+    elif actual_value < bet["threshold"]:
+        creator_won = (bet["creator_side"] == "under")
+    # exact tie → push (refund)
+
+    if creator_won is None:
+        # Push: refund a ambos
+        _exec(
+            "UPDATE bets SET status='resolved', resolved_at=?, stat_actual=? WHERE id=?",
+            (time.time(), float(actual_value), bet_id),
+        )
+        add_currency(bet["creator_user_id"], bet["amount"], f"bet push refund · {bet['share_code']}")
+        if bet["taker_user_id"]:
+            add_currency(bet["taker_user_id"], bet["amount"], f"bet push refund · {bet['share_code']}")
+        return get_bet_by_id(bet_id)
+
+    winner_user_id = bet["creator_user_id"] if creator_won else bet["taker_user_id"]
+    loser_user_id = bet["taker_user_id"] if creator_won else bet["creator_user_id"]
+    if winner_user_id is None:
+        return None
+    payout = bet["amount"] * 2
+    add_currency(winner_user_id, payout, f"stat bet won · {bet['share_code']}")
+    # Para stat bets, winner_side contiene 'over'|'under' del lado ganador.
+    winner_side_label = bet["creator_side"] if creator_won else ("over" if bet["creator_side"] == "under" else "under")
+    _exec(
+        "UPDATE bets SET status='resolved', winner_side=?, resolved_at=?, stat_actual=? WHERE id=?",
+        (winner_side_label, time.time(), float(actual_value), bet_id),
+    )
+    try:
+        push_notification(
+            user_id=winner_user_id,
+            notif_type="bet_won",
+            title=f"Ganaste {payout} TC",
+            body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']} (target {bet['threshold']})",
+            link="#/bets", icon="✅",
+        )
+        if loser_user_id:
+            push_notification(
+                user_id=loser_user_id,
+                notif_type="bet_lost",
+                title=f"Perdiste {bet['amount']} TC",
+                body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']}",
+                link="#/bets", icon="❌",
+            )
+    except Exception:
+        pass
+    try:
+        evaluate_achievements(winner_user_id)
+        if loser_user_id:
+            evaluate_achievements(loser_user_id)
+    except Exception:
+        pass
+    return get_bet_by_id(bet_id)
+
+
+def list_stat_bets_for_match(match_id):
+    """Devuelve stat bets matched de ese match_id (para resolver tras la partida)."""
+    cur = _exec(
+        f"SELECT {_BET_COLS} FROM bets WHERE match_id=? AND status='matched' AND bet_kind='stat'",
+        (match_id,),
+    )
+    return [_row_to_bet(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# 1v1 Challenges: dos users, cada uno juega su propia partida, se comparan stats
+# ---------------------------------------------------------------------------
+
+VALID_CHALLENGE_STATS = {"kills", "deaths", "assists", "kda", "cs", "gold", "damage"}
+CHALLENGE_DEFAULT_TTL = 24 * 3600  # 24h para aceptar y jugar
+
+_CHALLENGE_COLS = (
+    "id, share_code, challenger_user_id, challenger_puuid, "
+    "challenged_user_id, challenged_puuid, stat_type, comparison, amount, "
+    "challenger_match_id, challenger_value, challenged_match_id, challenged_value, "
+    "status, winner_user_id, created_at, accepted_at, resolved_at, expires_at"
+)
+
+
+def _row_to_challenge(row):
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "share_code": row[1],
+        "challenger_user_id": row[2],
+        "challenger_puuid": row[3],
+        "challenged_user_id": row[4],
+        "challenged_puuid": row[5],
+        "stat_type": row[6],
+        "comparison": row[7],
+        "amount": row[8],
+        "challenger_match_id": row[9],
+        "challenger_value": row[10],
+        "challenged_match_id": row[11],
+        "challenged_value": row[12],
+        "status": row[13],
+        "winner_user_id": row[14],
+        "created_at": row[15],
+        "accepted_at": row[16],
+        "resolved_at": row[17],
+        "expires_at": row[18],
+    }
+
+
+def create_challenge(challenger_user_id, stat_type, amount, comparison="higher_wins"):
+    """Crea un challenge 1v1. Escrowa el amount del challenger.
+
+    'higher_wins' es lo natural para kills/assists/kda/cs/gold/damage.
+    'lower_wins' es lo natural para deaths.
+    """
+    if amount <= 0 or stat_type not in VALID_CHALLENGE_STATS:
+        return None
+    if comparison not in ("higher_wins", "lower_wins"):
+        return None
+    user = get_user_by_id(challenger_user_id)
+    if not user or not user.get("riot_puuid"):
+        return None
+    new_balance = add_currency(challenger_user_id, -amount, "challenge escrow")
+    if new_balance is None:
+        return None  # saldo insuficiente
+    code = None
+    for _ in range(10):
+        candidate = _generate_bet_code()
+        cur = _exec("SELECT id FROM challenges WHERE share_code=?", (candidate,))
+        if not cur.fetchone():
+            code = candidate
+            break
+    if not code:
+        add_currency(challenger_user_id, amount, "challenge refund (code collision)")
+        return None
+    now = time.time()
+    cid = _exec_returning(
+        """INSERT INTO challenges (
+            share_code, challenger_user_id, challenger_puuid,
+            stat_type, comparison, amount, status, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
+        (code, challenger_user_id, user["riot_puuid"], stat_type,
+         comparison, amount, now, now + CHALLENGE_DEFAULT_TTL),
+    )
+    return get_challenge_by_id(cid)
+
+
+def accept_challenge(challenged_user_id, share_code):
+    """Acepta un challenge. Escrowa el amount. Devuelve dict o str de error."""
+    ch = get_challenge_by_code(share_code)
+    if not ch:
+        return "Challenge no encontrado"
+    if ch["status"] != "open":
+        return f"Challenge ya {ch['status']}"
+    if ch["challenger_user_id"] == challenged_user_id:
+        return "No puedes aceptar tu propio challenge"
+    if ch["expires_at"] and time.time() > ch["expires_at"]:
+        # Auto-expirar y devolver stake al challenger
+        _exec("UPDATE challenges SET status='expired' WHERE id=?", (ch["id"],))
+        add_currency(ch["challenger_user_id"], ch["amount"], f"challenge expired refund · {ch['share_code']}")
+        return "Challenge expirado"
+    user = get_user_by_id(challenged_user_id)
+    if not user or not user.get("riot_puuid"):
+        return "Necesitas vincular tu Riot ID antes de aceptar challenges"
+    new_balance = add_currency(challenged_user_id, -ch["amount"], "challenge escrow")
+    if new_balance is None:
+        return "Saldo insuficiente"
+    _exec(
+        "UPDATE challenges SET challenged_user_id=?, challenged_puuid=?, status='accepted', accepted_at=? WHERE id=?",
+        (challenged_user_id, user["riot_puuid"], time.time(), ch["id"]),
+    )
+    try:
+        push_notification(
+            user_id=ch["challenger_user_id"],
+            notif_type="challenge_accepted",
+            title="¡Challenge aceptado!",
+            body=f"{user['username']} aceptó tu challenge {ch['share_code']}",
+            link="#/challenges",
+            icon="⚔",
+        )
+    except Exception:
+        pass
+    return get_challenge_by_id(ch["id"])
+
+
+def cancel_challenge(challenger_user_id, challenge_id):
+    """Cancela un challenge abierto (sin acceptante). Refund."""
+    ch = get_challenge_by_id(challenge_id)
+    if not ch or ch["status"] != "open" or ch["challenger_user_id"] != challenger_user_id:
+        return None
+    _exec("UPDATE challenges SET status='cancelled' WHERE id=?", (challenge_id,))
+    add_currency(challenger_user_id, ch["amount"], f"challenge cancelled refund · {ch['share_code']}")
+    return ch
+
+
+def submit_challenge_match(user_id, share_code, match_id, value):
+    """Submit el match jugado por uno de los participantes. Si ambos han enviado, resuelve.
+
+    `value` es la stat ya extraída del match (kills/deaths/etc) — el caller (main.py) la
+    calcula tras un riot_get del match.
+    """
+    ch = get_challenge_by_code(share_code)
+    if not ch:
+        return "Challenge no encontrado"
+    if ch["status"] != "accepted":
+        return f"Challenge en estado {ch['status']}, no se puede submit"
+
+    if user_id == ch["challenger_user_id"]:
+        if ch["challenger_match_id"]:
+            return "Ya enviaste tu partida para este challenge"
+        _exec(
+            "UPDATE challenges SET challenger_match_id=?, challenger_value=? WHERE id=?",
+            (match_id, float(value), ch["id"]),
+        )
+    elif user_id == ch["challenged_user_id"]:
+        if ch["challenged_match_id"]:
+            return "Ya enviaste tu partida para este challenge"
+        _exec(
+            "UPDATE challenges SET challenged_match_id=?, challenged_value=? WHERE id=?",
+            (match_id, float(value), ch["id"]),
+        )
+    else:
+        return "No formas parte de este challenge"
+
+    # Refresh + comprobar resolución
+    ch = get_challenge_by_id(ch["id"])
+    if ch["challenger_value"] is not None and ch["challenged_value"] is not None:
+        _resolve_challenge(ch)
+    return get_challenge_by_id(ch["id"])
+
+
+def _resolve_challenge(ch):
+    """Determina ganador y paga. Empate → push (refund a ambos)."""
+    cv = ch["challenger_value"]
+    dv = ch["challenged_value"]
+    higher = ch["comparison"] == "higher_wins"
+    winner = None
+    if cv > dv:
+        winner = ch["challenger_user_id"] if higher else ch["challenged_user_id"]
+    elif cv < dv:
+        winner = ch["challenged_user_id"] if higher else ch["challenger_user_id"]
+    # else: tie → push
+
+    if winner is None:
+        # Refund ambos
+        _exec(
+            "UPDATE challenges SET status='resolved', resolved_at=? WHERE id=?",
+            (time.time(), ch["id"]),
+        )
+        add_currency(ch["challenger_user_id"], ch["amount"], f"challenge push refund · {ch['share_code']}")
+        add_currency(ch["challenged_user_id"], ch["amount"], f"challenge push refund · {ch['share_code']}")
+        return
+    payout = ch["amount"] * 2
+    add_currency(winner, payout, f"challenge won · {ch['share_code']}")
+    loser = ch["challenged_user_id"] if winner == ch["challenger_user_id"] else ch["challenger_user_id"]
+    _exec(
+        "UPDATE challenges SET status='resolved', winner_user_id=?, resolved_at=? WHERE id=?",
+        (winner, time.time(), ch["id"]),
+    )
+    try:
+        push_notification(
+            user_id=winner, notif_type="challenge_won",
+            title=f"Ganaste challenge · +{payout} TC",
+            body=f"{ch['stat_type']}: {cv if winner == ch['challenger_user_id'] else dv} vs {dv if winner == ch['challenger_user_id'] else cv}",
+            link="#/challenges", icon="🏆",
+        )
+        push_notification(
+            user_id=loser, notif_type="challenge_lost",
+            title=f"Perdiste challenge · -{ch['amount']} TC",
+            body=f"{ch['share_code']}",
+            link="#/challenges", icon="❌",
+        )
+    except Exception:
+        pass
+
+
+def get_challenge_by_id(cid):
+    cur = _exec(f"SELECT {_CHALLENGE_COLS} FROM challenges WHERE id=?", (cid,))
+    return _row_to_challenge(cur.fetchone())
+
+
+def get_challenge_by_code(code):
+    cur = _exec(f"SELECT {_CHALLENGE_COLS} FROM challenges WHERE share_code=?", (code,))
+    return _row_to_challenge(cur.fetchone())
+
+
+def list_open_challenges(limit=50):
+    cur = _exec(
+        f"SELECT {_CHALLENGE_COLS} FROM challenges WHERE status='open' ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    )
+    return [_row_to_challenge(r) for r in cur.fetchall()]
+
+
+def list_user_challenges(user_id, limit=50):
+    cur = _exec(
+        f"""SELECT {_CHALLENGE_COLS} FROM challenges
+            WHERE challenger_user_id=? OR challenged_user_id=?
+            ORDER BY created_at DESC LIMIT ?""",
+        (user_id, user_id, limit),
+    )
+    return [_row_to_challenge(r) for r in cur.fetchall()]
+
+
 def get_bet_by_id(bet_id):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE id=?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE id=?",
         (bet_id,),
     )
     row = cur.fetchone()
@@ -580,9 +1006,7 @@ def get_bet_by_id(bet_id):
 
 def get_bet_by_code(share_code):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE share_code=?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE share_code=?",
         (share_code,),
     )
     row = cur.fetchone()
@@ -592,10 +1016,7 @@ def get_bet_by_code(share_code):
 def list_open_bets(limit=50):
     """Bets abiertas que cualquiera puede aceptar. Las más recientes primero."""
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
-           FROM bets WHERE status='open'
-           ORDER BY created_at DESC LIMIT ?""",
+        f"SELECT {_BET_COLS} FROM bets WHERE status='open' ORDER BY created_at DESC LIMIT ?",
         (limit,),
     )
     rows = cur.fetchall()
@@ -608,19 +1029,19 @@ def list_open_bets(limit=50):
 
 def leaderboard_top_currency(limit=20):
     cur = _exec(
-        """SELECT id, discord_username, discord_avatar, currency, riot_id
+        """SELECT id, discord_id, discord_username, discord_avatar, currency, riot_id
            FROM users
            ORDER BY currency DESC LIMIT ?""",
         (limit,),
     )
     rows = cur.fetchall()
-    return [{"user_id": r[0], "username": r[1], "avatar": r[2], "currency": r[3], "riot_id": r[4]} for r in rows]
+    return [{"user_id": r[0], "discord_id": r[1], "username": r[2], "avatar": r[3], "currency": r[4], "riot_id": r[5]} for r in rows]
 
 
 def leaderboard_top_bet_winners(limit=20):
     """Top users por bets ganadas."""
     cur = _exec(
-        """SELECT u.id, u.discord_username, u.discord_avatar, u.currency,
+        """SELECT u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency,
                   COUNT(*) AS won_count,
                   SUM(b.amount) AS net_won
            FROM bets b
@@ -628,22 +1049,21 @@ def leaderboard_top_bet_winners(limit=20):
                 CASE WHEN b.creator_side = b.winner_side THEN b.creator_user_id ELSE b.taker_user_id END
            )
            WHERE b.status = 'resolved'
-           GROUP BY u.id, u.discord_username, u.discord_avatar, u.currency
+           GROUP BY u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency
            ORDER BY won_count DESC, net_won DESC
            LIMIT ?""",
         (limit,),
     )
     rows = cur.fetchall()
     return [{
-        "user_id": r[0], "username": r[1], "avatar": r[2], "currency": r[3],
-        "won_count": r[4], "net_won": r[5],
+        "user_id": r[0], "discord_id": r[1], "username": r[2], "avatar": r[3], "currency": r[4],
+        "won_count": r[5], "net_won": r[6],
     } for r in rows]
 
 
 def get_user_bets(user_id, limit=50):
     cur = _exec(
-        """SELECT id, share_code, match_id, game_id, creator_user_id, creator_side,
-                  amount, taker_user_id, status, winner_side, resolved_at, created_at
+        f"""SELECT {_BET_COLS}
            FROM bets
            WHERE creator_user_id=? OR taker_user_id=?
            ORDER BY created_at DESC LIMIT ?""",
@@ -651,6 +1071,13 @@ def get_user_bets(user_id, limit=50):
     )
     rows = cur.fetchall()
     return [_row_to_bet(r) for r in rows]
+
+
+_BET_COLS = (
+    "id, share_code, match_id, game_id, creator_user_id, creator_side, "
+    "amount, taker_user_id, status, winner_side, resolved_at, created_at, "
+    "bet_kind, target_puuid, target_name, stat_type, threshold, stat_actual"
+)
 
 
 def _row_to_bet(row):
@@ -669,6 +1096,12 @@ def _row_to_bet(row):
         "winner_side": row[9],
         "resolved_at": row[10],
         "created_at": row[11],
+        "bet_kind": row[12] if len(row) > 12 else "match",
+        "target_puuid": row[13] if len(row) > 13 else None,
+        "target_name": row[14] if len(row) > 14 else None,
+        "stat_type": row[15] if len(row) > 15 else None,
+        "threshold": row[16] if len(row) > 16 else None,
+        "stat_actual": row[17] if len(row) > 17 else None,
     }
 
 

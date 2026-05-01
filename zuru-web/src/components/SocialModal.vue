@@ -1,24 +1,24 @@
 <template>
+  <Teleport to="body">
   <Transition name="modal">
-    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm overflow-y-auto"
+    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-3xl max-h-[88vh] flex flex-col my-auto">
+      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-3xl max-h-[88vh] flex flex-col">
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
-            <span>🌐</span><span>Social</span>
+            <span>🌐</span><span>{{ $t('social.title') }}</span>
           </p>
           <button @click="emit('close')" class="text-white/40 hover:text-white text-xl transition">✕</button>
         </div>
 
         <!-- Tabs -->
         <div class="flex gap-1 px-5 py-2 border-b border-white/10">
-          <button v-for="t in tabs" :key="t.key" @click="active = t.key"
-            :class="active === t.key
+          <button v-for="tab in tabs" :key="tab.key" @click="active = tab.key"
+            :class="active === tab.key
               ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50'
               : 'text-white/40 border-transparent hover:text-white/70'"
             class="text-xs font-mono px-3 py-1.5 rounded border transition">
-            {{ t.label }}
+            {{ tab.label }}
           </button>
         </div>
 
@@ -26,9 +26,9 @@
         <div class="flex-1 overflow-y-auto p-5">
           <!-- HOT BETS -->
           <div v-if="active === 'hot'">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">APUESTAS ABIERTAS · ACEPTA UNA</p>
+            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">{{ $t('social.open_bets_caption') }}</p>
             <p v-if="!openBets.length" class="text-white/30 text-sm font-mono text-center py-8">
-              No hay apuestas abiertas ahora mismo. Crea una desde el modal de live game.
+              {{ $t('social.no_open_bets') }}
             </p>
             <div class="space-y-2">
               <div v-for="b in openBets" :key="b.id"
@@ -36,14 +36,14 @@
                 <div class="text-2xl">{{ b.creator_side === 'blue' ? '🔵' : '🔴' }}</div>
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">
-                    <span class="font-bold">{{ b.creator?.username || 'Anónimo' }}</span>
-                    apuesta <span class="text-yellow-300 font-bold">{{ b.amount }} TC</span>
+                    <span class="font-bold">{{ b.creator?.username || $t('social.anonymous') }}</span>
+                    {{ $t('social.bets_amount') }} <span class="text-yellow-300 font-bold">{{ b.amount }} TC</span>
                   </p>
-                  <p class="text-white/40 text-[10px] font-mono">match {{ b.match_id }}</p>
+                  <p class="text-white/40 text-[10px] font-mono">{{ $t('social.match_label') }} {{ b.match_id }}</p>
                 </div>
                 <button @click="onAccept(b)"
                   class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                  Aceptar {{ b.creator_side === 'blue' ? '🔴' : '🔵' }}
+                  {{ $t('common.accept') }} {{ b.creator_side === 'blue' ? '🔴' : '🔵' }}
                 </button>
               </div>
             </div>
@@ -61,7 +61,7 @@
               </button>
             </div>
             <div v-if="!leaderboard.length" class="text-white/30 text-sm font-mono text-center py-8">
-              Sin datos todavía.
+              {{ $t('social.no_data') }}
             </div>
             <div v-else class="space-y-1">
               <div v-for="(u, i) in leaderboard" :key="u.user_id"
@@ -70,8 +70,11 @@
                   :class="i < 3 ? 'text-[#c89b3c]' : 'text-white/30'">
                   {{ i < 3 ? ['🥇','🥈','🥉'][i] : '#' + (i + 1) }}
                 </span>
-                <img v-if="u.avatar" :src="`https://cdn.discordapp.com/avatars/${u.user_id}/${u.avatar}.png?size=32`"
+                <img v-if="u.avatar && u.discord_id" :src="`https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=32`"
                   class="w-7 h-7 rounded-full" />
+                <div v-else class="w-7 h-7 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {{ u.username?.[0]?.toUpperCase() ?? '?' }}
+                </div>
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">{{ u.username }}</p>
                   <p v-if="u.riot_id" class="text-[#c89b3c] text-[10px] font-mono">{{ u.riot_id }}</p>
@@ -86,6 +89,162 @@
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- CLUSTERS -->
+          <div v-else-if="active === 'clusters'">
+            <div v-if="clustersLoading" class="text-white/30 text-sm font-mono text-center py-8">
+              {{ $t('social.calculating') }}
+            </div>
+            <div v-else-if="!clusters.length" class="text-white/30 text-sm font-mono text-center py-8">
+              {{ $t('social.no_cluster_data') }}
+            </div>
+            <div v-else class="space-y-3">
+              <div v-for="c in clusters" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-xl p-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="text-2xl">{{ c.emoji }}</span>
+                  <p class="text-white font-mono font-bold">{{ c.name }}</p>
+                  <span class="text-[10px] text-white/40 font-mono ml-auto">{{ $t('social.cluster_size', { n: c.size }) }}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-2 text-[10px] font-mono">
+                  <p class="text-white/50">{{ $t('social.cluster_avg_prior') }}: <span class="text-yellow-300">{{ c.centroid.avg_prior }}</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_recent') }}: <span class="text-yellow-300">{{ c.centroid.avg_recent }}</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_winrate') }}: <span class="text-green-400">{{ c.centroid.win_rate }}%</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_tilt') }}: <span class="text-orange-400">{{ c.centroid.tilt_frac }}%</span></p>
+                </div>
+                <div v-if="c.samples.length" class="space-y-1 mt-2">
+                  <p class="text-white/30 text-[9px] font-mono tracking-widest">{{ $t('social.cluster_examples') }}</p>
+                  <div v-for="(s, i) in (c.samples as any[])" :key="i"
+                    class="flex items-center gap-2 text-[10px] font-mono py-0.5">
+                    <span class="text-white/40 w-4">{{ Number(i) + 1 }}.</span>
+                    <span class="text-white/60 flex-1 truncate">{{ s.tier }} · {{ s.role || '?' }}</span>
+                    <span class="text-yellow-300">{{ s.prior_tumor }}</span>
+                    <span class="text-white/40">/</span>
+                    <span class="text-green-400">{{ s.win_rate }}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CHALLENGES (1v1) -->
+          <div v-else-if="active === 'challenges'">
+            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
+              {{ $t('social.challenges_intro') }}
+            </p>
+
+            <!-- Crear challenge -->
+            <div class="bg-black/30 border border-white/10 rounded-xl p-3 mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">{{ $t('social.create') }}</p>
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <select v-model="newChallengeStat"
+                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
+                  <option value="kda">KDA</option>
+                  <option value="kills">Kills</option>
+                  <option value="deaths">Deaths ({{ $t('social.lower_wins_label') }})</option>
+                  <option value="assists">Assists</option>
+                  <option value="cs">CS</option>
+                  <option value="gold">Gold</option>
+                  <option value="damage">Damage</option>
+                </select>
+                <input type="number" v-model.number="newChallengeAmount" :min="10"
+                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none"
+                  :placeholder="$t('social.stake_placeholder')" />
+              </div>
+              <button @click="onCreateChallenge" :disabled="!newChallengeAmount || newChallengeAmount <= 0"
+                class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold text-xs px-3 py-1.5 rounded transition">
+                {{ $t('social.launch_challenge') }} · {{ newChallengeAmount }} TC
+              </button>
+              <p v-if="challengeError" class="text-red-400 text-[10px] font-mono mt-1.5">{{ challengeError }}</p>
+            </div>
+
+            <div v-if="challengesLoading" class="text-white/30 text-sm font-mono text-center py-4">
+              {{ $t('common.loading') }}
+            </div>
+
+            <!-- Mis challenges -->
+            <div v-if="myChallenges.length" class="space-y-1.5 mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.my_challenges') }}</p>
+              <div v-for="c in myChallenges" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2">
+                <div class="flex items-center gap-2 text-xs font-mono">
+                  <code class="text-yellow-300">{{ c.share_code }}</code>
+                  <span class="text-purple-300 font-bold">{{ c.stat_type }}</span>
+                  <span class="text-white/40">·</span>
+                  <span class="text-yellow-300">{{ c.amount }} TC</span>
+                  <span class="text-white/40 ml-auto text-[10px] uppercase">{{ c.status }}</span>
+                </div>
+                <p class="text-white/50 text-[11px] font-mono mt-1">
+                  <span :class="c.challenger_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
+                    {{ c.challenger?.username || '?' }}
+                  </span>
+                  <span class="text-white/30 mx-1">vs</span>
+                  <span v-if="c.challenged" :class="c.challenged_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
+                    {{ c.challenged.username }}
+                  </span>
+                  <span v-else class="text-white/30 italic">{{ $t('social.waiting_rival') }}</span>
+                </p>
+
+                <!-- Stats si están -->
+                <p v-if="c.challenger_value !== null || c.challenged_value !== null" class="text-white/60 text-[10px] font-mono mt-1">
+                  <span class="text-cyan-300">A: {{ c.challenger_value ?? '?' }}</span>
+                  ·
+                  <span class="text-pink-300">B: {{ c.challenged_value ?? '?' }}</span>
+                </p>
+
+                <!-- Resultado -->
+                <p v-if="c.status === 'resolved'" class="text-[11px] font-mono mt-1 font-bold"
+                  :class="c.winner_user_id === myUserId ? 'text-green-400' : c.winner_user_id ? 'text-red-400' : 'text-white/50'">
+                  {{
+                    c.winner_user_id === myUserId ? $t('social.challenge_won', { amount: c.amount }) :
+                    c.winner_user_id ? $t('social.challenge_lost', { amount: c.amount }) :
+                    $t('social.challenge_push')
+                  }}
+                </p>
+
+                <!-- Submit match -->
+                <div v-if="challengeNeedsSubmit(c)" class="flex gap-2 mt-2">
+                  <input v-model="matchIdInput" placeholder="EUW1_1234567890"
+                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-yellow-500/60 focus:outline-none" />
+                  <button @click="onSubmitMatch(c)" :disabled="!matchIdInput.trim() || submittingMatchFor === c.share_code"
+                    class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded">
+                    {{ submittingMatchFor === c.share_code ? '...' : $t('social.submit') }}
+                  </button>
+                </div>
+
+                <!-- Cancel si abierto y soy el creator -->
+                <button v-if="c.status === 'open' && c.challenger_user_id === myUserId"
+                  @click="onCancelChallenge(c)"
+                  class="text-[10px] font-mono px-2 py-1 mt-2 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
+                  {{ $t('common.cancel') }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Open challenges feed -->
+            <div v-if="openChallenges.length" class="space-y-1.5">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.challenges_open_caption') }}</p>
+              <div v-for="c in openChallenges.filter((o: any) => o.challenger_user_id !== myUserId)" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-3">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-mono">
+                    <span class="text-cyan-300">{{ c.challenger?.username || '?' }}</span>
+                    · <span class="text-purple-300">{{ c.stat_type }}</span>
+                    · <span class="text-yellow-300">{{ c.amount }} TC</span>
+                  </p>
+                </div>
+                <button @click="onAcceptChallenge(c)"
+                  class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
+                  {{ $t('common.accept') }}
+                </button>
+              </div>
+            </div>
+
+            <div v-if="!myChallenges.length && !openChallenges.length && !challengesLoading"
+              class="text-white/30 text-sm font-mono text-center py-4">
+              {{ $t('social.no_challenges') }}
             </div>
           </div>
 
@@ -189,33 +348,49 @@
           </div>
         </div>
       </div>
-      </div>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, inject } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
 
 const auth = inject<any>('auth')
+const { t } = useI18n()
 
-type TabKey = 'hot' | 'leaderboards' | 'friends' | 'rooms'
-const tabs: { key: TabKey; label: string }[] = [
-  { key: 'hot', label: '🔥 Hot Bets' },
-  { key: 'leaderboards', label: '🏆 Leaderboards' },
-  { key: 'friends', label: '👥 Amigos' },
-  { key: 'rooms', label: '🏠 Salas' },
-]
-const leaderboardKinds = [
-  { key: 'currency' as const, label: 'Más TC' },
-  { key: 'bets' as const, label: 'Mejores apostadores' },
-  { key: 'accuracy' as const, label: 'Mejor accuracy' },
-]
+type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'challenges' | 'friends' | 'rooms'
+const tabs = computed<{ key: TabKey; label: string }[]>(() => [
+  { key: 'hot', label: `🔥 ${t('social.hot_bets')}` },
+  { key: 'leaderboards', label: `🏆 ${t('social.leaderboards')}` },
+  { key: 'clusters', label: `🧬 ${t('social.clusters')}` },
+  { key: 'challenges', label: `⚔ ${t('social.challenges')}` },
+  { key: 'friends', label: `👥 ${t('social.friends')}` },
+  { key: 'rooms', label: `🏠 ${t('social.rooms')}` },
+])
+const leaderboardKinds = computed(() => [
+  { key: 'currency' as const, label: t('social.lb_currency') },
+  { key: 'bets' as const, label: t('social.lb_bets') },
+  { key: 'accuracy' as const, label: t('social.lb_accuracy') },
+])
 
-const active = ref<'hot' | 'leaderboards' | 'friends' | 'rooms'>('hot')
+const active = ref<TabKey>('hot')
+const clusters = ref<any[]>([])
+const clustersLoading = ref(false)
+
+// 1v1 Challenges state
+const myChallenges = ref<any[]>([])
+const openChallenges = ref<any[]>([])
+const challengesLoading = ref(false)
+const challengeError = ref('')
+const newChallengeStat = ref<'kills'|'deaths'|'assists'|'kda'|'cs'|'gold'|'damage'>('kda')
+const newChallengeAmount = ref(50)
+const submittingMatchFor = ref('')   // share_code currently submitting
+const matchIdInput = ref('')
 const openBets = ref<any[]>([])
 const lbKind = ref<'currency' | 'bets' | 'accuracy'>('currency')
 const leaderboard = ref<any[]>([])
@@ -230,7 +405,7 @@ const roomCopied = ref(false)
 
 watch(() => props.show, async v => {
   if (v) {
-    if (props.initialTab) active.value = props.initialTab as 'hot' | 'leaderboards' | 'friends' | 'rooms'
+    if (props.initialTab) active.value = props.initialTab as TabKey
     await loadActive()
   }
 })
@@ -240,7 +415,94 @@ watch(active, () => loadActive())
 async function loadActive() {
   if (active.value === 'hot') openBets.value = await auth.fetchOpenBets()
   if (active.value === 'leaderboards') await loadLeaderboard()
+  if (active.value === 'clusters') await loadClusters()
+  if (active.value === 'challenges') await loadChallenges()
   if (active.value === 'friends') friends.value = await auth.fetchFriends()
+}
+
+async function loadChallenges() {
+  challengesLoading.value = true
+  try {
+    const [mine, open] = await Promise.all([
+      auth.fetchMyChallenges(),
+      auth.fetchOpenChallenges(),
+    ])
+    myChallenges.value = mine
+    openChallenges.value = open
+  } finally {
+    challengesLoading.value = false
+  }
+}
+
+async function onCreateChallenge() {
+  challengeError.value = ''
+  try {
+    await auth.createChallenge({
+      statType: newChallengeStat.value,
+      amount: newChallengeAmount.value,
+    })
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onAcceptChallenge(c: any) {
+  challengeError.value = ''
+  try {
+    await auth.acceptChallenge(c.share_code)
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onCancelChallenge(c: any) {
+  if (!confirm(`¿Cancelar challenge ${c.share_code}? Refund ${c.amount} TC.`)) return
+  try {
+    await auth.cancelChallenge(c.share_code)
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onSubmitMatch(c: any) {
+  if (!matchIdInput.value.trim()) return
+  submittingMatchFor.value = c.share_code
+  challengeError.value = ''
+  try {
+    await auth.submitChallengeMatch(c.share_code, matchIdInput.value.trim())
+    matchIdInput.value = ''
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  } finally {
+    submittingMatchFor.value = ''
+  }
+}
+
+const myUserId = computed(() => auth?.user.value?.id)
+function challengeIamIn(c: any) {
+  return c.challenger_user_id === myUserId.value || c.challenged_user_id === myUserId.value
+}
+function challengeNeedsSubmit(c: any) {
+  if (c.status !== 'accepted' || !challengeIamIn(c)) return false
+  if (c.challenger_user_id === myUserId.value && !c.challenger_match_id) return true
+  if (c.challenged_user_id === myUserId.value && !c.challenged_match_id) return true
+  return false
+}
+
+async function loadClusters() {
+  clustersLoading.value = true
+  try {
+    const data = await auth.fetchClusters(4)
+    clusters.value = data.clusters || []
+  } catch {
+    clusters.value = []
+  } finally {
+    clustersLoading.value = false
+  }
 }
 
 async function loadLeaderboard() {

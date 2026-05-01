@@ -14,6 +14,7 @@ const user = ref<{
   riot_puuid: string | null
   riot_id: string | null
   currency: number
+  can_claim_daily?: boolean
 } | null>(null)
 
 const isLoggedIn = computed(() => !!user.value)
@@ -61,7 +62,10 @@ async function claimDaily() {
   })
   if (!res.ok) return null
   const data = await res.json()
-  if (user.value) user.value.currency = data.currency
+  if (user.value) {
+    user.value.currency = data.currency
+    user.value.can_claim_daily = false
+  }
   return data
 }
 
@@ -92,6 +96,36 @@ async function createBet(matchId: string, gameId: number | undefined, side: 'blu
   const res = await authedFetch('/bets/create', {
     method: 'POST',
     body: JSON.stringify({ match_id: matchId, game_id: gameId, side, amount }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function createStatBet(opts: {
+  matchId: string
+  gameId?: number
+  side: 'over' | 'under'
+  amount: number
+  targetPuuid: string
+  targetName: string
+  statType: 'kills' | 'deaths' | 'assists' | 'kda'
+  threshold: number
+}) {
+  const res = await authedFetch('/bets/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      match_id: opts.matchId,
+      game_id: opts.gameId,
+      side: opts.side,
+      amount: opts.amount,
+      bet_kind: 'stat',
+      target_puuid: opts.targetPuuid,
+      target_name: opts.targetName,
+      stat_type: opts.statType,
+      threshold: opts.threshold,
+    }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Error')
@@ -136,6 +170,68 @@ async function fetchOpenBets() {
 
 async function fetchLeaderboard(kind: 'currency' | 'bets' | 'accuracy') {
   const res = await fetch(`${API_BASE}/leaderboards/${kind}`)
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function fetchClusters(k = 4) {
+  const res = await fetch(`${API_BASE}/analytics/clusters?k=${k}`)
+  if (!res.ok) return { clusters: [], n: 0, k }
+  return await res.json()
+}
+
+// 1v1 Challenges
+async function createChallenge(opts: {
+  statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage'
+  amount: number
+  comparison?: 'higher_wins' | 'lower_wins'
+}) {
+  const res = await authedFetch('/challenges/create', {
+    method: 'POST',
+    body: JSON.stringify({ stat_type: opts.statType, amount: opts.amount, comparison: opts.comparison }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function acceptChallenge(shareCode: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/accept`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function cancelChallenge(shareCode: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/cancel`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function submitChallengeMatch(shareCode: string, matchId: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ match_id: matchId }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function fetchOpenChallenges() {
+  const res = await fetch(`${API_BASE}/challenges/open`)
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function fetchMyChallenges() {
+  if (!token.value) return []
+  const res = await authedFetch('/challenges/mine')
   if (!res.ok) return []
   return await res.json()
 }
@@ -251,7 +347,19 @@ async function linkRiot(gameName: string, tagLine: string) {
     },
     body: JSON.stringify({ game_name: gameName, tag_line: tagLine }),
   })
-  if (!res.ok) return null
+  const data = await res.json().catch(() => null)
+  if (!res.ok) return { error: (data && data.error) || `Error ${res.status}` }
+  user.value = data
+  return data
+}
+
+async function unlinkRiot() {
+  if (!token.value) return null
+  const res = await authedFetch('/auth/unlink-riot', { method: 'POST' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    throw new Error((data && data.error) || `Error ${res.status}`)
+  }
   user.value = await res.json()
   return user.value
 }
@@ -281,14 +389,23 @@ export function useAuth() {
     refreshBalance,
     claimDaily,
     linkRiot,
+    unlinkRiot,
     handleAuthRedirect,
     createBet,
+    createStatBet,
     acceptBet,
     cancelBet,
     fetchBet,
     fetchMyBets,
     fetchOpenBets,
     fetchLeaderboard,
+    fetchClusters,
+    createChallenge,
+    acceptChallenge,
+    cancelChallenge,
+    submitChallengeMatch,
+    fetchOpenChallenges,
+    fetchMyChallenges,
     fetchFriends,
     addFriend,
     acceptFriend,

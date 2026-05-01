@@ -1,17 +1,17 @@
 <template>
+  <Teleport to="body">
   <Transition name="modal">
-    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm overflow-y-auto"
+    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col my-auto">
+      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div>
             <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
-              <span>☢</span><span>Mis apuestas</span>
+              <span>☢</span><span>{{ $t('bets.my_bets') }}</span>
             </p>
             <p v-if="summary" class="text-white/40 text-[10px] font-mono mt-0.5">
-              {{ summary.total }} apuestas · {{ summary.won }}W / {{ summary.lost }}L · neto
+              {{ summary.total }} · {{ summary.won }}W / {{ summary.lost }}L
               <span :class="summary.net >= 0 ? 'text-green-400' : 'text-red-400'" class="font-bold">
                 {{ summary.net >= 0 ? '+' : '' }}{{ summary.net }} TC
               </span>
@@ -31,12 +31,12 @@
 
         <!-- Loading -->
         <div v-if="loading" class="flex-1 flex items-center justify-center py-12">
-          <p class="text-white/40 text-sm font-mono animate-pulse">Cargando apuestas...</p>
+          <p class="text-white/40 text-sm font-mono animate-pulse">{{ $t('common.loading') }}</p>
         </div>
         <!-- Empty state -->
         <div v-else-if="!filtered.length" class="flex-1 flex flex-col items-center justify-center py-16 px-6 text-center">
-          <p class="text-white/40 text-sm font-mono">No hay apuestas en este filtro</p>
-          <p class="text-white/20 text-xs font-mono mt-2">Las apuestas se crean desde el modal de live game.</p>
+          <p class="text-white/40 text-sm font-mono">{{ $t('bets.no_bets_filter') }}</p>
+          <p class="text-white/20 text-xs font-mono mt-2">{{ $t('bets.bet_creation_hint') }}</p>
         </div>
         <!-- Lista -->
         <div v-else class="flex-1 overflow-y-auto divide-y divide-white/5">
@@ -57,37 +57,52 @@
                 </div>
 
                 <p class="text-white/70 text-xs font-mono mt-1">
-                  <span :class="myRole(b) === 'creator' ? 'text-yellow-300' : 'text-cyan-300'" class="font-bold">{{ myRole(b) === 'creator' ? 'Creaste' : 'Aceptaste' }}</span>
-                  · apuestas por
-                  <span :class="mySide(b) === 'blue' ? 'text-blue-300' : 'text-red-300'" class="font-bold">
-                    {{ mySide(b) === 'blue' ? '🔵 AZUL' : '🔴 ROJO' }}
-                  </span>
+                  <span :class="myRole(b) === 'creator' ? 'text-yellow-300' : 'text-cyan-300'" class="font-bold">{{ myRole(b) === 'creator' ? $t('bets.you_created') : $t('bets.you_accepted') }}</span>
+                  <template v-if="b.bet_kind === 'stat'">
+                    · 📊 <span class="text-purple-300 font-bold">{{ b.target_name || '?' }}</span>
+                    <span :class="mySide(b) === 'over' ? 'text-green-300' : 'text-orange-300'" class="font-bold">
+                      {{ mySide(b) === 'over' ? ' ▲ MÁS' : ' ▼ MENOS' }}
+                    </span>
+                    de <span class="text-yellow-300">{{ b.threshold }}</span> {{ b.stat_type }}
+                  </template>
+                  <template v-else>
+                    · {{ $t('bets.bet_on') }}
+                    <span :class="mySide(b) === 'blue' ? 'text-blue-300' : 'text-red-300'" class="font-bold">
+                      {{ mySide(b) === 'blue' ? '🔵 BLUE' : '🔴 RED' }}
+                    </span>
+                  </template>
                 </p>
 
                 <p class="text-white/50 text-[11px] font-mono mt-1">
                   vs
                   <span v-if="opponent(b)" class="text-white/70">{{ opponent(b)?.username }}</span>
-                  <span v-else class="text-white/30 italic">esperando taker</span>
-                  · stake <span class="text-yellow-300">{{ b.amount }} TC</span>
+                  <span v-else class="text-white/30 italic">{{ $t('bets.waiting_taker') }}</span>
+                  · {{ $t('bets.stake') }} <span class="text-yellow-300">{{ b.amount }} TC</span>
                   · {{ b.match_id }}
                 </p>
 
                 <!-- Resultado -->
                 <p v-if="b.status === 'resolved'" class="text-xs font-mono mt-1.5"
-                  :class="didIWin(b) ? 'text-green-400' : 'text-red-400'">
-                  {{ didIWin(b) ? `✓ Ganaste +${b.amount} TC` : `✗ Perdiste -${b.amount} TC` }}
-                  · ganó {{ b.winner_side === 'blue' ? '🔵' : '🔴' }}
+                  :class="isPush(b) ? 'text-white/50' : didIWin(b) ? 'text-green-400' : 'text-red-400'">
+                  <template v-if="b.bet_kind === 'stat'">
+                    {{ isPush(b) ? '↻ Push (refund)' : didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    · actual: <span class="font-bold">{{ b.stat_actual }}</span> / target {{ b.threshold }}
+                  </template>
+                  <template v-else>
+                    {{ didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    · {{ $t('bets.won_team') }} {{ b.winner_side === 'blue' ? '🔵' : '🔴' }}
+                  </template>
                 </p>
 
                 <!-- Acciones -->
                 <div v-if="b.status === 'open' && myRole(b) === 'creator'" class="flex gap-2 mt-2">
                   <button @click="copyLink(b)"
                     class="text-[10px] font-mono px-2 py-1 border border-white/15 text-white/60 hover:text-white hover:border-white/30 rounded">
-                    {{ copiedCode === b.share_code ? '✓ Copiado' : '📋 Copiar link' }}
+                    {{ copiedCode === b.share_code ? '✓ ' + $t('common.copied') : '📋 ' + $t('bets.copy_link') }}
                   </button>
                   <button @click="onCancel(b)" :disabled="cancelling === b.share_code"
                     class="text-[10px] font-mono px-2 py-1 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded disabled:opacity-30">
-                    {{ cancelling === b.share_code ? 'Cancelando...' : 'Cancelar' }}
+                    {{ cancelling === b.share_code ? $t('bets.cancelling') : $t('common.cancel') }}
                   </button>
                 </div>
               </div>
@@ -98,20 +113,21 @@
         <!-- Footer -->
         <div class="px-5 py-3 border-t border-white/10 flex items-center justify-between">
           <p class="text-white/30 text-[10px] font-mono">
-            Saldo actual: <span class="text-yellow-300 font-bold">{{ balance }} TC</span>
+            {{ $t('bets.current_balance') }}: <span class="text-yellow-300 font-bold">{{ balance }} TC</span>
           </p>
           <button @click="refresh" class="text-[10px] font-mono text-white/40 hover:text-white/70">
-            ↻ Actualizar
+            ↻ {{ $t('common.refresh') }}
           </button>
         </div>
       </div>
-      </div>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, inject, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -124,26 +140,33 @@ interface Bet {
   match_id: string
   game_id?: number
   creator_user_id: number
-  creator_side: 'blue' | 'red'
+  creator_side: 'blue' | 'red' | 'over' | 'under'
   amount: number
   taker_user_id?: number | null
   status: 'open' | 'matched' | 'resolved' | 'cancelled'
-  winner_side?: 'blue' | 'red' | null
+  winner_side?: 'blue' | 'red' | 'over' | 'under' | null
   resolved_at?: number | null
   created_at: number
   creator?: { username: string, discord_id: string, avatar: string | null }
   taker?: { username: string, discord_id: string, avatar: string | null } | null
+  bet_kind?: 'match' | 'stat'
+  target_puuid?: string | null
+  target_name?: string | null
+  stat_type?: 'kills' | 'deaths' | 'assists' | 'kda' | null
+  threshold?: number | null
+  stat_actual?: number | null
 }
 
 const bets = ref<Bet[]>([])
 const loading = ref(false)
 const filter = ref<'all' | 'open' | 'matched' | 'resolved'>('all')
-const filters = [
-  { key: 'all' as const,      label: 'Todas' },
-  { key: 'open' as const,     label: 'Pendientes' },
-  { key: 'matched' as const,  label: 'En curso' },
-  { key: 'resolved' as const, label: 'Resueltas' },
-]
+const { t } = useI18n()
+const filters = computed(() => [
+  { key: 'all' as const,      label: t('bets.all') },
+  { key: 'open' as const,     label: t('bets.pending') },
+  { key: 'matched' as const,  label: t('bets.in_progress') },
+  { key: 'resolved' as const, label: t('bets.resolved') },
+])
 const copiedCode = ref('')
 const cancelling = ref('')
 
@@ -176,10 +199,13 @@ function myRole(b: Bet): 'creator' | 'taker' {
   return b.creator_user_id === myUserId.value ? 'creator' : 'taker'
 }
 
-function mySide(b: Bet): 'blue' | 'red' {
-  return myRole(b) === 'creator'
-    ? b.creator_side
-    : (b.creator_side === 'blue' ? 'red' : 'blue')
+function mySide(b: Bet): 'blue' | 'red' | 'over' | 'under' {
+  if (myRole(b) === 'creator') return b.creator_side
+  // Taker takes opposite side
+  if (b.creator_side === 'blue') return 'red'
+  if (b.creator_side === 'red') return 'blue'
+  if (b.creator_side === 'over') return 'under'
+  return 'over'
 }
 
 function opponent(b: Bet) {
@@ -189,6 +215,10 @@ function opponent(b: Bet) {
 function didIWin(b: Bet) {
   if (b.status !== 'resolved' || !b.winner_side) return false
   return mySide(b) === b.winner_side
+}
+
+function isPush(b: Bet) {
+  return b.status === 'resolved' && b.bet_kind === 'stat' && !b.winner_side
 }
 
 function statusIcon(b: Bet) {
@@ -201,10 +231,10 @@ function statusIcon(b: Bet) {
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string, cls: string }> = {
-    open:      { label: 'pendiente',  cls: 'bg-yellow-900/40 text-yellow-400' },
-    matched:   { label: 'en curso',   cls: 'bg-cyan-900/40 text-cyan-300' },
-    resolved:  { label: 'resuelta',   cls: 'bg-white/10 text-white/60' },
-    cancelled: { label: 'cancelada',  cls: 'bg-red-900/40 text-red-400' },
+    open:      { label: t('bets.pending'),     cls: 'bg-yellow-900/40 text-yellow-400' },
+    matched:   { label: t('bets.in_progress'), cls: 'bg-cyan-900/40 text-cyan-300' },
+    resolved:  { label: t('bets.resolved'),    cls: 'bg-white/10 text-white/60' },
+    cancelled: { label: t('common.cancel'),    cls: 'bg-red-900/40 text-red-400' },
   }
   return map[status] || { label: status, cls: 'bg-white/5 text-white/40' }
 }
@@ -225,7 +255,7 @@ async function copyLink(b: Bet) {
 }
 
 async function onCancel(b: Bet) {
-  if (!confirm(`¿Cancelar apuesta ${b.share_code}? Se devolverán ${b.amount} TC.`)) return
+  if (!confirm(t('bets.confirm_cancel', { code: b.share_code, amount: b.amount }))) return
   cancelling.value = b.share_code
   try {
     await auth.cancelBet(b.share_code)
@@ -238,7 +268,8 @@ async function onCancel(b: Bet) {
 }
 
 const summary = computed(() => {
-  const resolved = bets.value.filter(b => b.status === 'resolved')
+  // Pushes (stat bet ties) no cuentan como win ni loss; sólo refund.
+  const resolved = bets.value.filter(b => b.status === 'resolved' && !isPush(b))
   if (!resolved.length) return null
   const won = resolved.filter(b => didIWin(b)).length
   const lost = resolved.length - won

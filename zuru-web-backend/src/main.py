@@ -161,6 +161,22 @@ else:
 def healthz():
     return {"ok": True}
 
+
+@app.route("/healthz/redis")
+def healthz_redis():
+    """Devuelve estado del cliente Redis. 200 incluso si está caído (no-op fallback)."""
+    try:
+        from redis_client import is_enabled, r
+    except Exception:
+        return {"enabled": False, "available": False, "error": "import_failed"}
+    if not is_enabled() or r is None:
+        return {"enabled": False, "available": False}
+    try:
+        pong = r.ping()
+        return {"enabled": True, "available": bool(pong)}
+    except Exception as exc:
+        return {"enabled": True, "available": False, "error": str(exc)[:120]}
+
 # Directorio de datos: en Render se monta /var/data, en dev usa src/.
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -2011,6 +2027,161 @@ def player_analytics_endpoint():
     })
 
 
+def _kmeans(points, k, max_iter=40, seed=42):
+    """Pure-Python k-means. points: list of float vectors. Returns (labels, centroids)."""
+    if not points or k <= 0:
+        return [], []
+    n = len(points)
+    if n <= k:
+        return list(range(n)), [list(p) for p in points]
+    dim = len(points[0])
+    # Deterministic init: pick k points spread across the dataset by index
+    rng_state = seed & 0xffffffff
+    def _rng():
+        nonlocal rng_state
+        rng_state = (rng_state * 1103515245 + 12345) & 0x7fffffff
+        return rng_state
+    centroids = [list(points[(_rng() % n)]) for _ in range(k)]
+    labels = [0] * n
+    for _ in range(max_iter):
+        # Assign
+        changed = False
+        for i, p in enumerate(points):
+            best, best_d = 0, float('inf')
+            for ci, c in enumerate(centroids):
+                d = sum((p[j] - c[j]) ** 2 for j in range(dim))
+                if d < best_d:
+                    best_d, best = d, ci
+            if labels[i] != best:
+                changed = True
+                labels[i] = best
+        # Update
+        sums = [[0.0] * dim for _ in range(k)]
+        counts = [0] * k
+        for i, p in enumerate(points):
+            l = labels[i]
+            counts[l] += 1
+            for j in range(dim):
+                sums[l][j] += p[j]
+        for ci in range(k):
+            if counts[ci] > 0:
+                centroids[ci] = [sums[ci][j] / counts[ci] for j in range(dim)]
+        if not changed:
+            break
+    return labels, centroids
+
+
+@app.route('/analytics/clusters', methods=['GET'])
+def analytics_clusters():
+    """Cluster jugadores por estilo usando k-means sobre prior_tumor, recent_avg, win_rate, tilt/streak.
+
+    Query params:
+      - k: número de clusters (default 4, max 8)
+      - limit: máx jugadores a procesar (default 500)
+    """
+    try:
+        k = max(2, min(8, int(request.args.get('k', 4))))
+    except Exception:
+        k = 4
+    try:
+        limit = max(20, min(2000, int(request.args.get('limit', 500))))
+    except Exception:
+        limit = 500
+
+    db = _pred_db()
+    rows = db.execute(
+        """SELECT puuid, tier, prior_tumor, sample_size, recent_avg,
+                  recent_losses, recent_wins, is_tilted, is_hotstreak, likely_role
+           FROM player_priors_cache
+           WHERE sample_size >= 3
+           ORDER BY cached_at DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+    if not rows or len(rows) < k:
+        return jsonify({"clusters": [], "n": len(rows), "k": k, "message": "Not enough player data"})
+
+    points = []
+    meta = []
+    for r in rows:
+        puuid, tier, prior, sample, recent_avg, losses, wins, tilted, streak, role = r
+        wl = (wins or 0) + (losses or 0)
+        win_rate = (wins / wl) if wl else 0.5
+        # Feature vector normalized to roughly [0, 1]
+        vec = [
+            (prior or 50) / 100.0,
+            (recent_avg or 50) / 100.0,
+            win_rate,
+            1.0 if tilted else 0.0,
+            1.0 if streak else 0.0,
+        ]
+        points.append(vec)
+        meta.append({
+            "puuid": puuid,
+            "tier": tier or "UNRANKED",
+            "prior_tumor": prior or 0,
+            "recent_avg": recent_avg or 0,
+            "win_rate": round(win_rate * 100, 1),
+            "wins": wins or 0,
+            "losses": losses or 0,
+            "is_tilted": bool(tilted),
+            "is_hotstreak": bool(streak),
+            "role": role or "",
+        })
+
+    labels, centroids = _kmeans(points, k)
+
+    # Group + label clusters by their dominant trait
+    clusters = []
+    for ci in range(k):
+        members = [meta[i] for i in range(len(meta)) if labels[i] == ci]
+        if not members:
+            continue
+        c = centroids[ci]
+        prior_norm, recent_norm, win_rate, tilt_frac, streak_frac = c
+        # Heuristic naming
+        avg_prior = prior_norm * 100
+        avg_recent = recent_norm * 100
+        if avg_prior > 65:
+            name = "Tumores Crónicos"
+            emoji = "💀"
+        elif avg_prior < 35 and win_rate > 0.55:
+            name = "Carries Funcionales"
+            emoji = "🔥"
+        elif streak_frac > 0.4:
+            name = "Hot Streak"
+            emoji = "📈"
+        elif tilt_frac > 0.4:
+            name = "Tilteados"
+            emoji = "🌋"
+        elif avg_recent > 60:
+            name = "Bajón reciente"
+            emoji = "📉"
+        else:
+            name = "Promedio"
+            emoji = "·"
+        # Sort members by prior (worst first for tumor clusters, best first otherwise)
+        members.sort(key=lambda m: -m["prior_tumor"] if avg_prior > 50 else m["prior_tumor"])
+        clusters.append({
+            "id": ci,
+            "name": name,
+            "emoji": emoji,
+            "size": len(members),
+            "centroid": {
+                "avg_prior": round(avg_prior, 1),
+                "avg_recent": round(avg_recent, 1),
+                "win_rate": round(win_rate * 100, 1),
+                "tilt_frac": round(tilt_frac * 100, 1),
+                "streak_frac": round(streak_frac * 100, 1),
+            },
+            "samples": members[:6],  # top 6 per cluster
+        })
+
+    clusters.sort(key=lambda c: -c["centroid"]["avg_prior"])
+    return jsonify({"clusters": clusters, "n": len(rows), "k": k})
+
+
 @app.route('/tuningReport', methods=['GET'])
 def tuning_report_endpoint():
     """Reporte empírico para afinar el modelo.
@@ -2293,6 +2464,7 @@ def auth_me():
     user = _current_user()
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
+    user["can_claim_daily"] = _users.can_claim_daily(user["id"])
     return jsonify(user)
 
 
@@ -2309,11 +2481,23 @@ def auth_link_riot():
         return jsonify({"error": "Falta game_name/tag_line"}), 400
 
     acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc_res.status_code == 404:
+        return jsonify({"error": "Riot ID no encontrado"}), 404
     if acc_res.status_code != 200:
-        return jsonify({"error": "No se pudo obtener la cuenta de Riot"}), 400
+        return jsonify({"error": f"Riot API error {acc_res.status_code}"}), 502
     puuid = acc_res.json()["puuid"]
     riot_id = f"{game_name}#{tag_line}"
     _users.link_riot_account(user["id"], puuid, riot_id)
+    return jsonify(_users.get_user_by_id(user["id"]))
+
+
+@app.route('/auth/unlink-riot', methods=['POST'])
+def auth_unlink_riot():
+    """Desvincula el Riot ID del user actual."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    _users.unlink_riot_account(user["id"])
     return jsonify(_users.get_user_by_id(user["id"]))
 
 
@@ -2520,14 +2704,14 @@ def leaderboards(kind):
         """).fetchall()
         result = []
         for puuid, total, hits in rows:
-            cur = _users._exec("SELECT id, discord_username, discord_avatar, currency, riot_id FROM users WHERE riot_puuid=?", (puuid,))
+            cur = _users._exec("SELECT id, discord_id, discord_username, discord_avatar, currency, riot_id FROM users WHERE riot_puuid=?", (puuid,))
             urow = cur.fetchone()
             if not urow:
                 continue
             accuracy = round((hits or 0) / total * 100, 1)
             result.append({
-                "user_id": urow[0], "username": urow[1], "avatar": urow[2],
-                "currency": urow[3], "riot_id": urow[4],
+                "user_id": urow[0], "discord_id": urow[1], "username": urow[2], "avatar": urow[3],
+                "currency": urow[4], "riot_id": urow[5],
                 "total": total, "hits": hits, "accuracy": accuracy,
             })
         result.sort(key=lambda x: (x["accuracy"], x["total"]), reverse=True)
@@ -2675,7 +2859,11 @@ def _augment_bet(bet):
 
 @app.route('/bets/create', methods=['POST'])
 def bets_create():
-    """Crea una apuesta sobre la partida actual del user. Body: { match_id, game_id, side, amount }."""
+    """Crea una apuesta. Body:
+      Match bet:  { match_id, game_id, side: 'blue'|'red', amount }
+      Stat bet:   { match_id, game_id, side: 'over'|'under', amount,
+                    bet_kind: 'stat', target_puuid, target_name, stat_type, threshold }
+    """
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
@@ -2684,12 +2872,37 @@ def bets_create():
     game_id = data.get("game_id")
     side = data.get("side")
     amount = int(data.get("amount", 0))
-    if not match_id or side not in ("blue", "red") or amount <= 0:
+    bet_kind = data.get("bet_kind") or "match"
+
+    if not match_id or amount <= 0:
         return jsonify({"error": "Faltan campos o son inválidos"}), 400
     if amount > user["currency"]:
         return jsonify({"error": "Saldo insuficiente"}), 400
 
-    bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+    if bet_kind == "match":
+        if side not in ("blue", "red"):
+            return jsonify({"error": "side debe ser blue|red"}), 400
+        bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+    elif bet_kind == "stat":
+        if side not in ("over", "under"):
+            return jsonify({"error": "side debe ser over|under"}), 400
+        target_puuid = data.get("target_puuid")
+        target_name = data.get("target_name")
+        stat_type = data.get("stat_type")
+        try:
+            threshold = float(data.get("threshold"))
+        except Exception:
+            return jsonify({"error": "threshold inválido"}), 400
+        if not target_puuid or stat_type not in _users.VALID_STAT_TYPES:
+            return jsonify({"error": "stat_type inválido o falta target_puuid"}), 400
+        bet = _users.create_bet(
+            user["id"], match_id, game_id, side, amount,
+            bet_kind="stat", target_puuid=target_puuid, target_name=target_name,
+            stat_type=stat_type, threshold=threshold,
+        )
+    else:
+        return jsonify({"error": "bet_kind inválido"}), 400
+
     if not bet:
         return jsonify({"error": "No se pudo crear la apuesta"}), 500
     return jsonify(_augment_bet(bet))
@@ -2748,6 +2961,142 @@ def bets_mine():
         return jsonify({"error": "Login requerido"}), 401
     bets = _users.get_user_bets(user["id"])
     return jsonify([_augment_bet(b) for b in bets])
+
+
+# ---------------------------------------------------------------------------
+# 1v1 Challenges: cada user juega su partida, se comparan stats
+# ---------------------------------------------------------------------------
+
+def _augment_challenge(ch):
+    if not ch:
+        return None
+    briefs = _users.get_users_brief([ch.get("challenger_user_id"), ch.get("challenged_user_id")])
+    ch["challenger"] = briefs.get(ch.get("challenger_user_id"))
+    ch["challenged"] = briefs.get(ch.get("challenged_user_id")) if ch.get("challenged_user_id") else None
+    return ch
+
+
+def _extract_player_stat(match_info, puuid, stat_type):
+    """Extrae la stat del participante con `puuid` del JSON de match-v5."""
+    parts = (match_info or {}).get("info", {}).get("participants", []) or []
+    p = next((x for x in parts if x.get("puuid") == puuid), None)
+    if not p:
+        return None
+    k = p.get("kills", 0) or 0
+    d = p.get("deaths", 0) or 0
+    a = p.get("assists", 0) or 0
+    if stat_type == "kills":   return float(k)
+    if stat_type == "deaths":  return float(d)
+    if stat_type == "assists": return float(a)
+    if stat_type == "kda":     return (k + a) / max(d, 1)
+    if stat_type == "cs":      return float((p.get("totalMinionsKilled", 0) or 0) + (p.get("neutralMinionsKilled", 0) or 0))
+    if stat_type == "gold":    return float(p.get("goldEarned", 0) or 0)
+    if stat_type == "damage":  return float(p.get("totalDamageDealtToChampions", 0) or 0)
+    return None
+
+
+@app.route('/challenges/create', methods=['POST'])
+def challenges_create():
+    """Body: { stat_type, amount, comparison? } — challenger debe tener riot_id vinculado."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID antes de crear challenges"}), 400
+    data = request.get_json() or {}
+    stat_type = data.get("stat_type")
+    try:
+        amount = int(data.get("amount", 0))
+    except Exception:
+        return jsonify({"error": "amount inválido"}), 400
+    comparison = data.get("comparison") or ("lower_wins" if stat_type == "deaths" else "higher_wins")
+    if amount <= 0 or stat_type not in _users.VALID_CHALLENGE_STATS:
+        return jsonify({"error": "stat_type/amount inválidos"}), 400
+    if amount > user["currency"]:
+        return jsonify({"error": "Saldo insuficiente"}), 400
+    ch = _users.create_challenge(user["id"], stat_type, amount, comparison)
+    if not ch:
+        return jsonify({"error": "No se pudo crear el challenge"}), 500
+    return jsonify(_augment_challenge(ch))
+
+
+@app.route('/challenges/<share_code>/accept', methods=['POST'])
+def challenges_accept(share_code):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.accept_challenge(user["id"], share_code)
+    if isinstance(res, str):
+        return jsonify({"error": res}), 400
+    return jsonify(_augment_challenge(res))
+
+
+@app.route('/challenges/<share_code>/cancel', methods=['POST'])
+def challenges_cancel(share_code):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "No encontrado"}), 404
+    res = _users.cancel_challenge(user["id"], ch["id"])
+    if not res:
+        return jsonify({"error": "No se pudo cancelar"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/challenges/<share_code>/submit', methods=['POST'])
+def challenges_submit(share_code):
+    """Body: { match_id }. Backend pulls Match v5 y extrae la stat del puuid del user."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID"}), 400
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    if not match_id:
+        return jsonify({"error": "match_id requerido"}), 400
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "Challenge no encontrado"}), 404
+    if ch["status"] != "accepted":
+        return jsonify({"error": f"Challenge en estado {ch['status']}"}), 400
+    if user["id"] not in (ch["challenger_user_id"], ch["challenged_user_id"]):
+        return jsonify({"error": "No participas en este challenge"}), 403
+
+    mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+    if mres.status_code != 200:
+        return jsonify({"error": f"Match no disponible (riot {mres.status_code})"}), 502
+    info = mres.json()
+    val = _extract_player_stat(info, user["riot_puuid"], ch["stat_type"])
+    if val is None:
+        return jsonify({"error": "No participaste en ese match o stat no extraíble"}), 400
+    res = _users.submit_challenge_match(user["id"], share_code, match_id, val)
+    if isinstance(res, str):
+        return jsonify({"error": res}), 400
+    return jsonify(_augment_challenge(res))
+
+
+@app.route('/challenges/open', methods=['GET'])
+def challenges_open_feed():
+    return jsonify([_augment_challenge(c) for c in _users.list_open_challenges(limit=50)])
+
+
+@app.route('/challenges/mine', methods=['GET'])
+def challenges_mine():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    return jsonify([_augment_challenge(c) for c in _users.list_user_challenges(user["id"])])
+
+
+@app.route('/challenges/<share_code>', methods=['GET'])
+def challenges_get(share_code):
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify(_augment_challenge(ch))
 
 
 @app.route('/backtestHistory', methods=['GET'])
@@ -3065,9 +3414,36 @@ def resolve_prediction_endpoint():
     actual = "blue" if blue_win else "red"
     predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
 
-    # Auto-resolver apuestas P2P de este match
+    # Auto-resolver apuestas P2P de este match (match bets + stat bets)
     try:
         _users.resolve_bets_for_match(match_id, actual)
+    except Exception:
+        pass
+    try:
+        stat_bets = _users.list_stat_bets_for_match(match_id)
+        if stat_bets:
+            # Indexa participantes por puuid para lookup O(1)
+            by_puuid = {p.get("puuid"): p for p in parts if p.get("puuid")}
+            for sb in stat_bets:
+                tp = sb.get("target_puuid")
+                stype = sb.get("stat_type")
+                p = by_puuid.get(tp)
+                if not p or not stype:
+                    continue
+                k = p.get("kills", 0) or 0
+                d = p.get("deaths", 0) or 0
+                a = p.get("assists", 0) or 0
+                if stype == "kills":
+                    actual_val = float(k)
+                elif stype == "deaths":
+                    actual_val = float(d)
+                elif stype == "assists":
+                    actual_val = float(a)
+                elif stype == "kda":
+                    actual_val = (k + a) / max(d, 1)
+                else:
+                    continue
+                _users.resolve_stat_bet(sb["id"], actual_val)
     except Exception:
         pass
 

@@ -15,6 +15,17 @@ import time
 
 import requests
 
+try:
+    from redis_client import (
+        r_get_json as _redis_get_json,
+        r_set_json as _redis_set_json,
+        is_enabled as _redis_enabled,
+    )
+except Exception:
+    def _redis_get_json(*_a, **_kw): return None
+    def _redis_set_json(*_a, **_kw): return False
+    def _redis_enabled(): return False
+
 DB_PATH = os.path.join(
     os.environ.get("DATA_DIR", os.path.dirname(__file__)),
     "riot_cache.db",
@@ -46,7 +57,15 @@ def _get_conn():
     return _conn
 
 
+_REDIS_MATCH_TTL = 24 * 3600  # 24h: matches son inmutables, podemos cachear largo
+
+
 def cache_get_match(match_id):
+    # L1: Redis (rápido, compartido entre workers)
+    hit = _redis_get_json(f"match:{match_id}")
+    if hit is not None:
+        return hit
+    # L2: SQLite (persistente)
     with _db_lock:
         cur = _get_conn().execute(
             "SELECT json FROM match_cache WHERE match_id = ?", (match_id,)
@@ -55,9 +74,12 @@ def cache_get_match(match_id):
         if not row:
             return None
         try:
-            return json.loads(row[0])
+            data = json.loads(row[0])
         except Exception:
             return None
+    # Promover a L1 para próximas reads
+    _redis_set_json(f"match:{match_id}", data, ttl=_REDIS_MATCH_TTL)
+    return data
 
 
 def cache_put_match(match_id, data):
@@ -66,12 +88,13 @@ def cache_put_match(match_id, data):
             "INSERT OR REPLACE INTO match_cache (match_id, json, cached_at) VALUES (?, ?, ?)",
             (match_id, json.dumps(data), int(time.time())),
         )
+    _redis_set_json(f"match:{match_id}", data, ttl=_REDIS_MATCH_TTL)
 
 
 def cache_stats():
     with _db_lock:
         cur = _get_conn().execute("SELECT COUNT(*) FROM match_cache")
-        return {"cached_matches": cur.fetchone()[0]}
+        return {"cached_matches": cur.fetchone()[0], "redis_enabled": _redis_enabled()}
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +140,13 @@ def _throttle():
     with _limiter_lock:
         for b in _buckets:
             b.take()
+    # NOTE: el limiter distribuido en Redis se omite a propósito.
+    # Render free tier corre 1 worker → no hay contención cross-worker, y un
+    # round-trip a Upstash (~80ms) por cada llamada a la Riot API añade segundos
+    # al /liveGame (50+ llamadas). Si en el futuro escalamos a >1 worker:
+    #   for cap, per in LIMITS:
+    #       ok, retry = _redis_acquire_slot(f"riot:{cap}_{per}", cap, per)
+    #       if not ok and retry > 0: time.sleep(min(retry, 5))
 
 
 # ---------------------------------------------------------------------------

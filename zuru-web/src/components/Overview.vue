@@ -120,58 +120,81 @@
     <div v-else class="p-6 max-w-7xl mx-auto w-full">
 
       <!-- Header -->
-      <div class="flex items-center justify-between mb-8 animate-fade">
-        <div>
+      <div class="flex items-start justify-between mb-8 gap-4 animate-fade">
+        <div class="min-w-0">
           <h1 class="text-white font-mono text-3xl font-bold">Top Tumores</h1>
           <div class="flex items-center gap-2 mt-1">
-            <p class="text-[#c89b3c] font-mono">{{ summoner }}</p>
-            <span v-if="tier" :class="tierColor[tier] ?? 'text-white/40'" class="font-mono font-bold text-sm border border-current/30 px-2 py-0.5 rounded">
-              {{ tier }}{{ division ? ' ' + division : '' }}
+            <p class="text-[#c89b3c] font-mono truncate">{{ summoner }}</p>
+            <img v-if="tier && tierIconUrl" :src="tierIconUrl"
+              :alt="tierFullLabel" :title="tierFullLabel"
+              class="w-16 h-16 object-contain shrink-0 -my-4"
+              @error="tierIconFailed = true" />
+            <span v-else-if="tier" :class="tierColor[tier] ?? 'text-white/40'"
+              :title="tierFullLabel"
+              class="font-mono font-bold text-[10px] border border-current/30 px-1.5 py-0.5 rounded shrink-0">
+              {{ tier[0] }}{{ division || '' }}
             </span>
           </div>
         </div>
-        <div class="flex gap-2">
+        <!-- Action buttons: icon-only with title tooltips for compactness -->
+        <div class="flex gap-1.5 flex-wrap justify-end shrink-0">
+          <!-- En directo: keeps text since it's the primary action -->
+          <button @click="() => searchLiveGame()" :disabled="liveLoading"
+            class="h-9 px-3 text-xs text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
+            :title="liveLoading ? 'Buscando...' : 'En directo'">
+            <span class="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+            <span class="hidden sm:inline">{{ liveLoading ? 'Buscando...' : 'En directo' }}</span>
+          </button>
+          <!-- Refrescar -->
+          <button @click="refresh" :disabled="loading"
+            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            :title="loading ? 'Cargando...' : 'Refrescar'">
+            <span :class="loading ? 'animate-spin inline-block' : ''">↻</span>
+          </button>
+          <!-- Guardar / Guardada -->
           <button @click="toggleSaveAccount"
             :class="isSaved ? 'bg-[#c89b3c]/20 border-[#c89b3c]/50 text-[#c89b3c] hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40'"
-            class="px-3 py-2 text-sm border rounded-lg transition font-mono">
-            {{ isSaved ? '⭐ Guardada' : '☆ Guardar' }}
+            class="w-9 h-9 text-sm border rounded-lg transition font-mono flex items-center justify-center"
+            :title="isSaved ? 'Quitar de guardadas' : 'Guardar cuenta'">
+            {{ isSaved ? '⭐' : '☆' }}
           </button>
-          <button @click="rollExcuse"
-            class="px-3 py-2 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono">
-            🎲 Excusa
-          </button>
+          <!-- Analíticas -->
           <button @click="openAnalytics" :disabled="analyticsLoading"
-            class="px-3 py-2 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30">
-            📊 {{ analyticsLoading ? 'Analizando...' : 'Analíticas' }}
+            class="w-9 h-9 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            :title="analyticsLoading ? 'Analizando...' : 'Analíticas'">
+            📊
           </button>
-          <button @click="() => searchLiveGame()" :disabled="liveLoading"
-            class="px-3 py-2 text-sm text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30">
-            <span class="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse mr-1.5 align-middle"></span>{{ liveLoading ? 'Buscando...' : 'En directo' }}
+          <!-- Excusa -->
+          <button @click="rollExcuse"
+            class="w-9 h-9 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono flex items-center justify-center"
+            title="Generar excusa">
+            🎲
           </button>
-          <button @click="refresh" :disabled="loading"
-            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30">
-            {{ loading ? '↻' : '↻' }} Refrescar
-          </button>
+          <!-- Compartir -->
           <button @click="shareProfile"
-            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono"
-            :title="'Copiar URL del perfil'">
-            🔗 {{ shareCopied ? 'Copiado!' : 'Compartir' }}
+            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center justify-center"
+            :title="shareCopied ? '¡Copiado!' : 'Copiar URL del perfil'">
+            {{ shareCopied ? '✓' : '🔗' }}
           </button>
+          <!-- Card -->
           <button @click="exportStatsImage" :disabled="exportingImage"
-            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30"
-            title="Descarga una card PNG con tus stats">
-            🖼 {{ exportingImage ? '...' : 'Card' }}
+            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            :title="exportingImage ? 'Generando...' : 'Descargar card PNG'">
+            🖼
           </button>
+          <!-- Notif -->
           <button @click="showNotifications = !showNotifications"
-            class="relative px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono"
+            class="relative w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center justify-center"
             title="Notificaciones">
             🔔
             <span v-if="unreadNotifCount > 0"
               class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{{ unreadNotifCount }}</span>
           </button>
+          <!-- Logout -->
           <button @click="logout"
-            class="px-4 py-2 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono">
-            Cerrar sesión
+            class="w-9 h-9 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono flex items-center justify-center"
+            title="Cerrar sesión">
+            ⎋
           </button>
         </div>
       </div>
@@ -551,10 +574,9 @@
 
     <!-- Match detail modal -->
     <Transition name="modal">
-      <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeMatchDetail">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeMatchDetail">
-        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 
           <!-- Modal header -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
@@ -690,16 +712,14 @@
             </template>
           </div>
         </div>
-        </div>
       </div>
     </Transition>
 
     <!-- Live game modal -->
     <Transition name="modal">
-      <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[6vh] sm:pt-4"
         @click.self="closeLiveGame">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeLiveGame">
-        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
@@ -983,7 +1003,6 @@
             </div>
           </div>
         </div>
-        </div>
       </div>
     </Transition>
 
@@ -1048,10 +1067,9 @@
 
     <!-- Analytics modal -->
     <Transition name="modal">
-      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto"
+      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeAnalytics">
-        <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="closeAnalytics">
-        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto my-auto">
+        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0d1b2a]/95 backdrop-blur z-10">
             <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
             <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
@@ -1391,7 +1409,6 @@
 
           </div>
         </div>
-        </div>
       </div>
     </Transition>
 
@@ -1402,6 +1419,7 @@
       :match-id="liveGame?.match_id"
       :game-id="liveGame?.game_id"
       :bet-to-accept="betToAccept"
+      :participants="betParticipants"
       @close="betModalShow = false"
       @refresh="onBetRefresh"
     />
@@ -1591,6 +1609,18 @@ const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
 const tier = ref('')
 const division = ref('')
+const tierIconFailed = ref(false)
+const tierFullLabel = computed(() => {
+  if (!tier.value) return ''
+  return tier.value + (division.value ? ' ' + division.value : '')
+})
+// op.gg CDN — square 500x500 emblems, much tighter framing than Community Dragon's
+// 2560x1440 wide emblems where the rank symbol only takes ~25% of the image area.
+const tierIconUrl = computed(() => {
+  if (!tier.value || tierIconFailed.value) return ''
+  const t = tier.value.toLowerCase()
+  return `https://opgg-static.akamaized.net/images/medals_new/${t}.png`
+})
 const matches = ref<MatchOverview[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -2070,6 +2100,7 @@ const login = async () => {
     summoner.value = data.summoner
     tier.value = data.tier ?? ''
     division.value = data.division ?? ''
+    tierIconFailed.value = false
     matches.value = data.matches
     hasMore.value = data.has_more ?? false
     currentStart.value = data.matches.length
@@ -2736,6 +2767,16 @@ const onBetRefresh = () => {
   if (betModalMode.value === 'create') betModalMode.value = 'created'
 }
 
+const betParticipants = computed(() => {
+  if (!liveGame.value?.players) return []
+  return liveGame.value.players.map(p => ({
+    puuid: p.puuid,
+    name: p.nombre,
+    championName: p.champion_name,
+    teamId: p.team_id,
+  }))
+})
+
 // Listen for bet links in URL hash
 const checkBetHash = async () => {
   const m = window.location.hash.match(/^#\/bet\/([A-Z0-9]+)$/)
@@ -2922,6 +2963,7 @@ const refresh = async () => {
     matches.value = data.matches
     tier.value = data.tier ?? ''
     division.value = data.division ?? ''
+    tierIconFailed.value = false
     hasMore.value = data.has_more ?? false
     currentStart.value = data.matches.length
     alerts.value = data.alerts ?? []
