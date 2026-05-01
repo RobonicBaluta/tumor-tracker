@@ -6,19 +6,19 @@
       <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-3xl max-h-[88vh] flex flex-col">
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
-            <span>🌐</span><span>Social</span>
+            <span>🌐</span><span>{{ $t('social.title') }}</span>
           </p>
           <button @click="emit('close')" class="text-white/40 hover:text-white text-xl transition">✕</button>
         </div>
 
         <!-- Tabs -->
         <div class="flex gap-1 px-5 py-2 border-b border-white/10">
-          <button v-for="t in tabs" :key="t.key" @click="active = t.key"
-            :class="active === t.key
+          <button v-for="tab in tabs" :key="tab.key" @click="active = tab.key"
+            :class="active === tab.key
               ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50'
               : 'text-white/40 border-transparent hover:text-white/70'"
             class="text-xs font-mono px-3 py-1.5 rounded border transition">
-            {{ t.label }}
+            {{ tab.label }}
           </button>
         </div>
 
@@ -26,9 +26,9 @@
         <div class="flex-1 overflow-y-auto p-5">
           <!-- HOT BETS -->
           <div v-if="active === 'hot'">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">APUESTAS ABIERTAS · ACEPTA UNA</p>
+            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">{{ $t('social.open_bets_caption') }}</p>
             <p v-if="!openBets.length" class="text-white/30 text-sm font-mono text-center py-8">
-              No hay apuestas abiertas ahora mismo. Crea una desde el modal de live game.
+              {{ $t('social.no_open_bets') }}
             </p>
             <div class="space-y-2">
               <div v-for="b in openBets" :key="b.id"
@@ -36,14 +36,14 @@
                 <div class="text-2xl">{{ b.creator_side === 'blue' ? '🔵' : '🔴' }}</div>
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">
-                    <span class="font-bold">{{ b.creator?.username || 'Anónimo' }}</span>
-                    apuesta <span class="text-yellow-300 font-bold">{{ b.amount }} TC</span>
+                    <span class="font-bold">{{ b.creator?.username || $t('social.anonymous') }}</span>
+                    {{ $t('social.bets_amount') }} <span class="text-yellow-300 font-bold">{{ b.amount }} TC</span>
                   </p>
-                  <p class="text-white/40 text-[10px] font-mono">match {{ b.match_id }}</p>
+                  <p class="text-white/40 text-[10px] font-mono">{{ $t('social.match_label') }} {{ b.match_id }}</p>
                 </div>
                 <button @click="onAccept(b)"
                   class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                  Aceptar {{ b.creator_side === 'blue' ? '🔴' : '🔵' }}
+                  {{ $t('common.accept') }} {{ b.creator_side === 'blue' ? '🔴' : '🔵' }}
                 </button>
               </div>
             </div>
@@ -61,7 +61,7 @@
               </button>
             </div>
             <div v-if="!leaderboard.length" class="text-white/30 text-sm font-mono text-center py-8">
-              Sin datos todavía.
+              {{ $t('social.no_data') }}
             </div>
             <div v-else class="space-y-1">
               <div v-for="(u, i) in leaderboard" :key="u.user_id"
@@ -70,8 +70,11 @@
                   :class="i < 3 ? 'text-[#c89b3c]' : 'text-white/30'">
                   {{ i < 3 ? ['🥇','🥈','🥉'][i] : '#' + (i + 1) }}
                 </span>
-                <img v-if="u.avatar" :src="`https://cdn.discordapp.com/avatars/${u.user_id}/${u.avatar}.png?size=32`"
+                <img v-if="u.avatar && u.discord_id" :src="`https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=32`"
                   class="w-7 h-7 rounded-full" />
+                <div v-else class="w-7 h-7 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {{ u.username?.[0]?.toUpperCase() ?? '?' }}
+                </div>
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">{{ u.username }}</p>
                   <p v-if="u.riot_id" class="text-[#c89b3c] text-[10px] font-mono">{{ u.riot_id }}</p>
@@ -91,14 +94,11 @@
 
           <!-- CLUSTERS -->
           <div v-else-if="active === 'clusters'">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
-              Jugadores agrupados por estilo (k-means sobre prior tumor + recent + winrate)
-            </p>
             <div v-if="clustersLoading" class="text-white/30 text-sm font-mono text-center py-8">
-              Calculando clusters...
+              {{ $t('social.calculating') }}
             </div>
             <div v-else-if="!clusters.length" class="text-white/30 text-sm font-mono text-center py-8">
-              No hay suficientes datos. Juega más partidas y vuelve.
+              {{ $t('social.no_cluster_data') }}
             </div>
             <div v-else class="space-y-3">
               <div v-for="c in clusters" :key="c.id"
@@ -106,16 +106,16 @@
                 <div class="flex items-center gap-2 mb-2">
                   <span class="text-2xl">{{ c.emoji }}</span>
                   <p class="text-white font-mono font-bold">{{ c.name }}</p>
-                  <span class="text-[10px] text-white/40 font-mono ml-auto">{{ c.size }} jugadores</span>
+                  <span class="text-[10px] text-white/40 font-mono ml-auto">{{ $t('social.cluster_size', { n: c.size }) }}</span>
                 </div>
                 <div class="grid grid-cols-2 gap-2 mb-2 text-[10px] font-mono">
-                  <p class="text-white/50">Prior medio: <span class="text-yellow-300">{{ c.centroid.avg_prior }}</span></p>
-                  <p class="text-white/50">Recent: <span class="text-yellow-300">{{ c.centroid.avg_recent }}</span></p>
-                  <p class="text-white/50">Winrate: <span class="text-green-400">{{ c.centroid.win_rate }}%</span></p>
-                  <p class="text-white/50">% tilteado: <span class="text-orange-400">{{ c.centroid.tilt_frac }}%</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_avg_prior') }}: <span class="text-yellow-300">{{ c.centroid.avg_prior }}</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_recent') }}: <span class="text-yellow-300">{{ c.centroid.avg_recent }}</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_winrate') }}: <span class="text-green-400">{{ c.centroid.win_rate }}%</span></p>
+                  <p class="text-white/50">{{ $t('social.cluster_tilt') }}: <span class="text-orange-400">{{ c.centroid.tilt_frac }}%</span></p>
                 </div>
                 <div v-if="c.samples.length" class="space-y-1 mt-2">
-                  <p class="text-white/30 text-[9px] font-mono tracking-widest">EJEMPLOS</p>
+                  <p class="text-white/30 text-[9px] font-mono tracking-widest">{{ $t('social.cluster_examples') }}</p>
                   <div v-for="(s, i) in (c.samples as any[])" :key="i"
                     class="flex items-center gap-2 text-[10px] font-mono py-0.5">
                     <span class="text-white/40 w-4">{{ Number(i) + 1 }}.</span>
@@ -132,41 +132,41 @@
           <!-- CHALLENGES (1v1) -->
           <div v-else-if="active === 'challenges'">
             <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
-              Reta a alguien: cada uno juega su partida, comparamos stats, gana el mejor.
+              {{ $t('social.challenges_intro') }}
             </p>
 
             <!-- Crear challenge -->
             <div class="bg-black/30 border border-white/10 rounded-xl p-3 mb-4">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">CREAR</p>
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">{{ $t('social.create') }}</p>
               <div class="grid grid-cols-2 gap-2 mb-2">
                 <select v-model="newChallengeStat"
                   class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
                   <option value="kda">KDA</option>
                   <option value="kills">Kills</option>
-                  <option value="deaths">Deaths (menos gana)</option>
+                  <option value="deaths">Deaths ({{ $t('social.lower_wins_label') }})</option>
                   <option value="assists">Assists</option>
                   <option value="cs">CS</option>
-                  <option value="gold">Oro</option>
-                  <option value="damage">Daño</option>
+                  <option value="gold">Gold</option>
+                  <option value="damage">Damage</option>
                 </select>
                 <input type="number" v-model.number="newChallengeAmount" :min="10"
                   class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none"
-                  placeholder="Stake TC" />
+                  :placeholder="$t('social.stake_placeholder')" />
               </div>
               <button @click="onCreateChallenge" :disabled="!newChallengeAmount || newChallengeAmount <= 0"
                 class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold text-xs px-3 py-1.5 rounded transition">
-                ⚔ Lanzar challenge · {{ newChallengeAmount }} TC
+                {{ $t('social.launch_challenge') }} · {{ newChallengeAmount }} TC
               </button>
               <p v-if="challengeError" class="text-red-400 text-[10px] font-mono mt-1.5">{{ challengeError }}</p>
             </div>
 
             <div v-if="challengesLoading" class="text-white/30 text-sm font-mono text-center py-4">
-              Cargando...
+              {{ $t('common.loading') }}
             </div>
 
             <!-- Mis challenges -->
             <div v-if="myChallenges.length" class="space-y-1.5 mb-4">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest">MIS CHALLENGES</p>
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.my_challenges') }}</p>
               <div v-for="c in myChallenges" :key="c.id"
                 class="bg-black/30 border border-white/10 rounded-lg px-3 py-2">
                 <div class="flex items-center gap-2 text-xs font-mono">
@@ -184,7 +184,7 @@
                   <span v-if="c.challenged" :class="c.challenged_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
                     {{ c.challenged.username }}
                   </span>
-                  <span v-else class="text-white/30 italic">esperando rival</span>
+                  <span v-else class="text-white/30 italic">{{ $t('social.waiting_rival') }}</span>
                 </p>
 
                 <!-- Stats si están -->
@@ -198,9 +198,9 @@
                 <p v-if="c.status === 'resolved'" class="text-[11px] font-mono mt-1 font-bold"
                   :class="c.winner_user_id === myUserId ? 'text-green-400' : c.winner_user_id ? 'text-red-400' : 'text-white/50'">
                   {{
-                    c.winner_user_id === myUserId ? '🏆 Ganaste +' + c.amount + ' TC' :
-                    c.winner_user_id ? '✗ Perdiste -' + c.amount + ' TC' :
-                    '↻ Push (refund)'
+                    c.winner_user_id === myUserId ? $t('social.challenge_won', { amount: c.amount }) :
+                    c.winner_user_id ? $t('social.challenge_lost', { amount: c.amount }) :
+                    $t('social.challenge_push')
                   }}
                 </p>
 
@@ -210,7 +210,7 @@
                     class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-yellow-500/60 focus:outline-none" />
                   <button @click="onSubmitMatch(c)" :disabled="!matchIdInput.trim() || submittingMatchFor === c.share_code"
                     class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded">
-                    {{ submittingMatchFor === c.share_code ? '...' : 'Submit' }}
+                    {{ submittingMatchFor === c.share_code ? '...' : $t('social.submit') }}
                   </button>
                 </div>
 
@@ -218,14 +218,14 @@
                 <button v-if="c.status === 'open' && c.challenger_user_id === myUserId"
                   @click="onCancelChallenge(c)"
                   class="text-[10px] font-mono px-2 py-1 mt-2 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
-                  Cancelar
+                  {{ $t('common.cancel') }}
                 </button>
               </div>
             </div>
 
             <!-- Open challenges feed -->
             <div v-if="openChallenges.length" class="space-y-1.5">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest">OPEN · ACEPTA</p>
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.challenges_open_caption') }}</p>
               <div v-for="c in openChallenges.filter((o: any) => o.challenger_user_id !== myUserId)" :key="c.id"
                 class="bg-black/30 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-3">
                 <div class="flex-1 min-w-0">
@@ -237,14 +237,14 @@
                 </div>
                 <button @click="onAcceptChallenge(c)"
                   class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                  Aceptar
+                  {{ $t('common.accept') }}
                 </button>
               </div>
             </div>
 
             <div v-if="!myChallenges.length && !openChallenges.length && !challengesLoading"
               class="text-white/30 text-sm font-mono text-center py-4">
-              No hay challenges activos. Crea uno arriba.
+              {{ $t('social.no_challenges') }}
             </div>
           </div>
 
@@ -355,26 +355,28 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, inject } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
 
 const auth = inject<any>('auth')
+const { t } = useI18n()
 
 type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'challenges' | 'friends' | 'rooms'
-const tabs: { key: TabKey; label: string }[] = [
-  { key: 'hot', label: '🔥 Hot Bets' },
-  { key: 'leaderboards', label: '🏆 Leaderboards' },
-  { key: 'clusters', label: '🧬 Clusters' },
-  { key: 'challenges', label: '⚔ 1v1' },
-  { key: 'friends', label: '👥 Amigos' },
-  { key: 'rooms', label: '🏠 Salas' },
-]
-const leaderboardKinds = [
-  { key: 'currency' as const, label: 'Más TC' },
-  { key: 'bets' as const, label: 'Mejores apostadores' },
-  { key: 'accuracy' as const, label: 'Mejor accuracy' },
-]
+const tabs = computed<{ key: TabKey; label: string }[]>(() => [
+  { key: 'hot', label: `🔥 ${t('social.hot_bets')}` },
+  { key: 'leaderboards', label: `🏆 ${t('social.leaderboards')}` },
+  { key: 'clusters', label: `🧬 ${t('social.clusters')}` },
+  { key: 'challenges', label: `⚔ ${t('social.challenges')}` },
+  { key: 'friends', label: `👥 ${t('social.friends')}` },
+  { key: 'rooms', label: `🏠 ${t('social.rooms')}` },
+])
+const leaderboardKinds = computed(() => [
+  { key: 'currency' as const, label: t('social.lb_currency') },
+  { key: 'bets' as const, label: t('social.lb_bets') },
+  { key: 'accuracy' as const, label: t('social.lb_accuracy') },
+])
 
 const active = ref<TabKey>('hot')
 const clusters = ref<any[]>([])

@@ -1022,19 +1022,19 @@ def list_open_bets(limit=50):
 
 def leaderboard_top_currency(limit=20):
     cur = _exec(
-        """SELECT id, discord_username, discord_avatar, currency, riot_id
+        """SELECT id, discord_id, discord_username, discord_avatar, currency, riot_id
            FROM users
            ORDER BY currency DESC LIMIT ?""",
         (limit,),
     )
     rows = cur.fetchall()
-    return [{"user_id": r[0], "username": r[1], "avatar": r[2], "currency": r[3], "riot_id": r[4]} for r in rows]
+    return [{"user_id": r[0], "discord_id": r[1], "username": r[2], "avatar": r[3], "currency": r[4], "riot_id": r[5]} for r in rows]
 
 
 def leaderboard_top_bet_winners(limit=20):
     """Top users por bets ganadas."""
     cur = _exec(
-        """SELECT u.id, u.discord_username, u.discord_avatar, u.currency,
+        """SELECT u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency,
                   COUNT(*) AS won_count,
                   SUM(b.amount) AS net_won
            FROM bets b
@@ -1042,15 +1042,15 @@ def leaderboard_top_bet_winners(limit=20):
                 CASE WHEN b.creator_side = b.winner_side THEN b.creator_user_id ELSE b.taker_user_id END
            )
            WHERE b.status = 'resolved'
-           GROUP BY u.id, u.discord_username, u.discord_avatar, u.currency
+           GROUP BY u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency
            ORDER BY won_count DESC, net_won DESC
            LIMIT ?""",
         (limit,),
     )
     rows = cur.fetchall()
     return [{
-        "user_id": r[0], "username": r[1], "avatar": r[2], "currency": r[3],
-        "won_count": r[4], "net_won": r[5],
+        "user_id": r[0], "discord_id": r[1], "username": r[2], "avatar": r[3], "currency": r[4],
+        "won_count": r[5], "net_won": r[6],
     } for r in rows]
 
 

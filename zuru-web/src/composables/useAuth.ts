@@ -14,6 +14,7 @@ const user = ref<{
   riot_puuid: string | null
   riot_id: string | null
   currency: number
+  can_claim_daily?: boolean
 } | null>(null)
 
 const isLoggedIn = computed(() => !!user.value)
@@ -61,7 +62,10 @@ async function claimDaily() {
   })
   if (!res.ok) return null
   const data = await res.json()
-  if (user.value) user.value.currency = data.currency
+  if (user.value) {
+    user.value.currency = data.currency
+    user.value.can_claim_daily = false
+  }
   return data
 }
 

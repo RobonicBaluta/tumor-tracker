@@ -163,10 +163,10 @@ const claimDaily = async () => {
           <span class="font-bold">{{ auth.user.value?.currency ?? 0 }}</span>
           <span class="text-yellow-500/70 text-[10px]">TC</span>
         </div>
-        <button v-if="auth.user.value && !auth.user.value.last_daily_blocked" @click="claimDaily"
-          :disabled="claimingDaily"
-          class="text-xs font-mono px-2.5 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/30 rounded-lg transition disabled:opacity-30"
-          title="Reclamar daily reward (cada 20h)">
+        <button v-if="auth.user.value" @click="claimDaily"
+          :disabled="claimingDaily || !auth.user.value.can_claim_daily"
+          class="text-xs font-mono px-2.5 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/30 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
+          :title="auth.user.value.can_claim_daily ? $t('daily.claim_tooltip') : $t('daily.claimed_tooltip')">
           🎁
         </button>
       </div>
@@ -243,7 +243,7 @@ const claimDaily = async () => {
     <!-- Daily reward toast -->
     <Transition name="dropdown">
       <div v-if="dailyResult" class="fixed top-20 right-6 z-[100] bg-yellow-900/90 border border-yellow-500/60 rounded-xl shadow-2xl px-4 py-3 backdrop-blur">
-        <p class="text-yellow-300 text-[10px] font-mono tracking-widest">DAILY REWARD</p>
+        <p class="text-yellow-300 text-[10px] font-mono tracking-widest">{{ $t('daily.label') }}</p>
         <p class="text-yellow-100 font-mono text-sm font-bold">+{{ dailyResult.awarded }} ☢ TC</p>
       </div>
     </Transition>

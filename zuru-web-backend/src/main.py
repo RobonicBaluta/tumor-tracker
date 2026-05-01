@@ -2464,6 +2464,7 @@ def auth_me():
     user = _current_user()
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
+    user["can_claim_daily"] = _users.can_claim_daily(user["id"])
     return jsonify(user)
 
 
@@ -2691,14 +2692,14 @@ def leaderboards(kind):
         """).fetchall()
         result = []
         for puuid, total, hits in rows:
-            cur = _users._exec("SELECT id, discord_username, discord_avatar, currency, riot_id FROM users WHERE riot_puuid=?", (puuid,))
+            cur = _users._exec("SELECT id, discord_id, discord_username, discord_avatar, currency, riot_id FROM users WHERE riot_puuid=?", (puuid,))
             urow = cur.fetchone()
             if not urow:
                 continue
             accuracy = round((hits or 0) / total * 100, 1)
             result.append({
-                "user_id": urow[0], "username": urow[1], "avatar": urow[2],
-                "currency": urow[3], "riot_id": urow[4],
+                "user_id": urow[0], "discord_id": urow[1], "username": urow[2], "avatar": urow[3],
+                "currency": urow[4], "riot_id": urow[5],
                 "total": total, "hits": hits, "accuracy": accuracy,
             })
         result.sort(key=lambda x: (x["accuracy"], x["total"]), reverse=True)
