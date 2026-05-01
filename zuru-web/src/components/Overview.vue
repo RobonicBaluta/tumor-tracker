@@ -157,6 +157,11 @@
             :title="'Copiar URL del perfil'">
             🔗 {{ shareCopied ? 'Copiado!' : 'Compartir' }}
           </button>
+          <button @click="exportStatsImage" :disabled="exportingImage"
+            class="px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30"
+            title="Descarga una card PNG con tus stats">
+            🖼 {{ exportingImage ? '...' : 'Card' }}
+          </button>
           <button @click="showNotifications = !showNotifications"
             class="relative px-3 py-2 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono"
             title="Notificaciones">
@@ -863,6 +868,9 @@
                         <span v-if="p.streamer_mode" title="Modo streamer activado — score estimado con la media del equipo"
                           class="text-[9px] font-mono font-bold bg-sky-500/20 border border-sky-400/40 text-sky-300 px-1.5 py-0.5 rounded">🥷 STREAMER</span>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                        <span v-if="p.smurf_signals && p.smurf_signals.length"
+                          :title="p.smurf_signals.join(' · ')"
+                          class="text-[9px] font-mono font-bold bg-pink-500/20 border border-pink-400/40 text-pink-300 px-1.5 py-0.5 rounded animate-pulse">🥷 SUS</span>
                         <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
                           class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
                         <span v-if="p.is_hotstreak" title="Hotstreak: últimas 3 partidas jugando muy bien"
@@ -932,6 +940,9 @@
                         <span v-if="p.streamer_mode" title="Modo streamer activado — score estimado con la media del equipo"
                           class="text-[9px] font-mono font-bold bg-sky-500/20 border border-sky-400/40 text-sky-300 px-1.5 py-0.5 rounded">🥷 STREAMER</span>
                         <span v-if="p.is_main" class="text-[9px] font-mono font-bold bg-purple-500/20 border border-purple-400/40 text-purple-300 px-1.5 py-0.5 rounded">🎯 MAIN</span>
+                        <span v-if="p.smurf_signals && p.smurf_signals.length"
+                          :title="p.smurf_signals.join(' · ')"
+                          class="text-[9px] font-mono font-bold bg-pink-500/20 border border-pink-400/40 text-pink-300 px-1.5 py-0.5 rounded animate-pulse">🥷 SUS</span>
                         <span v-if="p.is_tilted" title="Tilteado: últimas 3 partidas muy malas"
                           class="text-[9px] font-mono font-bold bg-orange-500/20 border border-orange-400/40 text-orange-300 px-1.5 py-0.5 rounded animate-pulse">🔥 TILT</span>
                         <span v-if="p.is_hotstreak" title="Hotstreak: últimas 3 partidas jugando muy bien"
@@ -1133,6 +1144,28 @@
                 </div>
               </div>
               <p v-else class="text-white/30 font-mono text-xs">Ejecuta el modelo sobre tus últimas 20 partidas ya acabadas para ver su acierto real.</p>
+            </section>
+
+            <!-- Tilt forecast -->
+            <section v-if="(analyticsData as any).tilt_forecast">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🌡 TILT FORECAST</p>
+              <div class="bg-black/30 border rounded-xl p-4"
+                :class="(analyticsData as any).tilt_forecast.score >= 60 ? 'border-red-500/40' : (analyticsData as any).tilt_forecast.score >= 30 ? 'border-yellow-500/40' : 'border-green-500/40'">
+                <div class="flex items-baseline gap-4">
+                  <p :class="(analyticsData as any).tilt_forecast.score >= 60 ? 'text-red-400' : (analyticsData as any).tilt_forecast.score >= 30 ? 'text-yellow-400' : 'text-green-400'"
+                    class="text-4xl font-mono font-black">{{ (analyticsData as any).tilt_forecast.score }}</p>
+                  <div>
+                    <p class="text-white text-sm font-mono">Riesgo de tilt: <span class="font-bold uppercase">{{ (analyticsData as any).tilt_forecast.level }}</span></p>
+                    <p class="text-white/60 text-xs font-mono italic">"{{ (analyticsData as any).tilt_forecast.advice }}"</p>
+                  </div>
+                </div>
+                <ul v-if="(analyticsData as any).tilt_forecast.reasons.length" class="mt-3 space-y-1">
+                  <li v-for="r in (analyticsData as any).tilt_forecast.reasons" :key="r"
+                    class="text-white/50 text-[11px] font-mono flex items-center gap-2">
+                    <span>·</span><span>{{ r }}</span>
+                  </li>
+                </ul>
+              </div>
             </section>
 
             <!-- Weekly comparison -->
@@ -1541,6 +1574,108 @@ const shareProfile = async () => {
     shareCopied.value = true
     setTimeout(() => { shareCopied.value = false }, 1500)
   } catch {}
+}
+
+const exportingImage = ref(false)
+const exportStatsImage = async () => {
+  if (!summoner.value || !personalStats.value) return
+  exportingImage.value = true
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = 800
+    canvas.height = 1000
+    const ctx = canvas.getContext('2d')!
+
+    // Fondo gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, 1000)
+    gradient.addColorStop(0, '#0d1b2a')
+    gradient.addColorStop(1, '#1b2838')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 800, 1000)
+
+    // Header dorado
+    ctx.fillStyle = '#c89b3c'
+    ctx.fillRect(0, 0, 800, 80)
+    ctx.fillStyle = '#000'
+    ctx.font = 'bold 36px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('☢ TUMOR TRACKER', 400, 52)
+
+    // Summoner
+    ctx.fillStyle = '#fff'
+    ctx.font = 'bold 32px monospace'
+    ctx.fillText(summoner.value, 400, 140)
+    ctx.fillStyle = (tier.value && tier.value !== 'UNRANKED') ? '#c89b3c' : '#888'
+    ctx.font = '20px monospace'
+    ctx.fillText(`${tier.value || 'UNRANKED'} ${division.value || ''}`, 400, 175)
+
+    // Stats grid
+    const ps = personalStats.value
+    const stats = [
+      { label: 'PARTIDAS', value: String(ps.total_matches) },
+      { label: 'WIN RATE', value: `${ps.win_rate}%`, color: ps.win_rate >= 50 ? '#4ade80' : '#f87171' },
+      { label: 'KDA MEDIO', value: ps.avg_kda.toFixed(2) },
+      { label: 'TIMES WORST', value: String(ps.times_worst) },
+    ]
+    let y = 250
+    for (let i = 0; i < stats.length; i++) {
+      const row = Math.floor(i / 2)
+      const col = i % 2
+      const x = col === 0 ? 100 : 500
+      const yy = y + row * 130
+      // Card
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'
+      ctx.fillRect(x, yy, 200, 100)
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+      ctx.strokeRect(x, yy, 200, 100)
+      // Value
+      ctx.fillStyle = stats[i].color || '#c89b3c'
+      ctx.font = 'bold 36px monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText(stats[i].value, x + 100, yy + 50)
+      // Label
+      ctx.fillStyle = '#888'
+      ctx.font = '12px monospace'
+      ctx.fillText(stats[i].label, x + 100, yy + 80)
+    }
+
+    // Top 3 tumores (si hay)
+    if (topTumores.value && topTumores.value.length) {
+      ctx.fillStyle = '#dc2626'
+      ctx.font = 'bold 16px monospace'
+      ctx.textAlign = 'left'
+      ctx.fillText('☢ TOP TUMORES', 80, 580)
+      let ty = 615
+      for (let i = 0; i < Math.min(3, topTumores.value.length); i++) {
+        const t = topTumores.value[i]
+        ctx.fillStyle = ['#c89b3c', '#a8a8a8', '#cd7f32'][i] || '#666'
+        ctx.font = 'bold 18px monospace'
+        ctx.fillText(`#${i + 1}`, 80, ty)
+        ctx.fillStyle = '#fff'
+        ctx.font = '16px monospace'
+        ctx.fillText(t.nombre, 130, ty)
+        ctx.fillStyle = '#888'
+        ctx.font = '14px monospace'
+        ctx.fillText(`${t.campeon} · ${t.apariciones}x · KDA ${t.avg_kda.toFixed(2)}`, 130, ty + 22)
+        ty += 60
+      }
+    }
+
+    // Footer
+    ctx.fillStyle = '#888'
+    ctx.font = '12px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('tumor-tracker.vercel.app', 400, 970)
+
+    const link = document.createElement('a')
+    link.download = `tumor-tracker-${summoner.value.replace('#', '-')}.png`
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+  } catch (e) {
+    console.error(e)
+  } finally {
+    exportingImage.value = false
+  }
 }
 
 const parseHashAndLoad = () => {
@@ -1969,6 +2104,7 @@ interface LivePlayer {
   is_blacklisted: boolean
   champion_name: string
   streamer_mode?: boolean
+  smurf_signals?: string[]
   score_is_team_avg?: boolean
   duo_group?: string
   duo_size?: number

@@ -21,15 +21,23 @@ jobs:
           cache: pip
           cache-dependency-path: zuru-web-backend/requirements.txt
       - name: Install deps
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
       - name: Syntax check
         run: python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('src').rglob('*.py')]"
-      - name: Import smoke test
+      - name: Run tumor_engine tests
         env:
           RIOT_API_TOKEN: dummy
           DATA_DIR: /tmp/tumor-data
         run: |
           mkdir -p /tmp/tumor-data
+          pytest tests/ -v
+      - name: Import smoke test
+        env:
+          RIOT_API_TOKEN: dummy
+          DATA_DIR: /tmp/tumor-data
+        run: |
           cd src && python -c "import main; print('flask app ok:', main.app.name)"
 
   frontend:

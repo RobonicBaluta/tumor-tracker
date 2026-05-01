@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, provide, onMounted } from 'vue';
+import { ref, computed, provide, onMounted, defineAsyncComponent } from 'vue';
 import Navbar from './components/Navbar.vue';
-import DiagnosisForm from './components/DiagnosisForm.vue';
-import Mental from './components/Mental.vue';
-import Tinder from './components/Tinder.vue';
-import Overview from './components/Overview.vue';
-import Compare from './components/Compare.vue';
+import OnboardingTour from './components/OnboardingTour.vue';
 import { useAuth } from './composables/useAuth';
+
+// Lazy imports — el bundle inicial solo trae Navbar.
+// Cada componente pesado se carga bajo demanda al navegar.
+const DiagnosisForm = defineAsyncComponent(() => import('./components/DiagnosisForm.vue'));
+const Mental = defineAsyncComponent(() => import('./components/Mental.vue'));
+const Tinder = defineAsyncComponent(() => import('./components/Tinder.vue'));
+const Overview = defineAsyncComponent(() => import('./components/Overview.vue'));
+const Compare = defineAsyncComponent(() => import('./components/Compare.vue'));
 
 const auth = useAuth();
 onMounted(() => {
@@ -59,5 +63,7 @@ provide('THEMES', THEMES)
     <Tinder v-else-if="currentPage === 'tinder'" />
     <Overview v-else-if="currentPage === 'overview'" />
     <Compare v-else-if="currentPage === 'compare'" />
+
+    <OnboardingTour />
   </div>
 </template>
