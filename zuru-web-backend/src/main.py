@@ -2950,6 +2950,142 @@ def bets_mine():
     return jsonify([_augment_bet(b) for b in bets])
 
 
+# ---------------------------------------------------------------------------
+# 1v1 Challenges: cada user juega su partida, se comparan stats
+# ---------------------------------------------------------------------------
+
+def _augment_challenge(ch):
+    if not ch:
+        return None
+    briefs = _users.get_users_brief([ch.get("challenger_user_id"), ch.get("challenged_user_id")])
+    ch["challenger"] = briefs.get(ch.get("challenger_user_id"))
+    ch["challenged"] = briefs.get(ch.get("challenged_user_id")) if ch.get("challenged_user_id") else None
+    return ch
+
+
+def _extract_player_stat(match_info, puuid, stat_type):
+    """Extrae la stat del participante con `puuid` del JSON de match-v5."""
+    parts = (match_info or {}).get("info", {}).get("participants", []) or []
+    p = next((x for x in parts if x.get("puuid") == puuid), None)
+    if not p:
+        return None
+    k = p.get("kills", 0) or 0
+    d = p.get("deaths", 0) or 0
+    a = p.get("assists", 0) or 0
+    if stat_type == "kills":   return float(k)
+    if stat_type == "deaths":  return float(d)
+    if stat_type == "assists": return float(a)
+    if stat_type == "kda":     return (k + a) / max(d, 1)
+    if stat_type == "cs":      return float((p.get("totalMinionsKilled", 0) or 0) + (p.get("neutralMinionsKilled", 0) or 0))
+    if stat_type == "gold":    return float(p.get("goldEarned", 0) or 0)
+    if stat_type == "damage":  return float(p.get("totalDamageDealtToChampions", 0) or 0)
+    return None
+
+
+@app.route('/challenges/create', methods=['POST'])
+def challenges_create():
+    """Body: { stat_type, amount, comparison? } — challenger debe tener riot_id vinculado."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID antes de crear challenges"}), 400
+    data = request.get_json() or {}
+    stat_type = data.get("stat_type")
+    try:
+        amount = int(data.get("amount", 0))
+    except Exception:
+        return jsonify({"error": "amount inválido"}), 400
+    comparison = data.get("comparison") or ("lower_wins" if stat_type == "deaths" else "higher_wins")
+    if amount <= 0 or stat_type not in _users.VALID_CHALLENGE_STATS:
+        return jsonify({"error": "stat_type/amount inválidos"}), 400
+    if amount > user["currency"]:
+        return jsonify({"error": "Saldo insuficiente"}), 400
+    ch = _users.create_challenge(user["id"], stat_type, amount, comparison)
+    if not ch:
+        return jsonify({"error": "No se pudo crear el challenge"}), 500
+    return jsonify(_augment_challenge(ch))
+
+
+@app.route('/challenges/<share_code>/accept', methods=['POST'])
+def challenges_accept(share_code):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.accept_challenge(user["id"], share_code)
+    if isinstance(res, str):
+        return jsonify({"error": res}), 400
+    return jsonify(_augment_challenge(res))
+
+
+@app.route('/challenges/<share_code>/cancel', methods=['POST'])
+def challenges_cancel(share_code):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "No encontrado"}), 404
+    res = _users.cancel_challenge(user["id"], ch["id"])
+    if not res:
+        return jsonify({"error": "No se pudo cancelar"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/challenges/<share_code>/submit', methods=['POST'])
+def challenges_submit(share_code):
+    """Body: { match_id }. Backend pulls Match v5 y extrae la stat del puuid del user."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID"}), 400
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    if not match_id:
+        return jsonify({"error": "match_id requerido"}), 400
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "Challenge no encontrado"}), 404
+    if ch["status"] != "accepted":
+        return jsonify({"error": f"Challenge en estado {ch['status']}"}), 400
+    if user["id"] not in (ch["challenger_user_id"], ch["challenged_user_id"]):
+        return jsonify({"error": "No participas en este challenge"}), 403
+
+    mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+    if mres.status_code != 200:
+        return jsonify({"error": f"Match no disponible (riot {mres.status_code})"}), 502
+    info = mres.json()
+    val = _extract_player_stat(info, user["riot_puuid"], ch["stat_type"])
+    if val is None:
+        return jsonify({"error": "No participaste en ese match o stat no extraíble"}), 400
+    res = _users.submit_challenge_match(user["id"], share_code, match_id, val)
+    if isinstance(res, str):
+        return jsonify({"error": res}), 400
+    return jsonify(_augment_challenge(res))
+
+
+@app.route('/challenges/open', methods=['GET'])
+def challenges_open_feed():
+    return jsonify([_augment_challenge(c) for c in _users.list_open_challenges(limit=50)])
+
+
+@app.route('/challenges/mine', methods=['GET'])
+def challenges_mine():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    return jsonify([_augment_challenge(c) for c in _users.list_user_challenges(user["id"])])
+
+
+@app.route('/challenges/<share_code>', methods=['GET'])
+def challenges_get(share_code):
+    ch = _users.get_challenge_by_code(share_code)
+    if not ch:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify(_augment_challenge(ch))
+
+
 @app.route('/backtestHistory', methods=['GET'])
 def backtest_history_endpoint():
     """Estadísticas acumuladas del histórico de backtests."""

@@ -129,6 +129,125 @@
             </div>
           </div>
 
+          <!-- CHALLENGES (1v1) -->
+          <div v-else-if="active === 'challenges'">
+            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
+              Reta a alguien: cada uno juega su partida, comparamos stats, gana el mejor.
+            </p>
+
+            <!-- Crear challenge -->
+            <div class="bg-black/30 border border-white/10 rounded-xl p-3 mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">CREAR</p>
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <select v-model="newChallengeStat"
+                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
+                  <option value="kda">KDA</option>
+                  <option value="kills">Kills</option>
+                  <option value="deaths">Deaths (menos gana)</option>
+                  <option value="assists">Assists</option>
+                  <option value="cs">CS</option>
+                  <option value="gold">Oro</option>
+                  <option value="damage">Daño</option>
+                </select>
+                <input type="number" v-model.number="newChallengeAmount" :min="10"
+                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none"
+                  placeholder="Stake TC" />
+              </div>
+              <button @click="onCreateChallenge" :disabled="!newChallengeAmount || newChallengeAmount <= 0"
+                class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold text-xs px-3 py-1.5 rounded transition">
+                ⚔ Lanzar challenge · {{ newChallengeAmount }} TC
+              </button>
+              <p v-if="challengeError" class="text-red-400 text-[10px] font-mono mt-1.5">{{ challengeError }}</p>
+            </div>
+
+            <div v-if="challengesLoading" class="text-white/30 text-sm font-mono text-center py-4">
+              Cargando...
+            </div>
+
+            <!-- Mis challenges -->
+            <div v-if="myChallenges.length" class="space-y-1.5 mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">MIS CHALLENGES</p>
+              <div v-for="c in myChallenges" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2">
+                <div class="flex items-center gap-2 text-xs font-mono">
+                  <code class="text-yellow-300">{{ c.share_code }}</code>
+                  <span class="text-purple-300 font-bold">{{ c.stat_type }}</span>
+                  <span class="text-white/40">·</span>
+                  <span class="text-yellow-300">{{ c.amount }} TC</span>
+                  <span class="text-white/40 ml-auto text-[10px] uppercase">{{ c.status }}</span>
+                </div>
+                <p class="text-white/50 text-[11px] font-mono mt-1">
+                  <span :class="c.challenger_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
+                    {{ c.challenger?.username || '?' }}
+                  </span>
+                  <span class="text-white/30 mx-1">vs</span>
+                  <span v-if="c.challenged" :class="c.challenged_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
+                    {{ c.challenged.username }}
+                  </span>
+                  <span v-else class="text-white/30 italic">esperando rival</span>
+                </p>
+
+                <!-- Stats si están -->
+                <p v-if="c.challenger_value !== null || c.challenged_value !== null" class="text-white/60 text-[10px] font-mono mt-1">
+                  <span class="text-cyan-300">A: {{ c.challenger_value ?? '?' }}</span>
+                  ·
+                  <span class="text-pink-300">B: {{ c.challenged_value ?? '?' }}</span>
+                </p>
+
+                <!-- Resultado -->
+                <p v-if="c.status === 'resolved'" class="text-[11px] font-mono mt-1 font-bold"
+                  :class="c.winner_user_id === myUserId ? 'text-green-400' : c.winner_user_id ? 'text-red-400' : 'text-white/50'">
+                  {{
+                    c.winner_user_id === myUserId ? '🏆 Ganaste +' + c.amount + ' TC' :
+                    c.winner_user_id ? '✗ Perdiste -' + c.amount + ' TC' :
+                    '↻ Push (refund)'
+                  }}
+                </p>
+
+                <!-- Submit match -->
+                <div v-if="challengeNeedsSubmit(c)" class="flex gap-2 mt-2">
+                  <input v-model="matchIdInput" placeholder="EUW1_1234567890"
+                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-yellow-500/60 focus:outline-none" />
+                  <button @click="onSubmitMatch(c)" :disabled="!matchIdInput.trim() || submittingMatchFor === c.share_code"
+                    class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded">
+                    {{ submittingMatchFor === c.share_code ? '...' : 'Submit' }}
+                  </button>
+                </div>
+
+                <!-- Cancel si abierto y soy el creator -->
+                <button v-if="c.status === 'open' && c.challenger_user_id === myUserId"
+                  @click="onCancelChallenge(c)"
+                  class="text-[10px] font-mono px-2 py-1 mt-2 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+
+            <!-- Open challenges feed -->
+            <div v-if="openChallenges.length" class="space-y-1.5">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest">OPEN · ACEPTA</p>
+              <div v-for="c in openChallenges.filter((o: any) => o.challenger_user_id !== myUserId)" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-3">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-mono">
+                    <span class="text-cyan-300">{{ c.challenger?.username || '?' }}</span>
+                    · <span class="text-purple-300">{{ c.stat_type }}</span>
+                    · <span class="text-yellow-300">{{ c.amount }} TC</span>
+                  </p>
+                </div>
+                <button @click="onAcceptChallenge(c)"
+                  class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
+                  Aceptar
+                </button>
+              </div>
+            </div>
+
+            <div v-if="!myChallenges.length && !openChallenges.length && !challengesLoading"
+              class="text-white/30 text-sm font-mono text-center py-4">
+              No hay challenges activos. Crea uno arriba.
+            </div>
+          </div>
+
           <!-- FRIENDS -->
           <div v-else-if="active === 'friends'">
             <div class="flex gap-2 mb-4">
@@ -235,18 +354,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, inject } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
 
 const auth = inject<any>('auth')
 
-type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'friends' | 'rooms'
+type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'challenges' | 'friends' | 'rooms'
 const tabs: { key: TabKey; label: string }[] = [
   { key: 'hot', label: '🔥 Hot Bets' },
   { key: 'leaderboards', label: '🏆 Leaderboards' },
   { key: 'clusters', label: '🧬 Clusters' },
+  { key: 'challenges', label: '⚔ 1v1' },
   { key: 'friends', label: '👥 Amigos' },
   { key: 'rooms', label: '🏠 Salas' },
 ]
@@ -259,6 +379,16 @@ const leaderboardKinds = [
 const active = ref<TabKey>('hot')
 const clusters = ref<any[]>([])
 const clustersLoading = ref(false)
+
+// 1v1 Challenges state
+const myChallenges = ref<any[]>([])
+const openChallenges = ref<any[]>([])
+const challengesLoading = ref(false)
+const challengeError = ref('')
+const newChallengeStat = ref<'kills'|'deaths'|'assists'|'kda'|'cs'|'gold'|'damage'>('kda')
+const newChallengeAmount = ref(50)
+const submittingMatchFor = ref('')   // share_code currently submitting
+const matchIdInput = ref('')
 const openBets = ref<any[]>([])
 const lbKind = ref<'currency' | 'bets' | 'accuracy'>('currency')
 const leaderboard = ref<any[]>([])
@@ -284,7 +414,81 @@ async function loadActive() {
   if (active.value === 'hot') openBets.value = await auth.fetchOpenBets()
   if (active.value === 'leaderboards') await loadLeaderboard()
   if (active.value === 'clusters') await loadClusters()
+  if (active.value === 'challenges') await loadChallenges()
   if (active.value === 'friends') friends.value = await auth.fetchFriends()
+}
+
+async function loadChallenges() {
+  challengesLoading.value = true
+  try {
+    const [mine, open] = await Promise.all([
+      auth.fetchMyChallenges(),
+      auth.fetchOpenChallenges(),
+    ])
+    myChallenges.value = mine
+    openChallenges.value = open
+  } finally {
+    challengesLoading.value = false
+  }
+}
+
+async function onCreateChallenge() {
+  challengeError.value = ''
+  try {
+    await auth.createChallenge({
+      statType: newChallengeStat.value,
+      amount: newChallengeAmount.value,
+    })
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onAcceptChallenge(c: any) {
+  challengeError.value = ''
+  try {
+    await auth.acceptChallenge(c.share_code)
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onCancelChallenge(c: any) {
+  if (!confirm(`¿Cancelar challenge ${c.share_code}? Refund ${c.amount} TC.`)) return
+  try {
+    await auth.cancelChallenge(c.share_code)
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  }
+}
+
+async function onSubmitMatch(c: any) {
+  if (!matchIdInput.value.trim()) return
+  submittingMatchFor.value = c.share_code
+  challengeError.value = ''
+  try {
+    await auth.submitChallengeMatch(c.share_code, matchIdInput.value.trim())
+    matchIdInput.value = ''
+    await loadChallenges()
+  } catch (e: any) {
+    challengeError.value = e.message || 'Error'
+  } finally {
+    submittingMatchFor.value = ''
+  }
+}
+
+const myUserId = computed(() => auth?.user.value?.id)
+function challengeIamIn(c: any) {
+  return c.challenger_user_id === myUserId.value || c.challenged_user_id === myUserId.value
+}
+function challengeNeedsSubmit(c: any) {
+  if (c.status !== 'accepted' || !challengeIamIn(c)) return false
+  if (c.challenger_user_id === myUserId.value && !c.challenger_match_id) return true
+  if (c.challenged_user_id === myUserId.value && !c.challenged_match_id) return true
+  return false
 }
 
 async function loadClusters() {

@@ -176,6 +176,62 @@ async function fetchClusters(k = 4) {
   return await res.json()
 }
 
+// 1v1 Challenges
+async function createChallenge(opts: {
+  statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage'
+  amount: number
+  comparison?: 'higher_wins' | 'lower_wins'
+}) {
+  const res = await authedFetch('/challenges/create', {
+    method: 'POST',
+    body: JSON.stringify({ stat_type: opts.statType, amount: opts.amount, comparison: opts.comparison }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function acceptChallenge(shareCode: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/accept`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function cancelChallenge(shareCode: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/cancel`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function submitChallengeMatch(shareCode: string, matchId: string) {
+  const res = await authedFetch(`/challenges/${shareCode}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ match_id: matchId }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function fetchOpenChallenges() {
+  const res = await fetch(`${API_BASE}/challenges/open`)
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function fetchMyChallenges() {
+  if (!token.value) return []
+  const res = await authedFetch('/challenges/mine')
+  if (!res.ok) return []
+  return await res.json()
+}
+
 async function fetchFriends() {
   if (!token.value) return []
   const res = await authedFetch('/friends')
@@ -327,6 +383,12 @@ export function useAuth() {
     fetchOpenBets,
     fetchLeaderboard,
     fetchClusters,
+    createChallenge,
+    acceptChallenge,
+    cancelChallenge,
+    submitChallengeMatch,
+    fetchOpenChallenges,
+    fetchMyChallenges,
     fetchFriends,
     addFriend,
     acceptFriend,
