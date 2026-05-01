@@ -2192,6 +2192,283 @@ def currency_daily():
     return jsonify({"currency": new_balance, "awarded": 100})
 
 
+# ============================================================================
+# NOTIFICATIONS (per-user, polled)
+# ============================================================================
+
+@app.route('/notifications', methods=['GET'])
+def get_notifications():
+    user = _current_user()
+    if not user:
+        return jsonify([])
+    return jsonify(_users.get_unread_notifications(user["id"]))
+
+
+@app.route('/notifications/read', methods=['POST'])
+def mark_read():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    ids = data.get("ids")
+    _users.mark_notifications_read(user["id"], ids)
+    return jsonify({"ok": True})
+
+
+# ============================================================================
+# LEADERBOARDS
+# ============================================================================
+
+@app.route('/leaderboards/<kind>', methods=['GET'])
+def leaderboards(kind):
+    if kind == "currency":
+        return jsonify(_users.leaderboard_top_currency(limit=20))
+    if kind == "bets":
+        return jsonify(_users.leaderboard_top_bet_winners(limit=20))
+    if kind == "accuracy":
+        # Top users por accuracy de predicciones live
+        # Combina prediction_logs por viewer_puuid → users
+        db = _pred_db()
+        rows = db.execute("""
+            SELECT viewer_puuid, COUNT(*) AS total,
+                   SUM(CASE WHEN correct=1 THEN 1 ELSE 0 END) AS hits
+            FROM prediction_logs
+            WHERE resolved=1 AND predicted_winner IS NOT NULL
+            GROUP BY viewer_puuid
+            HAVING COUNT(*) >= 5
+        """).fetchall()
+        result = []
+        for puuid, total, hits in rows:
+            cur = _users._exec("SELECT id, discord_username, discord_avatar, currency, riot_id FROM users WHERE riot_puuid=?", (puuid,))
+            urow = cur.fetchone()
+            if not urow:
+                continue
+            accuracy = round((hits or 0) / total * 100, 1)
+            result.append({
+                "user_id": urow[0], "username": urow[1], "avatar": urow[2],
+                "currency": urow[3], "riot_id": urow[4],
+                "total": total, "hits": hits, "accuracy": accuracy,
+            })
+        result.sort(key=lambda x: (x["accuracy"], x["total"]), reverse=True)
+        return jsonify(result[:20])
+    return jsonify({"error": "Tipo desconocido. Usa: currency | bets | accuracy"}), 400
+
+
+# ============================================================================
+# FRIENDS
+# ============================================================================
+
+@app.route('/friends', methods=['GET'])
+def friends_list():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    return jsonify(_users.list_friends(user["id"]))
+
+
+@app.route('/friends/add', methods=['POST'])
+def friends_add():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    riot_id = data.get("riot_id", "").strip()
+    if "#" not in riot_id:
+        return jsonify({"error": "Formato: Nombre#TAG"}), 400
+    target_id = _users.find_user_by_riot_id(riot_id)
+    if not target_id:
+        return jsonify({"error": "Ese Riot ID no está registrado en Tumor Tracker"}), 404
+    result = _users.send_friend_request(user["id"], target_id)
+    if not result:
+        return jsonify({"error": "No puedes añadirte a ti mismo"}), 400
+    # Notificar al target si es nueva
+    if result.get("status") == "pending":
+        try:
+            _users.push_notification(
+                user_id=target_id,
+                notif_type="friend_request",
+                title="Nueva solicitud de amistad",
+                body=f"{user['username']} quiere ser tu amigo",
+                link="#/friends", icon="👋",
+            )
+        except Exception:
+            pass
+    return jsonify(result)
+
+
+@app.route('/friends/<int:friendship_id>/accept', methods=['POST'])
+def friends_accept(friendship_id):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not _users.accept_friend(user["id"], friendship_id):
+        return jsonify({"error": "No se pudo aceptar"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/friends/<int:friendship_id>/reject', methods=['POST'])
+def friends_reject(friendship_id):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    _users.reject_friend(user["id"], friendship_id)
+    return jsonify({"ok": True})
+
+
+# ============================================================================
+# COMPARISON ROOMS
+# ============================================================================
+
+@app.route('/rooms/create', methods=['POST'])
+def rooms_create():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()[:80]
+    room = _users.create_room(user["id"], name)
+    if not room:
+        return jsonify({"error": "No se pudo crear la sala"}), 500
+    # Owner se añade auto si tiene riot_id
+    if user.get("riot_id"):
+        _users.add_room_member(room["id"], user["riot_id"])
+        room = _users.get_room_by_id(room["id"])
+    return jsonify(room)
+
+
+@app.route('/rooms/<code>', methods=['GET'])
+def rooms_get(code):
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    return jsonify(room)
+
+
+@app.route('/rooms/<code>/join', methods=['POST'])
+def rooms_join(code):
+    """Una user con su Riot ID a la sala. Acepta riot_id en body o usa el del user logueado."""
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    data = request.get_json() or {}
+    riot_id = data.get("riot_id", "").strip()
+    if not riot_id:
+        user = _current_user()
+        if user and user.get("riot_id"):
+            riot_id = user["riot_id"]
+    if not riot_id or "#" not in riot_id:
+        return jsonify({"error": "Riot ID requerido (formato Nombre#TAG)"}), 400
+    if len(room["members"]) >= 8:
+        return jsonify({"error": "Sala llena (máximo 8 miembros)"}), 400
+    _users.add_room_member(room["id"], riot_id)
+    return jsonify(_users.get_room_by_id(room["id"]))
+
+
+@app.route('/rooms/<code>/leave', methods=['POST'])
+def rooms_leave(code):
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    data = request.get_json() or {}
+    riot_id = data.get("riot_id", "").strip()
+    if not riot_id:
+        return jsonify({"error": "riot_id requerido"}), 400
+    _users.remove_room_member(room["id"], riot_id)
+    return jsonify({"ok": True})
+
+
+# ============================================================================
+# BETS P2P
+# ============================================================================
+
+def _augment_bet(bet):
+    """Añade nombres de usuarios al dict de bet para que la UI no haga lookups extra."""
+    if not bet:
+        return None
+    user_ids = [bet.get("creator_user_id"), bet.get("taker_user_id")]
+    briefs = _users.get_users_brief(user_ids)
+    bet["creator"] = briefs.get(bet.get("creator_user_id"))
+    bet["taker"] = briefs.get(bet.get("taker_user_id")) if bet.get("taker_user_id") else None
+    return bet
+
+
+@app.route('/bets/create', methods=['POST'])
+def bets_create():
+    """Crea una apuesta sobre la partida actual del user. Body: { match_id, game_id, side, amount }."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    game_id = data.get("game_id")
+    side = data.get("side")
+    amount = int(data.get("amount", 0))
+    if not match_id or side not in ("blue", "red") or amount <= 0:
+        return jsonify({"error": "Faltan campos o son inválidos"}), 400
+    if amount > user["currency"]:
+        return jsonify({"error": "Saldo insuficiente"}), 400
+
+    bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+    if not bet:
+        return jsonify({"error": "No se pudo crear la apuesta"}), 500
+    return jsonify(_augment_bet(bet))
+
+
+@app.route('/bets/<share_code>', methods=['GET'])
+def bets_get(share_code):
+    """Detalle público de una apuesta. No requiere auth (útil para previewar antes de aceptar)."""
+    bet = _users.get_bet_by_code(share_code)
+    if not bet:
+        return jsonify({"error": "Apuesta no encontrada"}), 404
+    return jsonify(_augment_bet(bet))
+
+
+@app.route('/bets/<share_code>/accept', methods=['POST'])
+def bets_accept(share_code):
+    """Acepta la apuesta tomando el lado contrario."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    result = _users.accept_bet(user["id"], share_code)
+    if isinstance(result, str):
+        return jsonify({"error": result}), 400
+    if not result:
+        return jsonify({"error": "No se pudo aceptar la apuesta"}), 500
+    return jsonify(_augment_bet(result))
+
+
+@app.route('/bets/<share_code>/cancel', methods=['POST'])
+def bets_cancel(share_code):
+    """El creator cancela su propia apuesta abierta."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    bet = _users.get_bet_by_code(share_code)
+    if not bet:
+        return jsonify({"error": "Apuesta no encontrada"}), 404
+    cancelled = _users.cancel_bet(user["id"], bet["id"])
+    if not cancelled:
+        return jsonify({"error": "No se pudo cancelar (¿no eres el creador o ya está aceptada?)"}), 400
+    return jsonify(_augment_bet(_users.get_bet_by_id(bet["id"])))
+
+
+@app.route('/bets/open', methods=['GET'])
+def bets_open_feed():
+    """Feed público de apuestas abiertas. Usado en la vista 'Hot Bets'."""
+    bets = _users.list_open_bets(limit=50)
+    return jsonify([_augment_bet(b) for b in bets])
+
+
+@app.route('/bets/mine', methods=['GET'])
+def bets_mine():
+    """Lista de apuestas del user actual (creadas o aceptadas)."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    bets = _users.get_user_bets(user["id"])
+    return jsonify([_augment_bet(b) for b in bets])
+
+
 @app.route('/backtestHistory', methods=['GET'])
 def backtest_history_endpoint():
     """Estadísticas acumuladas del histórico de backtests."""
@@ -2506,6 +2783,12 @@ def resolve_prediction_endpoint():
     blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
     actual = "blue" if blue_win else "red"
     predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
+
+    # Auto-resolver apuestas P2P de este match
+    try:
+        _users.resolve_bets_for_match(match_id, actual)
+    except Exception:
+        pass
 
     # Premiar Tumor Coins si la predicción acertó y el viewer está logueado
     is_correct = bool(predicted and predicted == actual)
