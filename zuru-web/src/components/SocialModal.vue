@@ -89,6 +89,46 @@
             </div>
           </div>
 
+          <!-- CLUSTERS -->
+          <div v-else-if="active === 'clusters'">
+            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
+              Jugadores agrupados por estilo (k-means sobre prior tumor + recent + winrate)
+            </p>
+            <div v-if="clustersLoading" class="text-white/30 text-sm font-mono text-center py-8">
+              Calculando clusters...
+            </div>
+            <div v-else-if="!clusters.length" class="text-white/30 text-sm font-mono text-center py-8">
+              No hay suficientes datos. Juega más partidas y vuelve.
+            </div>
+            <div v-else class="space-y-3">
+              <div v-for="c in clusters" :key="c.id"
+                class="bg-black/30 border border-white/10 rounded-xl p-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="text-2xl">{{ c.emoji }}</span>
+                  <p class="text-white font-mono font-bold">{{ c.name }}</p>
+                  <span class="text-[10px] text-white/40 font-mono ml-auto">{{ c.size }} jugadores</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-2 text-[10px] font-mono">
+                  <p class="text-white/50">Prior medio: <span class="text-yellow-300">{{ c.centroid.avg_prior }}</span></p>
+                  <p class="text-white/50">Recent: <span class="text-yellow-300">{{ c.centroid.avg_recent }}</span></p>
+                  <p class="text-white/50">Winrate: <span class="text-green-400">{{ c.centroid.win_rate }}%</span></p>
+                  <p class="text-white/50">% tilteado: <span class="text-orange-400">{{ c.centroid.tilt_frac }}%</span></p>
+                </div>
+                <div v-if="c.samples.length" class="space-y-1 mt-2">
+                  <p class="text-white/30 text-[9px] font-mono tracking-widest">EJEMPLOS</p>
+                  <div v-for="(s, i) in (c.samples as any[])" :key="i"
+                    class="flex items-center gap-2 text-[10px] font-mono py-0.5">
+                    <span class="text-white/40 w-4">{{ Number(i) + 1 }}.</span>
+                    <span class="text-white/60 flex-1 truncate">{{ s.tier }} · {{ s.role || '?' }}</span>
+                    <span class="text-yellow-300">{{ s.prior_tumor }}</span>
+                    <span class="text-white/40">/</span>
+                    <span class="text-green-400">{{ s.win_rate }}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- FRIENDS -->
           <div v-else-if="active === 'friends'">
             <div class="flex gap-2 mb-4">
@@ -202,10 +242,11 @@ const emit = defineEmits<{ close: []; refresh: [] }>()
 
 const auth = inject<any>('auth')
 
-type TabKey = 'hot' | 'leaderboards' | 'friends' | 'rooms'
+type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'friends' | 'rooms'
 const tabs: { key: TabKey; label: string }[] = [
   { key: 'hot', label: '🔥 Hot Bets' },
   { key: 'leaderboards', label: '🏆 Leaderboards' },
+  { key: 'clusters', label: '🧬 Clusters' },
   { key: 'friends', label: '👥 Amigos' },
   { key: 'rooms', label: '🏠 Salas' },
 ]
@@ -215,7 +256,9 @@ const leaderboardKinds = [
   { key: 'accuracy' as const, label: 'Mejor accuracy' },
 ]
 
-const active = ref<'hot' | 'leaderboards' | 'friends' | 'rooms'>('hot')
+const active = ref<TabKey>('hot')
+const clusters = ref<any[]>([])
+const clustersLoading = ref(false)
 const openBets = ref<any[]>([])
 const lbKind = ref<'currency' | 'bets' | 'accuracy'>('currency')
 const leaderboard = ref<any[]>([])
@@ -230,7 +273,7 @@ const roomCopied = ref(false)
 
 watch(() => props.show, async v => {
   if (v) {
-    if (props.initialTab) active.value = props.initialTab as 'hot' | 'leaderboards' | 'friends' | 'rooms'
+    if (props.initialTab) active.value = props.initialTab as TabKey
     await loadActive()
   }
 })
@@ -240,7 +283,20 @@ watch(active, () => loadActive())
 async function loadActive() {
   if (active.value === 'hot') openBets.value = await auth.fetchOpenBets()
   if (active.value === 'leaderboards') await loadLeaderboard()
+  if (active.value === 'clusters') await loadClusters()
   if (active.value === 'friends') friends.value = await auth.fetchFriends()
+}
+
+async function loadClusters() {
+  clustersLoading.value = true
+  try {
+    const data = await auth.fetchClusters(4)
+    clusters.value = data.clusters || []
+  } catch {
+    clusters.value = []
+  } finally {
+    clustersLoading.value = false
+  }
 }
 
 async function loadLeaderboard() {

@@ -140,6 +140,12 @@ async function fetchLeaderboard(kind: 'currency' | 'bets' | 'accuracy') {
   return await res.json()
 }
 
+async function fetchClusters(k = 4) {
+  const res = await fetch(`${API_BASE}/analytics/clusters?k=${k}`)
+  if (!res.ok) return { clusters: [], n: 0, k }
+  return await res.json()
+}
+
 async function fetchFriends() {
   if (!token.value) return []
   const res = await authedFetch('/friends')
@@ -289,6 +295,7 @@ export function useAuth() {
     fetchMyBets,
     fetchOpenBets,
     fetchLeaderboard,
+    fetchClusters,
     fetchFriends,
     addFriend,
     acceptFriend,

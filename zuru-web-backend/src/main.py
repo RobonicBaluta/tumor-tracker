@@ -2011,6 +2011,161 @@ def player_analytics_endpoint():
     })
 
 
+def _kmeans(points, k, max_iter=40, seed=42):
+    """Pure-Python k-means. points: list of float vectors. Returns (labels, centroids)."""
+    if not points or k <= 0:
+        return [], []
+    n = len(points)
+    if n <= k:
+        return list(range(n)), [list(p) for p in points]
+    dim = len(points[0])
+    # Deterministic init: pick k points spread across the dataset by index
+    rng_state = seed & 0xffffffff
+    def _rng():
+        nonlocal rng_state
+        rng_state = (rng_state * 1103515245 + 12345) & 0x7fffffff
+        return rng_state
+    centroids = [list(points[(_rng() % n)]) for _ in range(k)]
+    labels = [0] * n
+    for _ in range(max_iter):
+        # Assign
+        changed = False
+        for i, p in enumerate(points):
+            best, best_d = 0, float('inf')
+            for ci, c in enumerate(centroids):
+                d = sum((p[j] - c[j]) ** 2 for j in range(dim))
+                if d < best_d:
+                    best_d, best = d, ci
+            if labels[i] != best:
+                changed = True
+                labels[i] = best
+        # Update
+        sums = [[0.0] * dim for _ in range(k)]
+        counts = [0] * k
+        for i, p in enumerate(points):
+            l = labels[i]
+            counts[l] += 1
+            for j in range(dim):
+                sums[l][j] += p[j]
+        for ci in range(k):
+            if counts[ci] > 0:
+                centroids[ci] = [sums[ci][j] / counts[ci] for j in range(dim)]
+        if not changed:
+            break
+    return labels, centroids
+
+
+@app.route('/analytics/clusters', methods=['GET'])
+def analytics_clusters():
+    """Cluster jugadores por estilo usando k-means sobre prior_tumor, recent_avg, win_rate, tilt/streak.
+
+    Query params:
+      - k: número de clusters (default 4, max 8)
+      - limit: máx jugadores a procesar (default 500)
+    """
+    try:
+        k = max(2, min(8, int(request.args.get('k', 4))))
+    except Exception:
+        k = 4
+    try:
+        limit = max(20, min(2000, int(request.args.get('limit', 500))))
+    except Exception:
+        limit = 500
+
+    db = _pred_db()
+    rows = db.execute(
+        """SELECT puuid, tier, prior_tumor, sample_size, recent_avg,
+                  recent_losses, recent_wins, is_tilted, is_hotstreak, likely_role
+           FROM player_priors_cache
+           WHERE sample_size >= 3
+           ORDER BY cached_at DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+    if not rows or len(rows) < k:
+        return jsonify({"clusters": [], "n": len(rows), "k": k, "message": "Not enough player data"})
+
+    points = []
+    meta = []
+    for r in rows:
+        puuid, tier, prior, sample, recent_avg, losses, wins, tilted, streak, role = r
+        wl = (wins or 0) + (losses or 0)
+        win_rate = (wins / wl) if wl else 0.5
+        # Feature vector normalized to roughly [0, 1]
+        vec = [
+            (prior or 50) / 100.0,
+            (recent_avg or 50) / 100.0,
+            win_rate,
+            1.0 if tilted else 0.0,
+            1.0 if streak else 0.0,
+        ]
+        points.append(vec)
+        meta.append({
+            "puuid": puuid,
+            "tier": tier or "UNRANKED",
+            "prior_tumor": prior or 0,
+            "recent_avg": recent_avg or 0,
+            "win_rate": round(win_rate * 100, 1),
+            "wins": wins or 0,
+            "losses": losses or 0,
+            "is_tilted": bool(tilted),
+            "is_hotstreak": bool(streak),
+            "role": role or "",
+        })
+
+    labels, centroids = _kmeans(points, k)
+
+    # Group + label clusters by their dominant trait
+    clusters = []
+    for ci in range(k):
+        members = [meta[i] for i in range(len(meta)) if labels[i] == ci]
+        if not members:
+            continue
+        c = centroids[ci]
+        prior_norm, recent_norm, win_rate, tilt_frac, streak_frac = c
+        # Heuristic naming
+        avg_prior = prior_norm * 100
+        avg_recent = recent_norm * 100
+        if avg_prior > 65:
+            name = "Tumores Crónicos"
+            emoji = "💀"
+        elif avg_prior < 35 and win_rate > 0.55:
+            name = "Carries Funcionales"
+            emoji = "🔥"
+        elif streak_frac > 0.4:
+            name = "Hot Streak"
+            emoji = "📈"
+        elif tilt_frac > 0.4:
+            name = "Tilteados"
+            emoji = "🌋"
+        elif avg_recent > 60:
+            name = "Bajón reciente"
+            emoji = "📉"
+        else:
+            name = "Promedio"
+            emoji = "·"
+        # Sort members by prior (worst first for tumor clusters, best first otherwise)
+        members.sort(key=lambda m: -m["prior_tumor"] if avg_prior > 50 else m["prior_tumor"])
+        clusters.append({
+            "id": ci,
+            "name": name,
+            "emoji": emoji,
+            "size": len(members),
+            "centroid": {
+                "avg_prior": round(avg_prior, 1),
+                "avg_recent": round(avg_recent, 1),
+                "win_rate": round(win_rate * 100, 1),
+                "tilt_frac": round(tilt_frac * 100, 1),
+                "streak_frac": round(streak_frac * 100, 1),
+            },
+            "samples": members[:6],  # top 6 per cluster
+        })
+
+    clusters.sort(key=lambda c: -c["centroid"]["avg_prior"])
+    return jsonify({"clusters": clusters, "n": len(rows), "k": k})
+
+
 @app.route('/tuningReport', methods=['GET'])
 def tuning_report_endpoint():
     """Reporte empírico para afinar el modelo.
