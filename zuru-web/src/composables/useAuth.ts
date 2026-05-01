@@ -214,6 +214,33 @@ async function fetchRoom(code: string) {
   return await res.json()
 }
 
+async function fetchAchievements() {
+  if (!token.value) return []
+  const res = await authedFetch('/achievements')
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function fetchSettings() {
+  if (!token.value) return null
+  const res = await authedFetch('/settings')
+  if (!res.ok) return null
+  return await res.json()
+}
+
+async function saveSettings(settings: Record<string, boolean>) {
+  if (!token.value) return null
+  const res = await authedFetch('/settings', { method: 'POST', body: JSON.stringify(settings) })
+  if (!res.ok) return null
+  return await res.json()
+}
+
+async function fetchPublicProfile(riotId: string) {
+  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(riotId)}`)
+  if (!res.ok) return null
+  return await res.json()
+}
+
 async function linkRiot(gameName: string, tagLine: string) {
   if (!token.value) return null
   const res = await fetch(`${API_BASE}/auth/link-riot`, {
@@ -272,5 +299,9 @@ export function useAuth() {
     joinRoom,
     leaveRoom,
     fetchRoom,
+    fetchAchievements,
+    fetchSettings,
+    saveSettings,
+    fetchPublicProfile,
   }
 }

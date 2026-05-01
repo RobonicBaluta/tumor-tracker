@@ -141,6 +141,26 @@ def _init_sqlite(conn):
             PRIMARY KEY (room_id, riot_id)
         )
     """)
+    # Achievements desbloqueados por usuario
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_achievements (
+            user_id INTEGER NOT NULL,
+            badge TEXT NOT NULL,
+            unlocked_at REAL NOT NULL,
+            PRIMARY KEY (user_id, badge)
+        )
+    """)
+    # Settings/preferences por usuario
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY,
+            public_profile INTEGER DEFAULT 1,
+            allow_friend_requests INTEGER DEFAULT 1,
+            notif_bets INTEGER DEFAULT 1,
+            notif_friends INTEGER DEFAULT 1,
+            updated_at REAL NOT NULL
+        )
+    """)
 
 
 def _init_pg(conn):
@@ -229,6 +249,24 @@ def _init_pg(conn):
             riot_id TEXT NOT NULL,
             joined_at DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (room_id, riot_id)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_achievements (
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            badge TEXT NOT NULL,
+            unlocked_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (user_id, badge)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
+            public_profile INTEGER DEFAULT 1,
+            allow_friend_requests INTEGER DEFAULT 1,
+            notif_bets INTEGER DEFAULT 1,
+            notif_friends INTEGER DEFAULT 1,
+            updated_at DOUBLE PRECISION NOT NULL
         )
     """)
     cur.close()
@@ -507,6 +545,13 @@ def resolve_bet(bet_id, winner_side):
                 body=f"Apuesta {bet['share_code']} perdida",
                 link="#/bets", icon="❌",
             )
+    except Exception:
+        pass
+    # Evaluar achievements para ambos
+    try:
+        evaluate_achievements(winner_user_id)
+        if loser_user_id:
+            evaluate_achievements(loser_user_id)
     except Exception:
         pass
     return get_bet_by_id(bet_id)
@@ -808,6 +853,191 @@ def add_room_member(room_id, riot_id):
 
 def remove_room_member(room_id, riot_id):
     _exec("DELETE FROM room_members WHERE room_id=? AND riot_id=?", (room_id, riot_id))
+
+
+# ---------------------------------------------------------------------------
+# Achievements
+# ---------------------------------------------------------------------------
+
+ACHIEVEMENT_DEFS = {
+    "first_login":      {"icon": "🎉", "name": "Bienvenido al hospital", "desc": "Primer login"},
+    "first_bet":        {"icon": "🎲", "name": "First Blood Apostada", "desc": "Crea tu primera apuesta"},
+    "first_bet_won":    {"icon": "💰", "name": "Apostador Iniciado", "desc": "Gana tu primera apuesta"},
+    "ten_bets_won":     {"icon": "🏆", "name": "Bookie", "desc": "Gana 10 apuestas"},
+    "fifty_bets_won":   {"icon": "👑", "name": "Casa de Apuestas", "desc": "Gana 50 apuestas"},
+    "first_prediction": {"icon": "🔮", "name": "Vidente", "desc": "Primera predicción acertada"},
+    "ten_predictions":  {"icon": "🎯", "name": "Predictor", "desc": "10 predicciones acertadas"},
+    "streak_5":         {"icon": "🔥", "name": "Racha de Fuego", "desc": "5 predicciones acertadas seguidas"},
+    "tumor_hunter":     {"icon": "☢", "name": "Cazador de Tumores", "desc": "Detecta 50 worst players"},
+    "richie_rich":      {"icon": "💎", "name": "Richie Rich", "desc": "Acumula 1000 TC"},
+    "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos"},
+    "all_in":           {"icon": "🎰", "name": "All In", "desc": "Apuesta todo tu balance en una sola"},
+    "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Recuperar de 0 a 500 TC"},
+}
+
+
+def has_achievement(user_id, badge):
+    cur = _exec("SELECT 1 FROM user_achievements WHERE user_id=? AND badge=?", (user_id, badge))
+    return bool(cur.fetchone())
+
+
+def unlock_achievement(user_id, badge):
+    """Desbloquea un badge si no lo tenía. Empuja notificación + recompensa de TC."""
+    if badge not in ACHIEVEMENT_DEFS:
+        return False
+    if has_achievement(user_id, badge):
+        return False
+    _exec(
+        "INSERT INTO user_achievements (user_id, badge, unlocked_at) VALUES (?, ?, ?)",
+        (user_id, badge, time.time()),
+    )
+    info = ACHIEVEMENT_DEFS[badge]
+    add_currency(user_id, 50, f"achievement: {badge}")
+    push_notification(
+        user_id,
+        notif_type="achievement",
+        title=f"{info['icon']} Achievement: {info['name']}",
+        body=f"{info['desc']} · +50 TC",
+        link="#/achievements",
+        icon=info['icon'],
+    )
+    return True
+
+
+def list_achievements(user_id):
+    cur = _exec(
+        "SELECT badge, unlocked_at FROM user_achievements WHERE user_id=?",
+        (user_id,),
+    )
+    rows = cur.fetchall()
+    unlocked = {r[0]: r[1] for r in rows}
+    out = []
+    for badge, info in ACHIEVEMENT_DEFS.items():
+        out.append({
+            "badge": badge,
+            "icon": info["icon"],
+            "name": info["name"],
+            "desc": info["desc"],
+            "unlocked": badge in unlocked,
+            "unlocked_at": unlocked.get(badge),
+        })
+    return out
+
+
+def evaluate_achievements(user_id):
+    """Recalcula achievements basándose en el estado actual del user.
+    Llamar tras eventos clave (bet won, prediction correct, etc)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        return
+
+    # First login
+    unlock_achievement(user_id, "first_login")
+
+    # Currency milestones
+    if user["currency"] >= 1000:
+        unlock_achievement(user_id, "richie_rich")
+
+    # Bets stats
+    cur = _exec(
+        """SELECT COUNT(*) FROM bets
+           WHERE status='resolved' AND winner_side IS NOT NULL
+           AND (
+                (creator_user_id=? AND creator_side=winner_side)
+                OR (taker_user_id=? AND creator_side<>winner_side)
+           )""",
+        (user_id, user_id),
+    )
+    won = cur.fetchone()[0] or 0
+    if won >= 1: unlock_achievement(user_id, "first_bet_won")
+    if won >= 10: unlock_achievement(user_id, "ten_bets_won")
+    if won >= 50: unlock_achievement(user_id, "fifty_bets_won")
+
+    # Bet count
+    cur = _exec("SELECT COUNT(*) FROM bets WHERE creator_user_id=?", (user_id,))
+    if (cur.fetchone()[0] or 0) >= 1:
+        unlock_achievement(user_id, "first_bet")
+
+    # Friends count
+    cur = _exec(
+        "SELECT COUNT(*) FROM friendships WHERE status='accepted' AND (requester_id=? OR target_id=?)",
+        (user_id, user_id),
+    )
+    if (cur.fetchone()[0] or 0) >= 3:
+        unlock_achievement(user_id, "social")
+
+
+# ---------------------------------------------------------------------------
+# User settings
+# ---------------------------------------------------------------------------
+
+DEFAULT_SETTINGS = {
+    "public_profile": 1,
+    "allow_friend_requests": 1,
+    "notif_bets": 1,
+    "notif_friends": 1,
+}
+
+
+def get_settings(user_id):
+    cur = _exec(
+        "SELECT public_profile, allow_friend_requests, notif_bets, notif_friends FROM user_settings WHERE user_id=?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return dict(DEFAULT_SETTINGS)
+    return {
+        "public_profile": bool(row[0]),
+        "allow_friend_requests": bool(row[1]),
+        "notif_bets": bool(row[2]),
+        "notif_friends": bool(row[3]),
+    }
+
+
+def save_settings(user_id, **kwargs):
+    current = get_settings(user_id)
+    current.update({k: int(bool(v)) for k, v in kwargs.items() if k in DEFAULT_SETTINGS})
+    cur = _exec("SELECT 1 FROM user_settings WHERE user_id=?", (user_id,))
+    if cur.fetchone():
+        _exec(
+            """UPDATE user_settings SET public_profile=?, allow_friend_requests=?,
+               notif_bets=?, notif_friends=?, updated_at=? WHERE user_id=?""",
+            (current["public_profile"], current["allow_friend_requests"],
+             current["notif_bets"], current["notif_friends"], time.time(), user_id),
+        )
+    else:
+        _exec(
+            """INSERT INTO user_settings (user_id, public_profile, allow_friend_requests,
+               notif_bets, notif_friends, updated_at) VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, current["public_profile"], current["allow_friend_requests"],
+             current["notif_bets"], current["notif_friends"], time.time()),
+        )
+    return current
+
+
+def find_user_by_riot_id_public(riot_id):
+    """Devuelve user info público si tiene public_profile=1."""
+    cur = _exec(
+        """SELECT u.id, u.discord_id, u.discord_username, u.discord_avatar, u.riot_id, u.currency, u.created_at
+           FROM users u
+           LEFT JOIN user_settings s ON s.user_id = u.id
+           WHERE u.riot_id=?
+             AND COALESCE(s.public_profile, 1) = 1""",
+        (riot_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "discord_id": row[1],
+        "username": row[2],
+        "avatar": row[3],
+        "riot_id": row[4],
+        "currency": row[5],
+        "created_at": row[6],
+    }
 
 
 def get_users_brief(user_ids):

@@ -2,6 +2,7 @@
 import { computed, inject, ref, onMounted, onUnmounted } from 'vue';
 import MyBetsModal from './MyBetsModal.vue';
 import SocialModal from './SocialModal.vue';
+import UserModal from './UserModal.vue';
 
 const props = defineProps<{
   currentPage: string;
@@ -23,6 +24,8 @@ const dailyResult = ref<{ awarded: number } | null>(null)
 const showMyBets = ref(false)
 const showSocial = ref(false)
 const socialInitialTab = ref<string | undefined>(undefined)
+const showUserModal = ref(false)
+const userModalTab = ref<string | undefined>(undefined)
 const notifications = ref<any[]>([])
 const showNotifPanel = ref(false)
 let notifPollerId: ReturnType<typeof setInterval> | null = null
@@ -195,6 +198,14 @@ const claimDaily = async () => {
               class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-yellow-300 hover:bg-yellow-900/20 transition">
               ☢ Mis apuestas
             </button>
+            <button @click="userModalTab = 'achievements'; showUserModal = true; showUserMenu = false"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-yellow-300 hover:bg-yellow-900/20 transition">
+              🏅 Logros
+            </button>
+            <button @click="userModalTab = 'settings'; showUserModal = true; showUserMenu = false"
+              class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-white/60 hover:bg-white/10 hover:text-white transition">
+              ⚙ Ajustes
+            </button>
             <button @click="auth.refreshBalance(); showUserMenu = false"
               class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono text-white/60 hover:bg-white/10 hover:text-white transition">
               ↻ Actualizar balance
@@ -239,6 +250,7 @@ const claimDaily = async () => {
 
     <MyBetsModal :show="showMyBets" @close="showMyBets = false" />
     <SocialModal :show="showSocial" :initial-tab="socialInitialTab" @close="showSocial = false" />
+    <UserModal :show="showUserModal" :initial-tab="userModalTab" @close="showUserModal = false" />
   </nav>
 </template>
 

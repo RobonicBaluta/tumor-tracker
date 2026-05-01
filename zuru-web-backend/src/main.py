@@ -1362,6 +1362,7 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
                 or mp >= 150000
                 or ml >= 7
             )
+            entry["smurf_signals"] = _detect_smurf_signals(entry)
             return entry
 
         # Cache miss → fetch fresco. Las llamadas a riot_get ya están serializadas
@@ -1450,6 +1451,7 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
         entry_out["is_me"] = p_puuid == me_puuid
         entry_out["is_watched"] = riot_id in watched
         entry_out["is_blacklisted"] = champ_name in blacklist
+        entry_out["smurf_signals"] = _detect_smurf_signals(entry_out)
         return entry_out
 
     def _process_with_progress(p):
@@ -1893,6 +1895,45 @@ def player_analytics_endpoint():
         for h, v in sorted(hour_stats.items())
     ]
 
+    # Tilt forecast: probabilidad heurística de que tiltees si juegas otra ahora
+    # Combina: hora actual vs horario tóxico, % de losses recientes, racha actual
+    tilt_score = 0
+    tilt_reasons = []
+    now_hour = datetime.datetime.now().hour
+    hour_data = next((h for h in hour_out if h["hour"] == now_hour), None)
+    if hour_data and hour_data["games"] >= 3 and hour_data["winrate"] < 40:
+        tilt_score += 30
+        tilt_reasons.append(f"a las {now_hour:02d}h tu WR es solo {hour_data['winrate']}%")
+    # Racha de losses
+    last_5 = sorted(evolution, key=lambda e: e["date"], reverse=True)[:5]
+    losses_last_5 = sum(1 for m in last_5 if not m["win"])
+    if losses_last_5 >= 3:
+        tilt_score += 25
+        tilt_reasons.append(f"{losses_last_5}/5 losses recientes")
+    # Tumor reciente alto
+    if last_5:
+        avg_recent = sum(m["tumor"] for m in last_5) / len(last_5)
+        if avg_recent >= 50:
+            tilt_score += 25
+            tilt_reasons.append(f"tumor medio reciente {round(avg_recent)} (alto)")
+    # Sesión muy larga (más de 4 partidas en las últimas 4 horas)
+    cutoff_4h = now_ts - 4 * 3600
+    recent_session = [m for m in evolution if m["date"] >= cutoff_4h]
+    if len(recent_session) >= 4:
+        tilt_score += 20
+        tilt_reasons.append(f"{len(recent_session)} partidas en 4h (sesión larga)")
+    tilt_score = min(100, tilt_score)
+    tilt_forecast = {
+        "score": tilt_score,
+        "level": "alto" if tilt_score >= 60 else "medio" if tilt_score >= 30 else "bajo",
+        "reasons": tilt_reasons,
+        "advice": (
+            "Para. Hidratate. Vuelve mañana." if tilt_score >= 60
+            else "Cuidado. Una más y descansa." if tilt_score >= 30
+            else "Estás fresco, sigue."
+        ),
+    }
+
     return jsonify({
         "summoner": f"{game_name}#{tag_line}",
         "tier": tier,
@@ -1908,6 +1949,7 @@ def player_analytics_endpoint():
         "champion_pool": champion_pool_out[:10],
         "best_teammates": best_teammates,
         "worst_nemesis": worst_nemesis,
+        "tilt_forecast": tilt_forecast,
     })
 
 
@@ -2190,6 +2232,138 @@ def currency_daily():
     if new_balance is None:
         return jsonify({"error": "Ya has reclamado el daily reward hoy"}), 429
     return jsonify({"currency": new_balance, "awarded": 100})
+
+
+# ============================================================================
+# ML MODEL (regresión logística sobre prediction_logs históricos)
+# ============================================================================
+
+@app.route('/ml/train', methods=['POST'])
+def ml_train():
+    """Entrena el modelo ML con todos los logs disponibles."""
+    import ml_predictor
+    db = _pred_db()
+    rows = []
+    try:
+        cur = db.execute("SELECT * FROM prediction_logs WHERE resolved=1 AND predicted_winner IS NOT NULL AND actual_winner IS NOT NULL")
+        cols = [c[0] for c in cur.description]
+        rows.extend(dict(zip(cols, r)) for r in cur.fetchall())
+    except Exception:
+        pass
+    try:
+        cur = db.execute("SELECT * FROM backtest_logs WHERE predicted_winner IS NOT NULL AND actual_winner IS NOT NULL")
+        cols = [c[0] for c in cur.description]
+        rows.extend(dict(zip(cols, r)) for r in cur.fetchall())
+    except Exception:
+        pass
+
+    if len(rows) < 20:
+        return jsonify({"error": f"Solo {len(rows)} muestras. Necesitas al menos 20 para entrenar."}), 400
+    split = int(len(rows) * 0.8)
+    train, test = rows[:split], rows[split:]
+    weights = ml_predictor.train_logistic_regression(train)
+    train_eval = ml_predictor.evaluate(train, weights)
+    test_eval = ml_predictor.evaluate(test, weights)
+    ml_predictor.save_model(weights, meta={"train_eval": train_eval, "test_eval": test_eval, "n_train": len(train)})
+    return jsonify({
+        "ok": True,
+        "n_total": len(rows),
+        "n_train": len(train),
+        "n_test": len(test),
+        "train_accuracy": train_eval["accuracy"],
+        "test_accuracy": test_eval["accuracy"],
+    })
+
+
+@app.route('/ml/info', methods=['GET'])
+def ml_info():
+    """Info del modelo entrenado."""
+    import ml_predictor
+    model = ml_predictor.load_model()
+    if not model:
+        return jsonify({"trained": False})
+    return jsonify({"trained": True, "meta": model.get("meta", {})})
+
+
+# ============================================================================
+# ACHIEVEMENTS
+# ============================================================================
+
+@app.route('/achievements', methods=['GET'])
+def achievements_mine():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    _users.evaluate_achievements(user["id"])
+    return jsonify(_users.list_achievements(user["id"]))
+
+
+# ============================================================================
+# SETTINGS
+# ============================================================================
+
+@app.route('/settings', methods=['GET'])
+def settings_get():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    return jsonify(_users.get_settings(user["id"]))
+
+
+@app.route('/settings', methods=['POST'])
+def settings_save():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    saved = _users.save_settings(user["id"], **data)
+    return jsonify(saved)
+
+
+# ============================================================================
+# PUBLIC PROFILE
+# ============================================================================
+
+@app.route('/profile/<path:riot_id>', methods=['GET'])
+def public_profile(riot_id):
+    """Vista pública del perfil. Solo si tiene public_profile=1."""
+    profile = _users.find_user_by_riot_id_public(riot_id)
+    if not profile:
+        return jsonify({"error": "Perfil no encontrado o privado"}), 404
+    achievements = _users.list_achievements(profile["id"])
+    unlocked = [a for a in achievements if a["unlocked"]]
+    return jsonify({
+        "user": profile,
+        "achievements_unlocked": unlocked,
+        "achievement_count": len(unlocked),
+        "total_achievements": len(achievements),
+    })
+
+
+# ============================================================================
+# SMURF / SUSPICIOUS DETECTION
+# ============================================================================
+
+def _detect_smurf_signals(player):
+    """Heurística simple para detectar smurfs/cuentas raras en live game.
+    Devuelve lista de razones (vacía si nada raro)."""
+    signals = []
+    tier = (player.get("tier") or "").upper()
+    avg = player.get("avg_tumor_score") or 50
+    games = player.get("estimated_games") or 0
+    mp = player.get("mastery_points") or 0
+    sample = player.get("champion_total_sample") or 0
+
+    # Tumor muy bajo en elo bajo
+    if tier in ("IRON", "BRONZE", "SILVER") and avg <= 15 and sample >= 3:
+        signals.append("🥷 stats demasiado buenas para su elo")
+    # Cuenta nueva (poca mastery total) jugando ranked solo
+    if mp < 5000 and tier in ("GOLD", "PLATINUM", "EMERALD", "DIAMOND") and sample >= 3:
+        signals.append("🆕 cuenta muy nueva en su elo")
+    # Streak ganadora muy alta
+    if (player.get("recent_wins") or 0) >= 7 and avg <= 25:
+        signals.append("📈 winstreak +7 con stats sólidas")
+    return signals
 
 
 # ============================================================================
