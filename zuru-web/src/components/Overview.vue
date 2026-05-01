@@ -127,7 +127,7 @@
             <p class="text-[#c89b3c] font-mono truncate">{{ summoner }}</p>
             <img v-if="tier && tierIconUrl" :src="tierIconUrl"
               :alt="tierFullLabel" :title="tierFullLabel"
-              class="w-12 h-12 object-contain shrink-0 -my-2"
+              class="w-16 h-16 object-contain shrink-0 -my-4"
               @error="tierIconFailed = true" />
             <span v-else-if="tier" :class="tierColor[tier] ?? 'text-white/40'"
               :title="tierFullLabel"
