@@ -11,8 +11,8 @@ function detectInitialLocale(): LocaleKey {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved === 'es' || saved === 'en') return saved
   } catch {}
-  const nav = (navigator.language || 'es').slice(0, 2).toLowerCase()
-  return nav === 'en' ? 'en' : 'es'
+  // Default to Spanish regardless of browser language; user can switch via Settings.
+  return 'es'
 }
 
 export const i18n = createI18n({

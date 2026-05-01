@@ -5,11 +5,12 @@
       <p v-if="desc" class="text-white/40 text-[10px] font-mono">{{ desc }}</p>
     </div>
     <button @click="emit('update:modelValue', !modelValue)"
-      :class="modelValue ? 'bg-yellow-600' : 'bg-white/10'"
-      class="relative w-11 h-6 rounded-full transition-colors shrink-0">
+      :class="modelValue ? 'bg-yellow-600' : 'bg-white/15'"
+      class="relative w-11 h-6 rounded-full shrink-0 p-0 border-0 cursor-pointer overflow-hidden"
+      style="transition: background-color 0.15s ease">
       <span
-        class="absolute top-[2px] w-5 h-5 bg-white rounded-full shadow"
-        :style="{ transform: `translateX(${modelValue ? '22px' : '2px'})`, transition: 'transform 0.15s ease' }" />
+        class="absolute w-5 h-5 bg-white rounded-full shadow"
+        :style="{ left: modelValue ? '22px' : '2px', top: '2px', transition: 'left 0.15s ease' }" />
     </button>
   </div>
 </template>
