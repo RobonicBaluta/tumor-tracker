@@ -32,6 +32,63 @@ DISCORD_AUTH_URL = "https://discord.com/api/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
 DISCORD_USER_URL = "https://discord.com/api/users/@me"
 
+# Riot Sign On (RSO) — requiere aprobación de Riot. Una vez aprobada,
+# rellena las env vars y los endpoints estarán activos.
+RSO_CLIENT_ID = os.getenv("RSO_CLIENT_ID", "")
+RSO_CLIENT_SECRET = os.getenv("RSO_CLIENT_SECRET", "")
+RSO_REDIRECT_URI = os.getenv("RSO_REDIRECT_URI", "http://localhost:5000/auth/rso/callback")
+RSO_AUTH_URL = "https://auth.riotgames.com/authorize"
+RSO_TOKEN_URL = "https://auth.riotgames.com/token"
+RSO_USERINFO_URL = "https://auth.riotgames.com/userinfo"
+
+
+def rso_enabled():
+    return bool(RSO_CLIENT_ID and RSO_CLIENT_SECRET)
+
+
+def rso_auth_redirect_url():
+    if not rso_enabled():
+        return None
+    params = {
+        "client_id": RSO_CLIENT_ID,
+        "redirect_uri": RSO_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid",
+    }
+    return f"{RSO_AUTH_URL}?{urllib.parse.urlencode(params)}"
+
+
+def rso_exchange_code(code):
+    if not rso_enabled():
+        return None
+    res = requests.post(
+        RSO_TOKEN_URL,
+        auth=(RSO_CLIENT_ID, RSO_CLIENT_SECRET),
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": RSO_REDIRECT_URI,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=10,
+    )
+    if res.status_code != 200:
+        return None
+    return res.json()
+
+
+def rso_fetch_user(access_token):
+    if not rso_enabled():
+        return None
+    res = requests.get(
+        RSO_USERINFO_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
+    if res.status_code != 200:
+        return None
+    return res.json()
+
 
 def discord_auth_redirect_url():
     """URL a la que redirigir al user para que autorice con Discord."""

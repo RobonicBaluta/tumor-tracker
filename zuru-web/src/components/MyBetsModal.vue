@@ -1,8 +1,9 @@
 <template>
   <Transition name="modal">
-    <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm overflow-y-auto"
       @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col">
+      <div class="min-h-screen flex items-center justify-center p-4 py-16" @click.self="emit('close')">
+      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col my-auto">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div>
@@ -103,6 +104,7 @@
             ↻ Actualizar
           </button>
         </div>
+      </div>
       </div>
     </div>
   </Transition>
