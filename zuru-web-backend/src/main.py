@@ -161,6 +161,22 @@ else:
 def healthz():
     return {"ok": True}
 
+
+@app.route("/healthz/redis")
+def healthz_redis():
+    """Devuelve estado del cliente Redis. 200 incluso si está caído (no-op fallback)."""
+    try:
+        from redis_client import is_enabled, r
+    except Exception:
+        return {"enabled": False, "available": False, "error": "import_failed"}
+    if not is_enabled() or r is None:
+        return {"enabled": False, "available": False}
+    try:
+        pong = r.ping()
+        return {"enabled": True, "available": bool(pong)}
+    except Exception as exc:
+        return {"enabled": True, "available": False, "error": str(exc)[:120]}
+
 # Directorio de datos: en Render se monta /var/data, en dev usa src/.
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
 os.makedirs(DATA_DIR, exist_ok=True)
