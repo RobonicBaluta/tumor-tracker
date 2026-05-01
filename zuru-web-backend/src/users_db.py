@@ -450,6 +450,13 @@ def link_riot_account(user_id, riot_puuid, riot_id):
     )
 
 
+def unlink_riot_account(user_id):
+    _exec(
+        "UPDATE users SET riot_puuid=NULL, riot_id=NULL WHERE id=?",
+        (user_id,),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Currency
 # ---------------------------------------------------------------------------

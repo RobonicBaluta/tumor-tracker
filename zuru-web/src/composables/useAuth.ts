@@ -347,7 +347,19 @@ async function linkRiot(gameName: string, tagLine: string) {
     },
     body: JSON.stringify({ game_name: gameName, tag_line: tagLine }),
   })
-  if (!res.ok) return null
+  const data = await res.json().catch(() => null)
+  if (!res.ok) return { error: (data && data.error) || `Error ${res.status}` }
+  user.value = data
+  return data
+}
+
+async function unlinkRiot() {
+  if (!token.value) return null
+  const res = await authedFetch('/auth/unlink-riot', { method: 'POST' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    throw new Error((data && data.error) || `Error ${res.status}`)
+  }
   user.value = await res.json()
   return user.value
 }
@@ -377,6 +389,7 @@ export function useAuth() {
     refreshBalance,
     claimDaily,
     linkRiot,
+    unlinkRiot,
     handleAuthRedirect,
     createBet,
     createStatBet,

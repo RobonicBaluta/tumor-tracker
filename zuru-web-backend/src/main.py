@@ -2481,11 +2481,23 @@ def auth_link_riot():
         return jsonify({"error": "Falta game_name/tag_line"}), 400
 
     acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc_res.status_code == 404:
+        return jsonify({"error": "Riot ID no encontrado"}), 404
     if acc_res.status_code != 200:
-        return jsonify({"error": "No se pudo obtener la cuenta de Riot"}), 400
+        return jsonify({"error": f"Riot API error {acc_res.status_code}"}), 502
     puuid = acc_res.json()["puuid"]
     riot_id = f"{game_name}#{tag_line}"
     _users.link_riot_account(user["id"], puuid, riot_id)
+    return jsonify(_users.get_user_by_id(user["id"]))
+
+
+@app.route('/auth/unlink-riot', methods=['POST'])
+def auth_unlink_riot():
+    """Desvincula el Riot ID del user actual."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+    _users.unlink_riot_account(user["id"])
     return jsonify(_users.get_user_by_id(user["id"]))
 
 

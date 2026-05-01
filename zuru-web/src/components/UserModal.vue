@@ -105,8 +105,34 @@
               <div v-if="auth?.user.value" class="bg-black/30 border border-white/10 rounded-xl p-4">
                 <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">{{ $t('user.account').toUpperCase() }}</p>
                 <p class="text-white text-sm font-mono">{{ auth.user.value.username }}</p>
-                <p v-if="auth.user.value.riot_id" class="text-[#c89b3c] text-xs font-mono">{{ auth.user.value.riot_id }}</p>
-                <p v-else class="text-white/40 text-xs font-mono italic">{{ $t('user.no_riot_linked') }}</p>
+
+                <!-- Riot ID linked -->
+                <div v-if="auth.user.value.riot_id" class="flex items-center gap-2 mt-1">
+                  <p class="text-[#c89b3c] text-xs font-mono flex-1 truncate">⚔ {{ auth.user.value.riot_id }}</p>
+                  <button @click="onUnlinkRiot" :disabled="unlinking"
+                    class="text-[10px] font-mono px-2 py-0.5 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded disabled:opacity-30">
+                    {{ $t('user.unlink') }}
+                  </button>
+                </div>
+
+                <!-- Riot ID link form -->
+                <div v-else class="mt-2">
+                  <p class="text-white/40 text-xs font-mono italic mb-2">{{ $t('user.no_riot_linked') }}</p>
+                  <p class="text-white/30 text-[10px] font-mono mb-2">{{ $t('user.link_riot_help') }}</p>
+                  <div class="flex gap-1.5 items-center">
+                    <input v-model="linkGameName" :placeholder="$t('user.game_name')"
+                      class="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                    <span class="text-white/30 text-sm font-mono">#</span>
+                    <input v-model="linkTagLine" :placeholder="$t('user.tag_line')" maxlength="5"
+                      class="w-16 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                    <button @click="onLinkRiot" :disabled="linking || !linkGameName.trim() || !linkTagLine.trim()"
+                      class="text-[10px] font-mono px-2.5 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-bold rounded transition">
+                      {{ linking ? $t('user.linking') : $t('user.link_btn') }}
+                    </button>
+                  </div>
+                  <p v-if="linkError" class="text-red-400 text-[10px] font-mono mt-1">{{ linkError }}</p>
+                </div>
+
                 <p v-if="publicProfileUrl && settings.public_profile" class="text-white/40 text-[10px] font-mono mt-2">
                   {{ $t('user.public_profile_url') }}
                   <a :href="publicProfileUrl" target="_blank" class="text-[#c89b3c] hover:underline">{{ publicProfileUrl }}</a>
@@ -146,6 +172,49 @@ const active = ref<TabKey>('achievements')
 
 const achievements = ref<any[]>([])
 const settings = ref<Record<string, boolean> | null>(null)
+
+// Riot ID link/unlink form
+const linkGameName = ref('')
+const linkTagLine = ref('')
+const linking = ref(false)
+const unlinking = ref(false)
+const linkError = ref('')
+
+async function onLinkRiot() {
+  linkError.value = ''
+  const name = linkGameName.value.trim()
+  const tag = linkTagLine.value.trim()
+  if (!name || !tag) return
+  linking.value = true
+  try {
+    const result = await auth.linkRiot(name, tag)
+    if (!result || result.error) {
+      linkError.value = result?.error || 'No se pudo vincular'
+      return
+    }
+    // Refresh user state so the riot_id appears
+    await auth.fetchMe()
+    linkGameName.value = ''
+    linkTagLine.value = ''
+  } catch (e: any) {
+    linkError.value = e?.message || 'Error'
+  } finally {
+    linking.value = false
+  }
+}
+
+async function onUnlinkRiot() {
+  if (!confirm(t('user.confirm_unlink'))) return
+  unlinking.value = true
+  try {
+    await auth.unlinkRiot()
+    await auth.fetchMe()
+  } catch (e: any) {
+    linkError.value = e?.message || 'Error'
+  } finally {
+    unlinking.value = false
+  }
+}
 
 const unlockedCount = computed(() => achievements.value.filter(a => a.unlocked).length)
 const activeIcon = computed(() => active.value === 'achievements' ? '🏅' : '⚙')
