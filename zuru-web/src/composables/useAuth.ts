@@ -174,6 +174,17 @@ async function fetchMyBets() {
   return await res.json()
 }
 
+// Escanea bets matched del user y resuelve las que correspondan a matches
+// terminados. Idempotente. Devuelve {checked, resolved, refunded}.
+async function resolveMyPendingBets() {
+  if (!token.value) return null
+  const res = await authedFetch('/bets/resolve-mine', { method: 'POST' })
+  if (!res.ok) return null
+  const data = await res.json()
+  if (data.resolved > 0 || data.refunded > 0) await refreshBalance()
+  return data
+}
+
 async function fetchOpenBets() {
   const res = await fetch(`${API_BASE}/bets/open`)
   if (!res.ok) return []
@@ -473,6 +484,7 @@ export function useAuth() {
     cancelBet,
     fetchBet,
     fetchMyBets,
+    resolveMyPendingBets,
     fetchOpenBets,
     fetchLeaderboard,
     fetchClusters,

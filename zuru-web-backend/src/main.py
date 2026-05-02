@@ -3364,6 +3364,91 @@ def bets_get(share_code):
     return jsonify(_augment_bet(bet))
 
 
+@app.route('/bets/resolve-mine', methods=['POST'])
+def bets_resolve_mine():
+    """Escanea las bets matched del user actual y resuelve las que correspondan
+    a partidas que ya han terminado.
+
+    Idempotente: una bet ya resuelta no se toca. Devuelve {checked, resolved,
+    refunded}."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+
+    # Bets matched del user (creator o taker), agrupadas por match_id
+    cur = _users._exec(
+        f"""SELECT {_users._BET_COLS} FROM bets
+            WHERE status='matched' AND (creator_user_id=? OR taker_user_id=?)
+            ORDER BY created_at ASC""",
+        (user["id"], user["id"]),
+    )
+    bets = [_users._row_to_bet(r) for r in cur.fetchall()]
+    if not bets:
+        return jsonify({"checked": 0, "resolved": 0, "refunded": 0})
+
+    by_match = {}
+    for b in bets:
+        by_match.setdefault(b["match_id"], []).append(b)
+
+    resolved_count = 0
+    refunded_count = 0
+    checked_matches = 0
+
+    for match_id, bets_in_match in by_match.items():
+        checked_matches += 1
+        # Match v5 — solo resolvemos si la partida YA acabó (200 OK con info completa)
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+        if mres.status_code != 200:
+            continue
+        info = mres.json().get("info", {})
+        parts = info.get("participants", []) or []
+        if not parts:
+            continue
+        # Decide ganador (lado azul = 100, rojo = 200)
+        blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
+        actual = "blue" if blue_win else "red"
+
+        # game_end_ts para refund window
+        game_end_ts = None
+        try:
+            end_ms = info.get("gameEndTimestamp")
+            if end_ms:
+                game_end_ts = float(end_ms) / 1000.0
+            else:
+                start_ms = info.get("gameStartTimestamp")
+                dur = info.get("gameDuration", 0) or 0
+                if start_ms:
+                    game_end_ts = (float(start_ms) / 1000.0) + float(dur)
+        except Exception:
+            pass
+
+        # Resolver match bets (P2P + house) + stat bets de este match
+        for b in bets_in_match:
+            try:
+                if b["bet_kind"] == "match":
+                    res = _users.resolve_bet(b["id"], actual, game_end_ts=game_end_ts)
+                    if res:
+                        if res.get("status") == "refunded":
+                            refunded_count += 1
+                        elif res.get("status") == "resolved":
+                            resolved_count += 1
+                elif b["bet_kind"] == "stat":
+                    val = _extract_player_stat(mres.json(), b.get("target_puuid"), b.get("stat_type"))
+                    if val is None:
+                        continue
+                    res = _users.resolve_stat_bet(b["id"], val)
+                    if res and res.get("status") == "resolved":
+                        resolved_count += 1
+            except Exception:
+                pass
+
+    return jsonify({
+        "checked": checked_matches,
+        "resolved": resolved_count,
+        "refunded": refunded_count,
+    })
+
+
 @app.route('/bets/<share_code>/accept', methods=['POST'])
 def bets_accept(share_code):
     """Acepta la apuesta tomando el lado contrario."""

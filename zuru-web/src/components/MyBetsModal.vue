@@ -180,6 +180,9 @@ async function refresh() {
   if (!auth) return
   loading.value = true
   try {
+    // Antes de listar, resolvemos las que ya tengan partida terminada en Riot.
+    // Esto cierra el agujero de "creé bets, jugué, cerré la app, no se resolvieron solas".
+    try { await auth.resolveMyPendingBets() } catch {}
     bets.value = await auth.fetchMyBets()
   } catch {
     bets.value = []
