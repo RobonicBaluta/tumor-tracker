@@ -826,39 +826,38 @@
               </div>
             </div>
 
-            <!-- Arena (1700): 8 duos en grid 4x2, cada duo con su prior medio -->
-            <div v-if="isArena && arenaSubteams.length" class="mb-4">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">⚔ ARENA · 8 DUOS</p>
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div v-for="st in arenaSubteams" :key="st.subteam_id"
-                  class="bg-black/30 border border-white/10 rounded-lg p-2"
-                  :class="(st.members || []).some(m => m.is_me) ? 'border-yellow-500/50 bg-yellow-900/10' : ''">
-                  <div class="flex items-center justify-between mb-1.5">
-                    <span class="text-white/40 text-[9px] font-mono tracking-widest">DUO #{{ st.subteam_id }}</span>
-                    <span v-if="st.avg_prior !== null" :class="tumorColor(st.avg_prior)"
-                      class="text-sm font-mono font-bold">{{ st.avg_prior }}</span>
-                    <span v-else class="text-white/20 text-[10px] font-mono">—</span>
+            <!-- Arena (1700): lista plana ordenada por tumor prior. No se puede
+                 saber los duos en live (Riot solo expone playerSubteamId post-partida). -->
+            <div v-if="isArena" class="mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">⚔ ARENA · 16 JUGADORES (peor prior arriba)</p>
+              <p class="text-white/40 text-[10px] font-mono italic mb-3">
+                Riot no expone los duos en partida en directo (solo tras acabar). Aquí van los 16 ordenados por su tumor prior individual — fíjate en los de arriba.
+              </p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                <div v-for="(p, idx) in arenaSortedPlayers" :key="p.puuid"
+                  class="bg-black/30 border rounded-lg px-2.5 py-1.5 flex items-center gap-2"
+                  :class="p.is_me ? 'border-yellow-500/50 bg-yellow-900/10' : 'border-white/10'">
+                  <span class="text-white/30 text-[9px] font-mono w-5 text-center">#{{ idx + 1 }}</span>
+                  <img v-if="p.champion_name"
+                    :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${p.champion_name}.png`"
+                    class="w-7 h-7 rounded shrink-0" />
+                  <div class="flex-1 min-w-0">
+                    <p class="text-[11px] font-mono truncate"
+                      :class="p.is_me ? 'text-yellow-300 font-bold' : 'text-white/80'">
+                      {{ p.nombre.split('#')[0] }}
+                    </p>
+                    <p class="text-white/40 text-[9px] font-mono truncate">{{ p.champion_name }} · {{ p.tier || '?' }}</p>
                   </div>
-                  <div class="space-y-1">
-                    <div v-for="m in st.members" :key="m.puuid"
-                      class="flex items-center gap-1.5 text-[10px] font-mono">
-                      <img v-if="m.champion_id"
-                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${m.champion_name}.png`"
-                        class="w-5 h-5 rounded shrink-0" />
-                      <span :class="m.is_me ? 'text-yellow-300 font-bold' : 'text-white/70'" class="truncate flex-1 min-w-0">
-                        {{ m.nombre.split('#')[0] }}
-                      </span>
-                      <span v-if="m.avg_tumor_score !== null" :class="tumorColor(m.avg_tumor_score)" class="font-bold">{{ m.avg_tumor_score }}</span>
-                      <span v-else class="text-white/20">?</span>
-                      <span v-if="m.is_tilted" title="Tilteado">🌋</span>
-                      <span v-if="m.is_hotstreak" title="Hot streak">🔥</span>
-                    </div>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <span v-if="p.is_tilted" title="Tilteado">🌋</span>
+                    <span v-if="p.is_hotstreak" title="Hot streak">🔥</span>
+                    <span v-if="p.streamer_mode" class="text-white/30 text-[9px]" title="Streamer mode">📺</span>
+                    <span v-if="p.avg_tumor_score !== null" :class="tumorColor(p.avg_tumor_score)"
+                      class="font-bold font-mono text-sm w-7 text-right">{{ p.avg_tumor_score }}</span>
+                    <span v-else class="text-white/20 text-xs w-7 text-right">?</span>
                   </div>
                 </div>
               </div>
-              <p class="text-white/30 text-[10px] font-mono italic mt-2 text-center">
-                Cada número es el tumor prior individual del jugador. Sin predicción de ganador en Arena (8 duos free-for-all).
-              </p>
             </div>
 
             <!-- Win prediction · tumor de equipo en escala 0-100 (menor = mejor) — solo 5v5 -->
@@ -2686,7 +2685,20 @@ const livePrediction = computed(() => {
 // Si el queue es Arena (1700) o cualquier no-5v5, no hay predicción de equipo.
 const hasPrediction = computed(() => !!liveGame.value?.prediction)
 const isArena = computed(() => liveGame.value?.queue_id === 1700)
-const arenaSubteams = computed(() => liveGame.value?.arena_subteams || [])
+
+// Arena: lista plana ordenada por tumor prior descendente (los más sospechosos arriba).
+// Players sin prior (streamers, cuentas nuevas) van al final.
+const arenaSortedPlayers = computed(() => {
+  const players = liveGame.value?.players || []
+  return [...players].sort((a, b) => {
+    const av = a.avg_tumor_score ?? -1
+    const bv = b.avg_tumor_score ?? -1
+    if (av === -1 && bv === -1) return 0
+    if (av === -1) return 1   // sin prior al final
+    if (bv === -1) return -1
+    return bv - av             // mayor primero
+  })
+})
 
 const liveLoading = ref(false)
 const liveError = ref('')
