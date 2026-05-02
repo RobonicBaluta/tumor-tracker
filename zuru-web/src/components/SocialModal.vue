@@ -367,6 +367,95 @@
               <p v-if="!currentRoom.members.length" class="text-white/30 text-xs font-mono text-center py-4">
                 Sin miembros aún. Invita por código.
               </p>
+
+              <!-- Pool de la sala (room bets) -->
+              <div class="mt-4 pt-3 border-t border-white/10">
+                <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">💰 POOLS · ROOM BETS</p>
+                <p class="text-white/30 text-[9px] font-mono mb-2">
+                  Cada miembro stakea X TC. Tras start, todos juegan 1 ranked solo. Winners se reparten el pot de los losers. Si todos pierden, el de menor tumor en partidas compartidas cobra 10% del de mayor tumor.
+                </p>
+
+                <!-- Crear pool (solo owner) -->
+                <div v-if="isRoomOwner" class="bg-black/40 border border-white/10 rounded-lg p-2 mb-3">
+                  <div class="flex gap-2 items-center">
+                    <input type="number" v-model.number="newPoolStake" :min="10" placeholder="Stake TC"
+                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                    <select v-model.number="newPoolHours"
+                      class="bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
+                      <option :value="6">6h</option>
+                      <option :value="12">12h</option>
+                      <option :value="24">24h</option>
+                      <option :value="48">48h</option>
+                    </select>
+                    <button @click="onCreateRoomBet" :disabled="!newPoolStake || newPoolStake <= 0"
+                      class="text-[10px] font-mono px-2.5 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded">
+                      + Pool
+                    </button>
+                  </div>
+                  <p v-if="poolError" class="text-red-400 text-[10px] font-mono mt-1">{{ poolError }}</p>
+                </div>
+
+                <!-- Lista de pools -->
+                <div v-if="roomBetsLoading" class="text-white/30 text-[11px] font-mono text-center py-2">
+                  Cargando pools...
+                </div>
+                <div v-else-if="!roomBets.length" class="text-white/30 text-[11px] font-mono text-center py-2 italic">
+                  Aún no hay pools. {{ isRoomOwner ? 'Crea uno arriba.' : 'Espera al owner.' }}
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="rb in roomBets" :key="rb.id"
+                    class="bg-black/30 border border-white/10 rounded-lg px-2 py-2">
+                    <div class="flex items-center gap-2 text-[11px] font-mono mb-1">
+                      <span class="text-yellow-300 font-bold">{{ rb.stake }} TC</span>
+                      <span class="text-white/30">·</span>
+                      <span class="text-white/50">{{ (rb.participants || []).length }} miembros</span>
+                      <span class="ml-auto text-[9px] uppercase font-bold px-1.5 py-0.5 rounded"
+                        :class="rb.status === 'collecting' ? 'bg-cyan-900/40 text-cyan-300'
+                              : rb.status === 'active' ? 'bg-yellow-900/40 text-yellow-300'
+                              : rb.status === 'resolved' ? 'bg-green-900/40 text-green-300'
+                              : 'bg-white/10 text-white/40'">
+                        {{ rb.status }}
+                      </span>
+                    </div>
+
+                    <!-- Lista de participantes -->
+                    <div v-if="rb.participants && rb.participants.length" class="space-y-0.5 mb-1">
+                      <div v-for="p in rb.participants" :key="p.user_id"
+                        class="flex items-center gap-1 text-[10px] font-mono">
+                        <span :class="p.user_id === myUserId ? 'text-yellow-300 font-bold' : 'text-white/60'">
+                          {{ p.username || '?' }}
+                        </span>
+                        <span v-if="p.match_id" class="text-white/30">·</span>
+                        <span v-if="p.won === 1" class="text-green-400">✓ win</span>
+                        <span v-else-if="p.won === 0" class="text-red-400">✗ loss</span>
+                        <span v-else-if="p.match_id" class="text-cyan-300">📊 {{ p.tumor_score?.toFixed(0) }}</span>
+                        <span v-if="rb.status === 'resolved' && p.payout > 0" class="ml-auto text-yellow-300">
+                          +{{ p.payout }} TC
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Acciones según status + role -->
+                    <div class="flex gap-1.5 mt-1">
+                      <button v-if="rb.status === 'collecting' && !isParticipant(rb)" @click="onJoinRoomBet(rb)"
+                        class="text-[10px] font-mono px-2 py-0.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
+                        Unirse · {{ rb.stake }} TC
+                      </button>
+                      <button v-if="rb.status === 'collecting' && rb.creator_user_id === myUserId" @click="onStartRoomBet(rb)"
+                        class="text-[10px] font-mono px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white rounded">
+                        ▶ Start
+                      </button>
+                      <button v-if="rb.status === 'collecting' && rb.creator_user_id === myUserId" @click="onCancelRoomBet(rb)"
+                        class="text-[10px] font-mono px-2 py-0.5 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
+                        Cancelar
+                      </button>
+                      <span v-if="rb.status === 'active'" class="text-[10px] font-mono text-white/40 italic">
+                        Jugad ranked solo. Polling automático.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <p v-else class="text-white/30 text-sm font-mono text-center py-8">
               Crea una sala o únete con un código de 6 chars.
@@ -429,6 +518,78 @@ const newRoomName = ref('')
 const joinCodeInput = ref('')
 const currentRoom = ref<any>(null)
 const roomCopied = ref(false)
+
+// Room bets (item #4 UI)
+const roomBets = ref<any[]>([])
+const roomBetsLoading = ref(false)
+const newPoolStake = ref(50)
+const newPoolHours = ref(24)
+const poolError = ref('')
+
+const isRoomOwner = computed(() => {
+  return !!currentRoom.value && currentRoom.value.owner_user_id === myUserId.value
+})
+function isParticipant(rb: any) {
+  return (rb.participants || []).some((p: any) => p.user_id === myUserId.value)
+}
+
+async function loadRoomBets() {
+  if (!currentRoom.value?.code) return
+  roomBetsLoading.value = true
+  try {
+    roomBets.value = await auth.fetchRoomBets(currentRoom.value.code)
+  } catch {
+    roomBets.value = []
+  } finally {
+    roomBetsLoading.value = false
+  }
+}
+
+watch(() => currentRoom.value?.code, (code) => {
+  if (code) loadRoomBets()
+  else roomBets.value = []
+})
+
+async function onCreateRoomBet() {
+  poolError.value = ''
+  if (!currentRoom.value || !newPoolStake.value || newPoolStake.value <= 0) return
+  try {
+    await auth.createRoomBet(currentRoom.value.code, newPoolStake.value, newPoolHours.value)
+    await loadRoomBets()
+  } catch (e: any) {
+    poolError.value = e.message || 'Error'
+  }
+}
+
+async function onJoinRoomBet(rb: any) {
+  poolError.value = ''
+  try {
+    await auth.joinRoomBet(currentRoom.value.code, rb.id)
+    await loadRoomBets()
+  } catch (e: any) {
+    poolError.value = e.message || 'Error'
+  }
+}
+
+async function onStartRoomBet(rb: any) {
+  if (!confirm(`Iniciar pool con ${rb.participants?.length || 0} miembros? Tras esto cada uno juega 1 ranked solo.`)) return
+  try {
+    await auth.startRoomBet(currentRoom.value.code, rb.id)
+    await loadRoomBets()
+  } catch (e: any) {
+    poolError.value = e.message || 'Error'
+  }
+}
+
+async function onCancelRoomBet(rb: any) {
+  if (!confirm(`Cancelar pool? Refund ${rb.stake} TC a cada participante.`)) return
+  try {
+    await auth.cancelRoomBet(currentRoom.value.code, rb.id)
+    await loadRoomBets()
+  } catch (e: any) {
+    poolError.value = e.message || 'Error'
+  }
+}
 
 watch(() => props.show, async v => {
   if (v) {
