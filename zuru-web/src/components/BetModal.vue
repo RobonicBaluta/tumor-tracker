@@ -12,58 +12,50 @@
           <button @click="emit('close')" class="text-white/40 hover:text-white text-xl transition">✕</button>
         </div>
 
-        <!-- Crear apuesta -->
+        <!-- Crear apuesta — match live vs sistema únicamente.
+             Stat bets sobre jugadores se hacen con el 🎯 al lado de cada player. -->
         <div v-if="mode === 'create'" class="p-5 space-y-4">
-          <!-- Toggle entre tipos de apuesta -->
-          <div v-if="participants && participants.length" class="grid grid-cols-2 gap-2">
-            <button @click="betKind = 'match'"
-              :class="betKind === 'match' ? 'bg-yellow-900/40 border-yellow-500/50 text-yellow-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
-              class="text-xs font-mono px-3 py-2 rounded border transition">
-              ⚔ Equipo (azul/rojo)
-            </button>
-            <button @click="betKind = 'stat'"
-              :class="betKind === 'stat' ? 'bg-yellow-900/40 border-yellow-500/50 text-yellow-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
-              class="text-xs font-mono px-3 py-2 rounded border transition">
-              📊 Stat (KDA)
-            </button>
-          </div>
 
-          <p class="text-white/60 text-xs font-mono">{{ $t('bets.share_link_msg') }}</p>
-
-          <!-- MATCH BET -->
+          <!-- MATCH BET — siempre vs sistema (house). P2P se hace en Versus/Salas. -->
           <div v-if="betKind === 'match'" class="space-y-3">
-            <!-- Sub-toggle: P2P vs House -->
-            <div class="grid grid-cols-2 gap-2">
-              <button @click="isHouse = false"
-                :class="!isHouse ? 'bg-cyan-900/40 border-cyan-500/50 text-cyan-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
-                class="text-[11px] font-mono px-2 py-1.5 rounded border transition">
-                🤝 vs Otro user
-              </button>
-              <button @click="isHouse = true"
-                :class="isHouse ? 'bg-purple-900/40 border-purple-500/50 text-purple-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
-                class="text-[11px] font-mono px-2 py-1.5 rounded border transition">
-                🎰 vs Sistema (multiplicador)
-              </button>
-            </div>
-            <p v-if="isHouse" class="text-purple-300/70 text-[10px] font-mono">
-              Apuestas contra el sistema. El multiplicador se calcula del estado live de la partida — apostar al favorito da menos, al underdog da más. Bets en el último minuto del juego se refundan.
-            </p>
-            <p v-else class="text-cyan-300/70 text-[10px] font-mono">
-              Apuestas P2P 1:1 vía link. Otro user acepta el lado contrario.
+            <p class="text-purple-300/80 text-[11px] font-mono leading-relaxed">
+              🎰 <span class="font-bold">vs Sistema</span> · multiplicador dinámico según el estado live.
+              Ir contra la predicción te da bonus +30%. Bets en el último minuto del juego se refundan.
+              Para apuestas vs gente, usa la pestaña <span class="text-cyan-300">Versus</span> o una <span class="text-cyan-300">Sala</span>.
             </p>
 
             <p class="text-white/40 text-[10px] font-mono tracking-widest">{{ $t('bets.bet_on').toUpperCase() }}</p>
             <div class="grid grid-cols-2 gap-2">
-              <button @click="side = 'blue'"
+              <button @click="onSelectSide('blue')"
                 :class="side === 'blue' ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-900/50' : 'bg-blue-950/30 border-blue-500/30 text-blue-300/70 hover:border-blue-400/60'"
                 class="px-4 py-3 rounded-lg border font-mono font-bold transition">
                 🔵 {{ $t('bets.blue_wins') }}
               </button>
-              <button @click="side = 'red'"
+              <button @click="onSelectSide('red')"
                 :class="side === 'red' ? 'bg-red-600 border-red-400 text-white shadow-lg shadow-red-900/50' : 'bg-red-950/30 border-red-500/30 text-red-300/70 hover:border-red-400/60'"
                 class="px-4 py-3 rounded-lg border font-mono font-bold transition">
                 🔴 {{ $t('bets.red_wins') }}
               </button>
+            </div>
+
+            <!-- Multiplier preview cuando se elige side -->
+            <div v-if="side && previewLoading" class="text-white/40 text-xs font-mono italic text-center">
+              Calculando multiplicador...
+            </div>
+            <div v-else-if="side && previewMult !== null" class="bg-black/30 border rounded-xl px-4 py-3 text-center"
+              :class="previewIsUnderdog ? 'border-green-500/50' : 'border-purple-500/30'">
+              <p class="text-white/40 text-[10px] font-mono tracking-widest">MULTIPLICADOR</p>
+              <p :class="previewIsUnderdog ? 'text-green-300' : 'text-purple-300'"
+                class="text-3xl font-mono font-black mt-1">x{{ previewMult.toFixed(2) }}</p>
+              <p v-if="previewIsUnderdog" class="text-green-400 text-[10px] font-mono mt-0.5">
+                ⚡ vas contra la predicción · bonus +30%
+              </p>
+              <p v-else class="text-white/40 text-[10px] font-mono mt-0.5">
+                Vas con el favorito
+              </p>
+              <p v-if="amount > 0" class="text-white/60 text-xs font-mono mt-1.5">
+                Si ganas → <span class="text-yellow-300 font-bold">{{ Math.round(amount * previewMult) }} TC</span>
+              </p>
             </div>
           </div>
 
@@ -238,8 +230,31 @@ type BetKind = 'match' | 'stat'
 type StatType = 'kills' | 'deaths' | 'assists' | 'kda' | 'tumor_score'
 
 const betKind = ref<BetKind>('match')
-const isHouse = ref<boolean>(false)
+// Match live siempre va contra el sistema. Se mantiene la variable para
+// el resto del flujo, pero el toggle UI ya no existe.
+const isHouse = ref<boolean>(true)
 const side = ref<'blue' | 'red' | ''>('')
+
+// Multiplier preview (live) — se actualiza al elegir side
+const previewMult = ref<number | null>(null)
+const previewIsUnderdog = ref<boolean>(false)
+const previewLoading = ref<boolean>(false)
+
+async function onSelectSide(s: 'blue' | 'red') {
+  side.value = s
+  if (!props.matchId || betKind.value !== 'match') return
+  previewLoading.value = true
+  previewMult.value = null
+  try {
+    const r = await auth.previewMultiplier(props.matchId, s)
+    if (r) {
+      previewMult.value = r.multiplier
+      previewIsUnderdog.value = r.is_underdog
+    }
+  } finally {
+    previewLoading.value = false
+  }
+}
 const overUnder = ref<'over' | 'under' | ''>('')
 const targetPuuid = ref<string>('')
 const statType = ref<StatType>('kills')
@@ -271,7 +286,7 @@ const shareLink = computed(() => {
 watch(() => props.show, v => {
   if (v) {
     betKind.value = 'match'
-    isHouse.value = false
+    isHouse.value = true
     side.value = ''
     overUnder.value = ''
     targetPuuid.value = ''
@@ -281,6 +296,9 @@ watch(() => props.show, v => {
     error.value = ''
     createdBet.value = null
     copied.value = false
+    previewMult.value = null
+    previewIsUnderdog.value = false
+    previewLoading.value = false
   }
 })
 

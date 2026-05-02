@@ -3152,14 +3152,20 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
         return 2.0
 
 
+UNDERDOG_BONUS = 1.30  # +30% extra cuando apuestas contra la predicción
+
+
 def _compute_house_multiplier(match_id, side):
-    """Item #2: multiplicador dinámico para house bets en partida live.
+    """Multiplicador dinámico para house bets en partida live.
 
-    Usa la live cache si el match aún está activo (tenemos prediction + confidence).
-    Modelo de odds estándar de bookie con 5% de house edge:
-      multiplier = 0.95 / prob(side)   con clamp [1.05, 5.0]
+    Modelo de odds:
+      - Probabilidad del side derivada de la confidence de la predicción 5v5.
+      - Multiplier base = 0.95 / prob(side)  (5% de house edge).
+      - Si apuestas CONTRA el lado predicho como ganador, bonus extra (1.3x).
+        Esto premia el ir contra la corriente: si aciertas, payout muy gordo.
+      - Cap final: [1.05, 6.5].
 
-    Si no hay snapshot (raro), devuelve 2.0 (fair odds, equivalente al P2P clásico).
+    Si no hay snapshot (raro), devuelve 2.0 (fair odds).
     """
     try:
         cache = load_live_cache()
@@ -3171,15 +3177,49 @@ def _compute_house_multiplier(match_id, side):
         confidence = float(pred.get("confidence") or 0)  # 0-100
         if winner not in ("blue", "red"):
             return 2.0
-        # Confidence is la diff normalizada — la traducimos a probabilidad
-        # del winner side. confidence=0 → prob=0.5, confidence=100 → prob~=0.95.
-        # Cap en 0.92 para que el multiplier nunca colapse a 1.0.
+        # Confidence → probabilidad del winner side. confidence=0 → 0.5,
+        # confidence=100 → 0.92 (cap para que el multi nunca colapse a ~1.0).
         prob_winner = min(0.92, 0.5 + 0.42 * (confidence / 100.0))
-        prob_side = prob_winner if side == winner else (1 - prob_winner)
+        is_against = (side != winner)
+        prob_side = prob_winner if not is_against else (1 - prob_winner)
         mult = 0.95 / max(0.08, prob_side)
-        return max(1.05, min(5.0, round(mult, 2)))
+        if is_against:
+            mult *= UNDERDOG_BONUS
+        return max(1.05, min(6.5, round(mult, 2)))
     except Exception:
         return 2.0
+
+
+@app.route('/bets/preview-multiplier', methods=['GET'])
+def bets_preview_multiplier():
+    """Devuelve el multiplicador que se aplicaría a una house bet en este match
+    para el side dado. Útil para que el frontend lo muestre antes de confirmar.
+    Body params: match_id, side ('blue'|'red')."""
+    match_id = request.args.get('match_id')
+    side = request.args.get('side')
+    if not match_id or side not in ('blue', 'red'):
+        return jsonify({"error": "match_id y side ('blue'|'red') requeridos"}), 400
+    queue_id = _resolve_match_queue_id(match_id)
+    if queue_id is not None and not allows_betting(queue_id):
+        return jsonify({"error": f"Apuestas solo en SoloQ/Flex (queue: {queue_name(queue_id)})"}), 400
+    mult = _compute_house_multiplier(match_id, side)
+    # Indicar si es underdog
+    is_underdog = False
+    try:
+        cache = load_live_cache()
+        snap = cache.get(match_id)
+        if snap:
+            pred = (snap.get("data") or {}).get("prediction") or {}
+            winner = pred.get("winner")
+            if winner in ('blue', 'red') and side != winner:
+                is_underdog = True
+    except Exception:
+        pass
+    return jsonify({
+        "multiplier": mult,
+        "is_underdog": is_underdog,
+        "underdog_bonus": UNDERDOG_BONUS if is_underdog else 1.0,
+    })
 
 
 @app.route('/bets/create', methods=['POST'])
