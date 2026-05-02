@@ -2857,10 +2857,42 @@ def _augment_bet(bet):
     return bet
 
 
+def _compute_house_multiplier(match_id, side):
+    """Item #2: multiplicador dinámico para house bets en partida live.
+
+    Usa la live cache si el match aún está activo (tenemos prediction + confidence).
+    Modelo de odds estándar de bookie con 5% de house edge:
+      multiplier = 0.95 / prob(side)   con clamp [1.05, 5.0]
+
+    Si no hay snapshot (raro), devuelve 2.0 (fair odds, equivalente al P2P clásico).
+    """
+    try:
+        cache = load_live_cache()
+        snap = cache.get(match_id)
+        if not snap:
+            return 2.0
+        pred = (snap.get("data") or {}).get("prediction") or {}
+        winner = pred.get("winner")  # 'blue'|'red'|'tie'
+        confidence = float(pred.get("confidence") or 0)  # 0-100
+        if winner not in ("blue", "red"):
+            return 2.0
+        # Confidence is la diff normalizada — la traducimos a probabilidad
+        # del winner side. confidence=0 → prob=0.5, confidence=100 → prob~=0.95.
+        # Cap en 0.92 para que el multiplier nunca colapse a 1.0.
+        prob_winner = min(0.92, 0.5 + 0.42 * (confidence / 100.0))
+        prob_side = prob_winner if side == winner else (1 - prob_winner)
+        mult = 0.95 / max(0.08, prob_side)
+        return max(1.05, min(5.0, round(mult, 2)))
+    except Exception:
+        return 2.0
+
+
 @app.route('/bets/create', methods=['POST'])
 def bets_create():
     """Crea una apuesta. Body:
-      Match bet:  { match_id, game_id, side: 'blue'|'red', amount }
+      Match bet P2P:   { match_id, game_id, side: 'blue'|'red', amount }
+      Match bet HOUSE: { match_id, game_id, side: 'blue'|'red', amount, is_house: true }
+        → contra el sistema, con multiplicador dinámico calculado del estado live.
       Stat bet:   { match_id, game_id, side: 'over'|'under', amount,
                     bet_kind: 'stat', target_puuid, target_name, stat_type, threshold }
     """
@@ -2873,6 +2905,7 @@ def bets_create():
     side = data.get("side")
     amount = int(data.get("amount", 0))
     bet_kind = data.get("bet_kind") or "match"
+    is_house = bool(data.get("is_house"))
 
     if not match_id or amount <= 0:
         return jsonify({"error": "Faltan campos o son inválidos"}), 400
@@ -2882,7 +2915,14 @@ def bets_create():
     if bet_kind == "match":
         if side not in ("blue", "red"):
             return jsonify({"error": "side debe ser blue|red"}), 400
-        bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
+        if is_house:
+            mult = _compute_house_multiplier(match_id, side)
+            bet = _users.create_bet(
+                user["id"], match_id, game_id, side, amount,
+                is_house=True, payout_multiplier=mult,
+            )
+        else:
+            bet = _users.create_bet(user["id"], match_id, game_id, side, amount)
     elif bet_kind == "stat":
         if side not in ("over", "under"):
             return jsonify({"error": "side debe ser over|under"}), 400
@@ -2978,7 +3018,8 @@ def _augment_challenge(ch):
 
 def _extract_player_stat(match_info, puuid, stat_type):
     """Extrae la stat del participante con `puuid` del JSON de match-v5."""
-    parts = (match_info or {}).get("info", {}).get("participants", []) or []
+    info = (match_info or {}).get("info", {})
+    parts = info.get("participants", []) or []
     p = next((x for x in parts if x.get("puuid") == puuid), None)
     if not p:
         return None
@@ -2992,12 +3033,35 @@ def _extract_player_stat(match_info, puuid, stat_type):
     if stat_type == "cs":      return float((p.get("totalMinionsKilled", 0) or 0) + (p.get("neutralMinionsKilled", 0) or 0))
     if stat_type == "gold":    return float(p.get("goldEarned", 0) or 0)
     if stat_type == "damage":  return float(p.get("totalDamageDealtToChampions", 0) or 0)
+    if stat_type == "tumor_score":
+        # Item #5: tumor score del jugador en este match
+        try:
+            duration_min = max(1.0, float(info.get("gameDuration", 0)) / 60.0)
+            stats = {
+                "kills": k, "deaths": d, "assists": a,
+                "totalMinionsKilled": p.get("totalMinionsKilled", 0) or 0,
+                "neutralMinionsKilled": p.get("neutralMinionsKilled", 0) or 0,
+                "goldEarned": p.get("goldEarned", 0) or 0,
+                "totalDamageDealtToChampions": p.get("totalDamageDealtToChampions", 0) or 0,
+                "visionScore": p.get("visionScore", 0) or 0,
+                "win": p.get("win", False),
+                "teamPosition": p.get("teamPosition") or p.get("individualPosition") or "",
+            }
+            return float(_engine_match_score(stats, duration_min))
+        except Exception:
+            return None
     return None
 
 
 @app.route('/challenges/create', methods=['POST'])
 def challenges_create():
-    """Body: { stat_type, amount, comparison? } — challenger debe tener riot_id vinculado."""
+    """Body: { stat_type, amount, comparison?, format? } — challenger debe tener riot_id vinculado.
+
+    format: 'single' (default, legacy) | 'bo3' | 'bo5' | 'bo10'
+      Para bo*, el stat_type es ignorado para determinar ganador (se usa win/loss
+      de partidas ranked solo); el stat_type sigue usándose como tiebreaker
+      implícito vía tumor score acumulado.
+    """
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
@@ -3005,6 +3069,7 @@ def challenges_create():
         return jsonify({"error": "Vincula tu Riot ID antes de crear challenges"}), 400
     data = request.get_json() or {}
     stat_type = data.get("stat_type")
+    fmt = data.get("format") or "single"
     try:
         amount = int(data.get("amount", 0))
     except Exception:
@@ -3012,12 +3077,114 @@ def challenges_create():
     comparison = data.get("comparison") or ("lower_wins" if stat_type == "deaths" else "higher_wins")
     if amount <= 0 or stat_type not in _users.VALID_CHALLENGE_STATS:
         return jsonify({"error": "stat_type/amount inválidos"}), 400
+    if fmt not in _users.CHALLENGE_FORMATS:
+        return jsonify({"error": "format debe ser single|bo3|bo5|bo10"}), 400
     if amount > user["currency"]:
         return jsonify({"error": "Saldo insuficiente"}), 400
-    ch = _users.create_challenge(user["id"], stat_type, amount, comparison)
+    ch = _users.create_challenge(user["id"], stat_type, amount, comparison, fmt=fmt)
     if not ch:
         return jsonify({"error": "No se pudo crear el challenge"}), 500
     return jsonify(_augment_challenge(ch))
+
+
+# ---------------------------------------------------------------------------
+# Best-of-N challenge poller (item #3)
+# ---------------------------------------------------------------------------
+
+def _poll_one_challenge(ch):
+    """Procesa un challenge bo* aceptado: trae partidas ranked solo de ambos
+    posteriores al accepted_at, cuenta wins, decide si resolver."""
+    accepted_ts_ms = int((ch.get("accepted_at") or 0) * 1000)
+    if accepted_ts_ms == 0:
+        return None
+
+    challenger_puuid = ch["challenger_puuid"]
+    challenged_puuid = ch["challenged_puuid"]
+    if not challenged_puuid:
+        return None
+
+    def _matches_after(puuid):
+        # Match v5 — match-list por puuid, queue 420 (ranked solo)
+        url = f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids?queue=420&start=0&count=20&startTime={accepted_ts_ms // 1000}"
+        res = riot_get(url)
+        if res.status_code != 200:
+            return []
+        return res.json() or []
+
+    def _process(puuid, match_ids, prefix):
+        wins = 0
+        tumor_total = 0.0
+        for mid in match_ids:
+            mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
+            if mres.status_code != 200:
+                continue
+            info = mres.json()
+            parts = info.get("info", {}).get("participants", []) or []
+            p = next((x for x in parts if x.get("puuid") == puuid), None)
+            if not p:
+                continue
+            if p.get("win"):
+                wins += 1
+            ts = _extract_player_stat(info, puuid, "tumor_score")
+            if ts is not None:
+                tumor_total += ts
+        return wins, tumor_total
+
+    challenger_matches = _matches_after(challenger_puuid)
+    challenged_matches = _matches_after(challenged_puuid)
+    cw, ct = _process(challenger_puuid, challenger_matches, "challenger")
+    dw, dt = _process(challenged_puuid, challenged_matches, "challenged")
+
+    _users.update_challenge_progress(ch["id"], cw, dw, ct, dt)
+
+    needed = ch["matches_required"]
+    # Mayoría alcanzada
+    if cw >= needed and cw > dw:
+        return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason=f"{cw}-{dw}")
+    if dw >= needed and dw > cw:
+        return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason=f"{cw}-{dw}")
+
+    # Expirado: tiebreaker por tumor total más bajo
+    if (ch.get("expires_at") or 0) > 0 and time.time() > ch["expires_at"]:
+        if cw == dw:
+            # Empate puro → menor tumor gana, si vale 0 → push (refund)
+            if ct == dt:
+                _users.push_challenge_refund(ch["id"], reason="tie_no_data")
+            elif ct < dt:
+                _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
+                                                 reason=f"tiebreak tumor {ct:.0f}<{dt:.0f}")
+            else:
+                _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
+                                                 reason=f"tiebreak tumor {dt:.0f}<{ct:.0f}")
+        elif cw > dw:
+            _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
+                                             reason=f"expired {cw}-{dw}")
+        else:
+            _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
+                                             reason=f"expired {cw}-{dw}")
+        return _users.get_challenge_by_id(ch["id"])
+    return None
+
+
+@app.route('/challenges/poll', methods=['POST'])
+def challenges_poll():
+    """Trigger manual del poller de best-of-N challenges.
+
+    Idempotente: procesa hasta 50 challenges aceptados y devuelve resumen.
+    Sin auth para que se pueda llamar desde un cron externo (cron-job.org, etc).
+    """
+    chs = _users.list_pollable_challenges()
+    processed = 0
+    resolved = 0
+    for ch in chs:
+        try:
+            res = _poll_one_challenge(ch)
+            processed += 1
+            if res and res.get("status") in ("resolved", "expired"):
+                resolved += 1
+        except Exception:
+            pass
+    return jsonify({"processed": processed, "resolved": resolved, "candidates": len(chs)})
 
 
 @app.route('/challenges/<share_code>/accept', methods=['POST'])
@@ -3097,6 +3264,211 @@ def challenges_get(share_code):
     if not ch:
         return jsonify({"error": "No encontrado"}), 404
     return jsonify(_augment_challenge(ch))
+
+
+# ---------------------------------------------------------------------------
+# Item #4: Room bets — pool de sala, resuelve por win/loss + tumor tiebreaker
+# ---------------------------------------------------------------------------
+
+def _augment_room_bet(rb):
+    if not rb:
+        return None
+    rb["participants"] = []
+    for p in _users.list_room_bet_participants(rb["id"]):
+        u = _users.get_user_by_id(p["user_id"])
+        if u:
+            p["username"] = u["username"]
+            p["avatar"] = u.get("avatar")
+            p["riot_id"] = u.get("riot_id")
+        rb["participants"].append(p)
+    return rb
+
+
+@app.route('/rooms/<code>/bets/create', methods=['POST'])
+def room_bet_create(code):
+    """Body: { stake, ttl_hours? }"""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID"}), 400
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    if room["owner_user_id"] != user["id"]:
+        return jsonify({"error": "Solo el owner de la sala crea room bets"}), 403
+    data = request.get_json() or {}
+    try:
+        stake = int(data.get("stake", 0))
+    except Exception:
+        return jsonify({"error": "stake inválido"}), 400
+    if stake <= 0 or stake > user["currency"]:
+        return jsonify({"error": "stake inválido o saldo insuficiente"}), 400
+    ttl = int(data.get("ttl_hours", 24)) * 3600
+    rb = _users.create_room_bet(room["id"], user["id"], stake, ttl_seconds=ttl)
+    if not rb:
+        return jsonify({"error": "No se pudo crear"}), 500
+    return jsonify(_augment_room_bet(rb))
+
+
+@app.route('/rooms/<code>/bets/<int:rbid>/join', methods=['POST'])
+def room_bet_join(code, rbid):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.join_room_bet(rbid, user["id"])
+    if isinstance(res, str):
+        return jsonify({"error": res}), 400
+    return jsonify(_augment_room_bet(res))
+
+
+@app.route('/rooms/<code>/bets/<int:rbid>/start', methods=['POST'])
+def room_bet_start(code, rbid):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.start_room_bet(rbid, user["id"])
+    if not res:
+        return jsonify({"error": "No se pudo arrancar"}), 400
+    return jsonify(_augment_room_bet(res))
+
+
+@app.route('/rooms/<code>/bets/<int:rbid>/cancel', methods=['POST'])
+def room_bet_cancel(code, rbid):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.cancel_room_bet(rbid, user["id"])
+    if not res:
+        return jsonify({"error": "No se pudo cancelar"}), 400
+    return jsonify(_augment_room_bet(res))
+
+
+@app.route('/rooms/<code>/bets', methods=['GET'])
+def room_bet_list(code):
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    bets = _users.list_room_bets_for_room(room["id"])
+    return jsonify([_augment_room_bet(rb) for rb in bets])
+
+
+def _resolve_one_room_bet(rb):
+    """Resolución de un room bet active:
+    1. Para cada participante, busca su próxima ranked solo después de started_at.
+    2. Marca won/lost + tumor_score.
+    3. Si hay winners → se reparten el pot de los losers proporcionalmente al stake.
+       Los winners recuperan stake + share del pot de los losers.
+    4. Si no hay winners (todos perdieron) → entre quienes coincidieron en el
+       mismo match, los de menor tumor reciben un bonus (10% del stake del
+       compañero con mayor tumor); el resto del stake se refunda a su dueño.
+    """
+    rbid = rb["id"]
+    if rb["status"] != "active":
+        return None
+    started_ms = int((rb.get("started_at") or 0) * 1000)
+    if started_ms == 0:
+        return None
+
+    parts = _users.list_room_bet_participants(rbid)
+    # Step 1+2: find each participant's first ranked solo after started_at
+    for p in parts:
+        if p.get("match_id"):
+            continue  # ya procesado
+        url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{p['puuid']}/ids"
+               f"?queue=420&start=0&count=10&startTime={started_ms // 1000}")
+        res = riot_get(url)
+        if res.status_code != 200:
+            continue
+        ids = res.json() or []
+        if not ids:
+            continue
+        # tomamos la más antigua después de started_at
+        match_id = ids[-1]
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+        if mres.status_code != 200:
+            continue
+        info = mres.json()
+        parts_in = info.get("info", {}).get("participants", []) or []
+        target = next((x for x in parts_in if x.get("puuid") == p["puuid"]), None)
+        if not target:
+            continue
+        won = bool(target.get("win"))
+        ts = _extract_player_stat(info, p["puuid"], "tumor_score")
+        _users.update_room_bet_participant(rbid, p["user_id"],
+                                           match_id=match_id, won=won, tumor_score=ts)
+
+    # Refresh
+    parts = _users.list_room_bet_participants(rbid)
+    # Si aún hay participantes sin match_id y no hemos pasado el deadline → vuelve más tarde
+    pending = [p for p in parts if not p.get("match_id")]
+    if pending and time.time() < (rb.get("resolves_at") or 0):
+        return None
+    # Si llegamos al deadline con pendings, los refundamos
+    for p in pending:
+        _users.add_currency(p["user_id"], p["staked"], f"room bet refund (no game) · #{rbid}")
+        _users.update_room_bet_participant(rbid, p["user_id"], payout=p["staked"])
+
+    completed = [p for p in parts if p.get("match_id")]
+    winners = [p for p in completed if p.get("won")]
+    losers = [p for p in completed if p.get("won") is False]
+
+    if winners:
+        # Pot from losers (their stakes go to winners proportionally)
+        loser_pot = sum(p["staked"] for p in losers)
+        winner_pot_each = loser_pot // max(len(winners), 1)
+        for w in winners:
+            payout = w["staked"] + winner_pot_each
+            _users.add_currency(w["user_id"], payout, f"room bet won · #{rbid}")
+            _users.update_room_bet_participant(rbid, w["user_id"], payout=payout)
+        for l in losers:
+            _users.update_room_bet_participant(rbid, l["user_id"], payout=0)
+    else:
+        # Todos perdieron → tiebreaker tumor entre los que coincidieron en el mismo match
+        bonus_pct = 0.10
+        # Group por match_id
+        by_match = {}
+        for p in completed:
+            by_match.setdefault(p["match_id"], []).append(p)
+        # En cada grupo de >=2, el de menor tumor cobra del de mayor
+        bonuses = {p["user_id"]: 0 for p in completed}
+        penalties = {p["user_id"]: 0 for p in completed}
+        for mid, group in by_match.items():
+            if len(group) < 2:
+                continue
+            sorted_g = sorted(group, key=lambda x: x.get("tumor_score") or 99999)
+            best = sorted_g[0]
+            for worse in sorted_g[1:]:
+                bonus = int(worse["staked"] * bonus_pct)
+                bonuses[best["user_id"]] += bonus
+                penalties[worse["user_id"]] += bonus
+        # Pay out: each player gets back stake - penalty + bonus
+        for p in completed:
+            net = p["staked"] - penalties[p["user_id"]] + bonuses[p["user_id"]]
+            net = max(0, net)
+            _users.add_currency(p["user_id"], net, f"room bet refund · #{rbid}")
+            _users.update_room_bet_participant(rbid, p["user_id"], payout=net)
+
+    _users.finalize_room_bet(rbid)
+    return _users.get_room_bet(rbid)
+
+
+@app.route('/rooms/bets/poll', methods=['POST'])
+def room_bet_poll():
+    """Procesa todos los room bets active (igual que /challenges/poll)."""
+    ids = _users.list_active_room_bets()
+    processed = 0
+    resolved = 0
+    for rbid in ids:
+        try:
+            rb = _users.get_room_bet(rbid)
+            res = _resolve_one_room_bet(rb)
+            processed += 1
+            if res and res.get("status") == "resolved":
+                resolved += 1
+        except Exception:
+            pass
+    return jsonify({"processed": processed, "resolved": resolved, "candidates": len(ids)})
 
 
 @app.route('/backtestHistory', methods=['GET'])
@@ -3414,34 +3786,37 @@ def resolve_prediction_endpoint():
     actual = "blue" if blue_win else "red"
     predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
 
-    # Auto-resolver apuestas P2P de este match (match bets + stat bets)
+    # game_end_ts (segundos epoch) para refund window de item #1
+    game_end_ts = None
     try:
-        _users.resolve_bets_for_match(match_id, actual)
+        # Match v5 da gameEndTimestamp en ms; algunos juegos viejos solo gameStartTimestamp + gameDuration
+        end_ms = info.get("gameEndTimestamp")
+        if end_ms:
+            game_end_ts = float(end_ms) / 1000.0
+        else:
+            start_ms = info.get("gameStartTimestamp")
+            dur = info.get("gameDuration", 0) or 0
+            if start_ms:
+                game_end_ts = (float(start_ms) / 1000.0) + float(dur)
+    except Exception:
+        game_end_ts = None
+
+    # Auto-resolver match bets (P2P + house) con refund window
+    try:
+        _users.resolve_bets_for_match(match_id, actual, game_end_ts=game_end_ts)
     except Exception:
         pass
+    # Stat bets: usa _extract_player_stat (que ya maneja tumor_score)
     try:
         stat_bets = _users.list_stat_bets_for_match(match_id)
         if stat_bets:
-            # Indexa participantes por puuid para lookup O(1)
-            by_puuid = {p.get("puuid"): p for p in parts if p.get("puuid")}
             for sb in stat_bets:
                 tp = sb.get("target_puuid")
                 stype = sb.get("stat_type")
-                p = by_puuid.get(tp)
-                if not p or not stype:
+                if not tp or not stype:
                     continue
-                k = p.get("kills", 0) or 0
-                d = p.get("deaths", 0) or 0
-                a = p.get("assists", 0) or 0
-                if stype == "kills":
-                    actual_val = float(k)
-                elif stype == "deaths":
-                    actual_val = float(d)
-                elif stype == "assists":
-                    actual_val = float(a)
-                elif stype == "kda":
-                    actual_val = (k + a) / max(d, 1)
-                else:
+                actual_val = _extract_player_stat(mres.json(), tp, stype)
+                if actual_val is None:
                     continue
                 _users.resolve_stat_bet(sb["id"], actual_val)
     except Exception:

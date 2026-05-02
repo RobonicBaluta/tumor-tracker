@@ -31,8 +31,28 @@
           <p class="text-white/60 text-xs font-mono">{{ $t('bets.share_link_msg') }}</p>
 
           <!-- MATCH BET -->
-          <div v-if="betKind === 'match'">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">{{ $t('bets.bet_on').toUpperCase() }}</p>
+          <div v-if="betKind === 'match'" class="space-y-3">
+            <!-- Sub-toggle: P2P vs House -->
+            <div class="grid grid-cols-2 gap-2">
+              <button @click="isHouse = false"
+                :class="!isHouse ? 'bg-cyan-900/40 border-cyan-500/50 text-cyan-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
+                class="text-[11px] font-mono px-2 py-1.5 rounded border transition">
+                🤝 vs Otro user
+              </button>
+              <button @click="isHouse = true"
+                :class="isHouse ? 'bg-purple-900/40 border-purple-500/50 text-purple-300' : 'bg-black/30 border-white/10 text-white/50 hover:text-white/80'"
+                class="text-[11px] font-mono px-2 py-1.5 rounded border transition">
+                🎰 vs Sistema (multiplicador)
+              </button>
+            </div>
+            <p v-if="isHouse" class="text-purple-300/70 text-[10px] font-mono">
+              Apuestas contra el sistema. El multiplicador se calcula del estado live de la partida — apostar al favorito da menos, al underdog da más. Bets en el último minuto del juego se refundan.
+            </p>
+            <p v-else class="text-cyan-300/70 text-[10px] font-mono">
+              Apuestas P2P 1:1 vía link. Otro user acepta el lado contrario.
+            </p>
+
+            <p class="text-white/40 text-[10px] font-mono tracking-widest">{{ $t('bets.bet_on').toUpperCase() }}</p>
             <div class="grid grid-cols-2 gap-2">
               <button @click="side = 'blue'"
                 :class="side === 'blue' ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-900/50' : 'bg-blue-950/30 border-blue-500/30 text-blue-300/70 hover:border-blue-400/60'"
@@ -69,6 +89,7 @@
                   <option value="deaths">💀 Deaths</option>
                   <option value="assists">🤝 Assists</option>
                   <option value="kda">📈 KDA</option>
+                  <option value="tumor_score">☢ Tumor Score</option>
                 </select>
               </div>
               <div>
@@ -134,10 +155,15 @@
         <div v-else-if="mode === 'created'" class="p-5 space-y-4">
           <div class="bg-green-950/40 border border-green-500/40 rounded-xl p-4 text-center">
             <p class="text-green-300 text-sm font-mono font-bold">✓ {{ $t('bets.bet_created') }}</p>
-            <p class="text-white/60 text-xs font-mono mt-1">{{ createdBet?.amount }} TC · {{ $t('bets.share_link_msg') }}</p>
+            <p class="text-white/60 text-xs font-mono mt-1">{{ createdBet?.amount }} TC</p>
+            <p v-if="createdBet?.is_house" class="text-purple-300 text-xs font-mono mt-1">
+              🎰 vs Sistema · multiplicador <span class="font-bold">x{{ createdBet?.payout_multiplier?.toFixed(2) }}</span>
+              · payout potencial <span class="text-yellow-300 font-bold">{{ Math.round(createdBet?.amount * createdBet?.payout_multiplier) }} TC</span>
+            </p>
+            <p v-else class="text-white/40 text-xs font-mono mt-1">{{ $t('bets.share_link_msg') }}</p>
           </div>
 
-          <div>
+          <div v-if="!createdBet?.is_house">
             <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">{{ $t('bets.share_code').toUpperCase() }}</p>
             <div class="flex items-center gap-2">
               <code class="flex-1 bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-yellow-300 font-mono text-xl tracking-widest text-center">{{ createdBet?.share_code }}</code>
@@ -209,9 +235,10 @@ const auth = inject<any>('auth')
 const { t } = useI18n()
 
 type BetKind = 'match' | 'stat'
-type StatType = 'kills' | 'deaths' | 'assists' | 'kda'
+type StatType = 'kills' | 'deaths' | 'assists' | 'kda' | 'tumor_score'
 
 const betKind = ref<BetKind>('match')
+const isHouse = ref<boolean>(false)
 const side = ref<'blue' | 'red' | ''>('')
 const overUnder = ref<'over' | 'under' | ''>('')
 const targetPuuid = ref<string>('')
@@ -244,6 +271,7 @@ const shareLink = computed(() => {
 watch(() => props.show, v => {
   if (v) {
     betKind.value = 'match'
+    isHouse.value = false
     side.value = ''
     overUnder.value = ''
     targetPuuid.value = ''
@@ -261,6 +289,7 @@ watch(statType, (s) => {
   if (s === 'kills' || s === 'assists') threshold.value = 7
   else if (s === 'deaths') threshold.value = 6
   else if (s === 'kda') threshold.value = 2.5
+  else if (s === 'tumor_score') threshold.value = 70
 })
 
 async function onCreate() {
@@ -271,7 +300,7 @@ async function onCreate() {
     let bet
     if (betKind.value === 'match') {
       if (!side.value) throw new Error('Elige un lado')
-      bet = await auth.createBet(props.matchId, props.gameId, side.value, amount.value)
+      bet = await auth.createBet(props.matchId, props.gameId, side.value, amount.value, isHouse.value)
     } else {
       if (!canCreateStat.value) throw new Error('Completa los campos de la apuesta')
       bet = await auth.createStatBet({

@@ -92,10 +92,10 @@ async function authedFetch(path: string, init?: RequestInit) {
   return fetch(`${API_BASE}${path}`, { ...init, headers })
 }
 
-async function createBet(matchId: string, gameId: number | undefined, side: 'blue' | 'red', amount: number) {
+async function createBet(matchId: string, gameId: number | undefined, side: 'blue' | 'red', amount: number, isHouse = false) {
   const res = await authedFetch('/bets/create', {
     method: 'POST',
-    body: JSON.stringify({ match_id: matchId, game_id: gameId, side, amount }),
+    body: JSON.stringify({ match_id: matchId, game_id: gameId, side, amount, is_house: isHouse }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Error')
@@ -182,18 +182,65 @@ async function fetchClusters(k = 4) {
 
 // 1v1 Challenges
 async function createChallenge(opts: {
-  statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage'
+  statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage' | 'tumor_score'
   amount: number
   comparison?: 'higher_wins' | 'lower_wins'
+  format?: 'single' | 'bo3' | 'bo5' | 'bo10'
 }) {
   const res = await authedFetch('/challenges/create', {
     method: 'POST',
-    body: JSON.stringify({ stat_type: opts.statType, amount: opts.amount, comparison: opts.comparison }),
+    body: JSON.stringify({
+      stat_type: opts.statType,
+      amount: opts.amount,
+      comparison: opts.comparison,
+      format: opts.format || 'single',
+    }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || 'Error')
   await refreshBalance()
   return data
+}
+
+// Room bets (item #4)
+async function createRoomBet(roomCode: string, stake: number, ttlHours = 24) {
+  const res = await authedFetch(`/rooms/${roomCode}/bets/create`, {
+    method: 'POST',
+    body: JSON.stringify({ stake, ttl_hours: ttlHours }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function joinRoomBet(roomCode: string, rbid: number) {
+  const res = await authedFetch(`/rooms/${roomCode}/bets/${rbid}/join`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function startRoomBet(roomCode: string, rbid: number) {
+  const res = await authedFetch(`/rooms/${roomCode}/bets/${rbid}/start`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  return data
+}
+
+async function cancelRoomBet(roomCode: string, rbid: number) {
+  const res = await authedFetch(`/rooms/${roomCode}/bets/${rbid}/cancel`, { method: 'POST' })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
+async function fetchRoomBets(roomCode: string) {
+  const res = await fetch(`${API_BASE}/rooms/${roomCode}/bets`)
+  if (!res.ok) return []
+  return await res.json()
 }
 
 async function acceptChallenge(shareCode: string) {
@@ -406,6 +453,11 @@ export function useAuth() {
     submitChallengeMatch,
     fetchOpenChallenges,
     fetchMyChallenges,
+    createRoomBet,
+    joinRoomBet,
+    startRoomBet,
+    cancelRoomBet,
+    fetchRoomBets,
     fetchFriends,
     addFriend,
     acceptFriend,
