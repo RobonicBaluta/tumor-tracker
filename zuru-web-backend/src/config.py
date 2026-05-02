@@ -73,4 +73,47 @@ CHAMPION_MASTERY_URL = f"{RIOT_PLATFORM_URL}/lol/champion-mastery/v4/champion-ma
 # Configuración de query
 MATCHES_COUNT = 20
 QUEUE_RANKED_SOLO = 420
+QUEUE_RANKED_FLEX = 440
 WORST_KDA_THRESHOLD = 1.0
+
+# Queues que admiten tumor scoring (5v5 con roles + tier MMR-based).
+# El resto cae al modo "raw stats" — sin tumor score, sin lane diff, sin priors.
+RANKED_QUEUES = {QUEUE_RANKED_SOLO, QUEUE_RANKED_FLEX}
+TUMOR_COMPATIBLE_QUEUES = RANKED_QUEUES  # mismo set por ahora
+
+# Queues donde se permiten apuestas (P2P + house) y challenges.
+BETTING_ALLOWED_QUEUES = RANKED_QUEUES
+
+# Display names (es) — el frontend tiene su propio i18n pero el backend
+# manda el queue_id y el front lo traduce. Aquí solo lo usamos para logs.
+QUEUE_DISPLAY = {
+    420: "SoloQ",
+    440: "Flex",
+    450: "ARAM",
+    400: "Normal Draft",
+    430: "Normal Blind",
+    700: "Clash",
+    830: "Co-op vs IA",
+    900: "URF",
+    1700: "Arena",
+    1900: "URF",
+    0: "Custom",
+}
+
+
+def queue_name(queue_id):
+    return QUEUE_DISPLAY.get(int(queue_id) if queue_id is not None else 0, f"Queue {queue_id}")
+
+
+def is_ranked_queue(queue_id):
+    try:
+        return int(queue_id) in RANKED_QUEUES
+    except Exception:
+        return False
+
+
+def allows_betting(queue_id):
+    try:
+        return int(queue_id) in BETTING_ALLOWED_QUEUES
+    except Exception:
+        return False
