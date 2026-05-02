@@ -138,9 +138,24 @@
             <!-- Crear challenge -->
             <div class="bg-black/30 border border-white/10 rounded-xl p-3 mb-4">
               <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">{{ $t('social.create') }}</p>
+              <!-- Format toggle -->
+              <div class="grid grid-cols-4 gap-1 mb-2">
+                <button v-for="f in ['single', 'bo3', 'bo5', 'bo10']" :key="f"
+                  @click="newChallengeFormat = f as any"
+                  :class="newChallengeFormat === f ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50' : 'bg-black/40 text-white/50 border-white/10 hover:text-white/80'"
+                  class="text-[10px] font-mono px-2 py-1 rounded border transition">
+                  {{ f === 'single' ? '1x' : f.toUpperCase() }}
+                </button>
+              </div>
+              <p class="text-white/30 text-[9px] font-mono mb-2">
+                {{ newChallengeFormat === 'single'
+                  ? 'Cada uno submitea 1 match manualmente.'
+                  : 'Background poller cuenta wins en ranked solo. Tiebreaker: menor tumor score acumulado. 7d max.' }}
+              </p>
               <div class="grid grid-cols-2 gap-2 mb-2">
                 <select v-model="newChallengeStat"
-                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
+                  :disabled="newChallengeFormat !== 'single'"
+                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none disabled:opacity-50">
                   <option value="kda">KDA</option>
                   <option value="kills">Kills</option>
                   <option value="deaths">Deaths ({{ $t('social.lower_wins_label') }})</option>
@@ -148,6 +163,7 @@
                   <option value="cs">CS</option>
                   <option value="gold">Gold</option>
                   <option value="damage">Damage</option>
+                  <option value="tumor_score">☢ Tumor Score</option>
                 </select>
                 <input type="number" v-model.number="newChallengeAmount" :min="10"
                   class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none"
@@ -155,7 +171,7 @@
               </div>
               <button @click="onCreateChallenge" :disabled="!newChallengeAmount || newChallengeAmount <= 0"
                 class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold text-xs px-3 py-1.5 rounded transition">
-                {{ $t('social.launch_challenge') }} · {{ newChallengeAmount }} TC
+                {{ $t('social.launch_challenge') }} · {{ newChallengeFormat.toUpperCase() }} · {{ newChallengeAmount }} TC
               </button>
               <p v-if="challengeError" class="text-red-400 text-[10px] font-mono mt-1.5">{{ challengeError }}</p>
             </div>
@@ -169,13 +185,23 @@
               <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.my_challenges') }}</p>
               <div v-for="c in myChallenges" :key="c.id"
                 class="bg-black/30 border border-white/10 rounded-lg px-3 py-2">
-                <div class="flex items-center gap-2 text-xs font-mono">
+                <div class="flex items-center gap-2 text-xs font-mono flex-wrap">
                   <code class="text-yellow-300">{{ c.share_code }}</code>
+                  <span v-if="c.format && c.format !== 'single'"
+                    class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300 border border-purple-500/40">
+                    {{ c.format.toUpperCase() }}
+                  </span>
                   <span class="text-purple-300 font-bold">{{ c.stat_type }}</span>
                   <span class="text-white/40">·</span>
                   <span class="text-yellow-300">{{ c.amount }} TC</span>
                   <span class="text-white/40 ml-auto text-[10px] uppercase">{{ c.status }}</span>
                 </div>
+                <p v-if="c.format && c.format !== 'single' && (c.challenger_wins || c.challenged_wins)"
+                  class="text-white/60 text-[10px] font-mono mt-0.5">
+                  Score: <span class="text-cyan-300">{{ c.challenger_wins }}</span>
+                  - <span class="text-pink-300">{{ c.challenged_wins }}</span>
+                  · meta {{ c.matches_required }}
+                </p>
                 <p class="text-white/50 text-[11px] font-mono mt-1">
                   <span :class="c.challenger_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
                     {{ c.challenger?.username || '?' }}
@@ -387,8 +413,9 @@ const myChallenges = ref<any[]>([])
 const openChallenges = ref<any[]>([])
 const challengesLoading = ref(false)
 const challengeError = ref('')
-const newChallengeStat = ref<'kills'|'deaths'|'assists'|'kda'|'cs'|'gold'|'damage'>('kda')
+const newChallengeStat = ref<'kills'|'deaths'|'assists'|'kda'|'cs'|'gold'|'damage'|'tumor_score'>('kda')
 const newChallengeAmount = ref(50)
+const newChallengeFormat = ref<'single'|'bo3'|'bo5'|'bo10'>('single')
 const submittingMatchFor = ref('')   // share_code currently submitting
 const matchIdInput = ref('')
 const openBets = ref<any[]>([])
@@ -440,6 +467,7 @@ async function onCreateChallenge() {
     await auth.createChallenge({
       statType: newChallengeStat.value,
       amount: newChallengeAmount.value,
+      format: newChallengeFormat.value,
     })
     await loadChallenges()
   } catch (e: any) {
