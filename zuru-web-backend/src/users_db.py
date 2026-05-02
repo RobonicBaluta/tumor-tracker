@@ -886,14 +886,46 @@ def resolve_stat_bet(bet_id, actual_value):
             add_currency(bet["taker_user_id"], bet["amount"], f"bet push refund · {bet['share_code']}")
         return get_bet_by_id(bet_id)
 
+    winner_side_label = bet["creator_side"] if creator_won else ("over" if bet["creator_side"] == "under" else "under")
+    is_house = bool(bet.get("is_house"))
+    multiplier = bet.get("payout_multiplier") or 2.0
+
+    if is_house:
+        # Vs sistema: solo creator. Payout = amount * multiplier si gana, 0 si no.
+        payout = int(round(bet["amount"] * multiplier)) if creator_won else 0
+        if creator_won:
+            add_currency(bet["creator_user_id"], payout, f"house stat bet won · {bet['share_code']}")
+        _exec(
+            "UPDATE bets SET status='resolved', winner_side=?, resolved_at=?, stat_actual=? WHERE id=?",
+            (winner_side_label, time.time(), float(actual_value), bet_id),
+        )
+        try:
+            if creator_won:
+                push_notification(
+                    user_id=bet["creator_user_id"], notif_type="bet_won",
+                    title=f"Ganaste {payout} TC (x{multiplier:.2f})",
+                    body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']}",
+                    link="#/bets", icon="✅",
+                )
+            else:
+                push_notification(
+                    user_id=bet["creator_user_id"], notif_type="bet_lost",
+                    title=f"Perdiste {bet['amount']} TC",
+                    body=f"{bet['target_name'] or '?'} hizo {actual_value} {bet['stat_type']} (target {bet['threshold']})",
+                    link="#/bets", icon="❌",
+                )
+            evaluate_achievements(bet["creator_user_id"])
+        except Exception:
+            pass
+        return get_bet_by_id(bet_id)
+
+    # P2P clásico: winner toma el doble del stake del taker
     winner_user_id = bet["creator_user_id"] if creator_won else bet["taker_user_id"]
     loser_user_id = bet["taker_user_id"] if creator_won else bet["creator_user_id"]
     if winner_user_id is None:
         return None
     payout = bet["amount"] * 2
     add_currency(winner_user_id, payout, f"stat bet won · {bet['share_code']}")
-    # Para stat bets, winner_side contiene 'over'|'under' del lado ganador.
-    winner_side_label = bet["creator_side"] if creator_won else ("over" if bet["creator_side"] == "under" else "under")
     _exec(
         "UPDATE bets SET status='resolved', winner_side=?, resolved_at=?, stat_actual=? WHERE id=?",
         (winner_side_label, time.time(), float(actual_value), bet_id),

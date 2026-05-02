@@ -103,6 +103,18 @@ async function createBet(matchId: string, gameId: number | undefined, side: 'blu
   return data
 }
 
+// One-click "este jugador será sus" — house bet con multiplicador por tier
+async function placePlayerBet(matchId: string, targetPuuid: string, targetName: string, amount: number) {
+  const res = await authedFetch('/bets/player', {
+    method: 'POST',
+    body: JSON.stringify({ match_id: matchId, target_puuid: targetPuuid, target_name: targetName, amount }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error')
+  await refreshBalance()
+  return data
+}
+
 async function createStatBet(opts: {
   matchId: string
   gameId?: number
@@ -177,6 +189,16 @@ async function fetchLeaderboard(kind: 'currency' | 'bets' | 'accuracy') {
 async function fetchClusters(k = 4) {
   const res = await fetch(`${API_BASE}/analytics/clusters?k=${k}`)
   if (!res.ok) return { clusters: [], n: 0, k }
+  return await res.json()
+}
+
+async function fetchDeathHeatmap(gameName: string, tagLine: string, count = 10, queue = 420) {
+  const params = new URLSearchParams({
+    game_name: gameName, tag_line: tagLine,
+    count: String(count), queue: String(queue),
+  })
+  const res = await fetch(`${API_BASE}/analytics/death-heatmap?${params}`)
+  if (!res.ok) return null
   return await res.json()
 }
 
@@ -440,6 +462,7 @@ export function useAuth() {
     handleAuthRedirect,
     createBet,
     createStatBet,
+    placePlayerBet,
     acceptBet,
     cancelBet,
     fetchBet,
@@ -447,6 +470,7 @@ export function useAuth() {
     fetchOpenBets,
     fetchLeaderboard,
     fetchClusters,
+    fetchDeathHeatmap,
     createChallenge,
     acceptChallenge,
     cancelChallenge,
