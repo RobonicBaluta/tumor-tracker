@@ -826,8 +826,43 @@
               </div>
             </div>
 
-            <!-- Win prediction · tumor de equipo en escala 0-100 (menor = mejor) -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 items-center">
+            <!-- Arena (1700): 8 duos en grid 4x2, cada duo con su prior medio -->
+            <div v-if="isArena && arenaSubteams.length" class="mb-4">
+              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">⚔ ARENA · 8 DUOS</p>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div v-for="st in arenaSubteams" :key="st.subteam_id"
+                  class="bg-black/30 border border-white/10 rounded-lg p-2"
+                  :class="(st.members || []).some(m => m.is_me) ? 'border-yellow-500/50 bg-yellow-900/10' : ''">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-white/40 text-[9px] font-mono tracking-widest">DUO #{{ st.subteam_id }}</span>
+                    <span v-if="st.avg_prior !== null" :class="tumorColor(st.avg_prior)"
+                      class="text-sm font-mono font-bold">{{ st.avg_prior }}</span>
+                    <span v-else class="text-white/20 text-[10px] font-mono">—</span>
+                  </div>
+                  <div class="space-y-1">
+                    <div v-for="m in st.members" :key="m.puuid"
+                      class="flex items-center gap-1.5 text-[10px] font-mono">
+                      <img v-if="m.champion_id"
+                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${m.champion_name}.png`"
+                        class="w-5 h-5 rounded shrink-0" />
+                      <span :class="m.is_me ? 'text-yellow-300 font-bold' : 'text-white/70'" class="truncate flex-1 min-w-0">
+                        {{ m.nombre.split('#')[0] }}
+                      </span>
+                      <span v-if="m.avg_tumor_score !== null" :class="tumorColor(m.avg_tumor_score)" class="font-bold">{{ m.avg_tumor_score }}</span>
+                      <span v-else class="text-white/20">?</span>
+                      <span v-if="m.is_tilted" title="Tilteado">🌋</span>
+                      <span v-if="m.is_hotstreak" title="Hot streak">🔥</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="text-white/30 text-[10px] font-mono italic mt-2 text-center">
+                Cada número es el tumor prior individual del jugador. Sin predicción de ganador en Arena (8 duos free-for-all).
+              </p>
+            </div>
+
+            <!-- Win prediction · tumor de equipo en escala 0-100 (menor = mejor) — solo 5v5 -->
+            <div v-else-if="hasPrediction" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 items-center">
               <div class="bg-blue-950/40 border rounded-xl px-4 py-3 text-center"
                 :class="livePrediction.winner === 'blue' ? 'border-blue-400/70 shadow-lg shadow-blue-500/20' : 'border-blue-500/20'">
                 <p class="text-blue-400 text-[10px] font-mono tracking-widest">EQUIPO AZUL</p>
@@ -849,6 +884,13 @@
                 <p :class="tumorColor(livePrediction.redTumor)" class="text-3xl font-mono font-black mt-1">{{ livePrediction.redTumor }}</p>
                 <p class="text-red-300/60 text-[9px] font-mono">tumor de equipo</p>
               </div>
+            </div>
+
+            <!-- ARAM / otros queues: mensaje informativo, sin predicción -->
+            <div v-else class="mb-4 bg-black/20 border border-white/10 rounded-xl p-3 text-center">
+              <p class="text-white/50 text-xs font-mono">
+                Queue {{ liveGame?.queue_id }} no tiene predicción de tumor de equipo. Mira los priors individuales abajo.
+              </p>
             </div>
 
             <!-- Resolve prediction (comprobar resultado) -->
@@ -909,7 +951,7 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div v-if="!isArena" class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <!-- Blue team -->
               <div>
                 <p class="text-blue-400 text-[11px] font-mono font-bold mb-2 tracking-widest">EQUIPO AZUL</p>
@@ -2304,6 +2346,14 @@ interface Prediction {
   blue_breakdown: PlayerBreakdown[]
   red_breakdown: PlayerBreakdown[]
 }
+interface ArenaSubteam {
+  subteam_id: number
+  members: LivePlayer[]
+  avg_prior: number | null
+  any_tilted: boolean
+  any_hotstreak: boolean
+}
+
 interface LiveGame {
   game_id: number
   match_id: string
@@ -2311,7 +2361,9 @@ interface LiveGame {
   viewer_puuid?: string
   players: LivePlayer[]
   bans?: BanInfo[]
-  prediction?: Prediction
+  prediction?: Prediction | null
+  is_predictable_5v5?: boolean
+  arena_subteams?: ArenaSubteam[] | null
 }
 
 interface EvolutionPoint { date: number; tumor: number; win: boolean; champion: string; kda: number }
@@ -2630,6 +2682,11 @@ const livePrediction = computed(() => {
     confidence: p.confidence,
   }
 })
+
+// Si el queue es Arena (1700) o cualquier no-5v5, no hay predicción de equipo.
+const hasPrediction = computed(() => !!liveGame.value?.prediction)
+const isArena = computed(() => liveGame.value?.queue_id === 1700)
+const arenaSubteams = computed(() => liveGame.value?.arena_subteams || [])
 
 const liveLoading = ref(false)
 const liveError = ref('')

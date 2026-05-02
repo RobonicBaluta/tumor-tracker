@@ -1505,6 +1505,8 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             "nombre": riot_id,
             "champion_id": champ_id,
             "team_id": p.get("teamId"),
+            # Arena: 8 duos identificados por playerSubteamId (1-8). Para 5v5 esto es None.
+            "subteam_id": p.get("playerSubteamId"),
             "role": (profile.get("likely_role") if profile else "") or (
                 "JUNGLE" if p.get("spell1Id") == 11 or p.get("spell2Id") == 11 else ""
             ),
@@ -1656,11 +1658,37 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
                 "pick_turn": b.get("pickTurn"),
             })
 
-    # Nueva predicción (role-weighted + volume-weighted + elo-normalized)
-    prediction = predict_team_outcome(players)
-
     game_id = game.get("gameId")
     queue_id = game.get("gameQueueConfigId")
+
+    # Predicción 5v5 solo aplica a SoloQ + Flex. En ARAM (450) y Arena (1700)
+    # el motor de tumor con role-weights + medianas no tiene sentido.
+    is_predictable_5v5 = is_ranked_queue(queue_id)
+    if is_predictable_5v5:
+        prediction = predict_team_outcome(players)
+    else:
+        prediction = None
+
+    # Arena (queue 1700): agrupa players por playerSubteamId para que el frontend
+    # pueda renderizar 8 duos de 2.
+    arena_subteams = None
+    if queue_id == 1700:
+        groups = {}
+        for p in players:
+            sid = p.get("subteam_id") or 0
+            groups.setdefault(sid, []).append(p)
+        arena_subteams = []
+        for sid in sorted(groups.keys()):
+            members = groups[sid]
+            priors = [m.get("avg_tumor_score") for m in members if m.get("avg_tumor_score") is not None]
+            avg_prior = round(sum(priors) / len(priors), 1) if priors else None
+            arena_subteams.append({
+                "subteam_id": sid,
+                "members": members,
+                "avg_prior": avg_prior,
+                "any_tilted": any(m.get("is_tilted") for m in members),
+                "any_hotstreak": any(m.get("is_hotstreak") for m in members),
+            })
     # Derivar platform ID del host detectado (e.g. "https://eun1.api..." → "EUN1")
     platform = game.get("platformId") or ""
     if not platform:
@@ -1675,54 +1703,57 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
     me = next((p for p in players if p["is_me"]), None)
     viewer_team = "blue" if (me and me["team_id"] == 100) else "red" if me else None
 
-    try:
-        predictions_add({
-            "match_id": match_id,
-            "game_id": game_id,
-            "viewer_puuid": me_puuid,
-            "viewer_name": f"{game_name}#{tag_line}",
-            "viewer_team": viewer_team,
-            "blue_sum": prediction["blue_team_tumor"],
-            "red_sum": prediction["red_team_tumor"],
-            "blue_score": prediction["blue_team_tumor"],
-            "red_score": prediction["red_team_tumor"],
-            "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
-            "confidence": prediction["confidence"],
-            "created_at": now,
-        })
-    except Exception:
-        pass
+    # Logging de predicción solo aplica cuando hay predicción (5v5 ranked)
+    if prediction is not None:
+        try:
+            predictions_add({
+                "match_id": match_id,
+                "game_id": game_id,
+                "viewer_puuid": me_puuid,
+                "viewer_name": f"{game_name}#{tag_line}",
+                "viewer_team": viewer_team,
+                "blue_sum": prediction["blue_team_tumor"],
+                "red_sum": prediction["red_team_tumor"],
+                "blue_score": prediction["blue_team_tumor"],
+                "red_score": prediction["red_team_tumor"],
+                "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
+                "confidence": prediction["confidence"],
+                "created_at": now,
+            })
+        except Exception:
+            pass
 
-    # Log detallado para afinación empírica
-    try:
-        blue_players = [p for p in players if p.get("team_id") == 100]
-        red_players  = [p for p in players if p.get("team_id") == 200]
-        blue_priors = [p.get("avg_tumor_score") for p in blue_players]
-        red_priors  = [p.get("avg_tumor_score") for p in red_players]
-        median_diff = (prediction.get("red_team_tumor", 0) or 0) - (prediction.get("blue_team_tumor", 0) or 0)
-        sum_diff_raw = (prediction.get("red_team_sum", 0) or 0) - (prediction.get("blue_team_sum", 0) or 0)
-        log_prediction({
-            "match_id": match_id,
-            "viewer_puuid": me_puuid,
-            "created_at": now,
-            "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
-            "confidence": prediction["confidence"],
-            "blue_team_tumor": prediction["blue_team_tumor"],
-            "red_team_tumor":  prediction["red_team_tumor"],
-            "blue_team_sum":   prediction.get("blue_team_sum"),
-            "red_team_sum":    prediction.get("red_team_sum"),
-            "median_diff":     median_diff,
-            "sum_diff":        sum_diff_raw,
-            "used_sum_tiebreaker": abs(median_diff) < 4 and prediction["winner"] != "tie",
-            "blue_priors": blue_priors,
-            "red_priors":  red_priors,
-            "blue_roles":  [p.get("role") or "" for p in blue_players],
-            "red_roles":   [p.get("role") or "" for p in red_players],
-            "blue_streamers": sum(1 for p in blue_players if p.get("streamer_mode")),
-            "red_streamers":  sum(1 for p in red_players  if p.get("streamer_mode")),
-        })
-    except Exception:
-        pass
+    # Log detallado para afinación empírica (solo 5v5)
+    if prediction is not None:
+        try:
+            blue_players = [p for p in players if p.get("team_id") == 100]
+            red_players  = [p for p in players if p.get("team_id") == 200]
+            blue_priors = [p.get("avg_tumor_score") for p in blue_players]
+            red_priors  = [p.get("avg_tumor_score") for p in red_players]
+            median_diff = (prediction.get("red_team_tumor", 0) or 0) - (prediction.get("blue_team_tumor", 0) or 0)
+            sum_diff_raw = (prediction.get("red_team_sum", 0) or 0) - (prediction.get("blue_team_sum", 0) or 0)
+            log_prediction({
+                "match_id": match_id,
+                "viewer_puuid": me_puuid,
+                "created_at": now,
+                "predicted_winner": prediction["winner"] if prediction["winner"] != "tie" else None,
+                "confidence": prediction["confidence"],
+                "blue_team_tumor": prediction["blue_team_tumor"],
+                "red_team_tumor":  prediction["red_team_tumor"],
+                "blue_team_sum":   prediction.get("blue_team_sum"),
+                "red_team_sum":    prediction.get("red_team_sum"),
+                "median_diff":     median_diff,
+                "sum_diff":        sum_diff_raw,
+                "used_sum_tiebreaker": abs(median_diff) < 4 and prediction["winner"] != "tie",
+                "blue_priors": blue_priors,
+                "red_priors":  red_priors,
+                "blue_roles":  [p.get("role") or "" for p in blue_players],
+                "red_roles":   [p.get("role") or "" for p in red_players],
+                "blue_streamers": sum(1 for p in blue_players if p.get("streamer_mode")),
+                "red_streamers":  sum(1 for p in red_players  if p.get("streamer_mode")),
+            })
+        except Exception:
+            pass
 
     step("Listo", progress=total_players, total=total_players)
 
@@ -1734,6 +1765,8 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
         "players": players,
         "bans": bans,
         "prediction": prediction,
+        "is_predictable_5v5": is_predictable_5v5,
+        "arena_subteams": arena_subteams,
     }
 
     # Persistir snapshot: priors + predicción para reutilizar en matchDetail.
