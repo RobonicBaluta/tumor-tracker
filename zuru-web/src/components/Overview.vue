@@ -1014,11 +1014,21 @@
                         </p>
                       </div>
                     </div>
-                    <div class="text-right">
+                    <div class="text-right flex flex-col items-end gap-0.5">
                       <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
                         {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
                       </p>
-                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <p class="text-white/30 text-[9px] font-mono">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <button v-if="canBetPlayer(p)" @click.stop="openPlayerBet(p)"
+                        class="text-[10px] mt-0.5 px-1.5 py-0.5 rounded border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/20 hover:border-yellow-400/70 transition font-mono"
+                        title="Apostar a que este jugador será sus">
+                        🎯 apostar
+                      </button>
+                      <span v-else-if="!p.is_me && existingPlayerBet && existingPlayerBet.target_puuid === p.puuid"
+                        class="text-[9px] text-yellow-400 font-mono italic"
+                        title="Ya apostaste a este jugador">
+                        🎯 apostado
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1086,11 +1096,21 @@
                         </p>
                       </div>
                     </div>
-                    <div class="text-right">
+                    <div class="text-right flex flex-col items-end gap-0.5">
                       <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
                         {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
                       </p>
-                      <p class="text-white/30 text-[9px] font-mono mt-0.5">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <p class="text-white/30 text-[9px] font-mono">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
+                      <button v-if="canBetPlayer(p)" @click.stop="openPlayerBet(p)"
+                        class="text-[10px] mt-0.5 px-1.5 py-0.5 rounded border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/20 hover:border-yellow-400/70 transition font-mono"
+                        title="Apostar a que este jugador será sus">
+                        🎯 apostar
+                      </button>
+                      <span v-else-if="!p.is_me && existingPlayerBet && existingPlayerBet.target_puuid === p.puuid"
+                        class="text-[9px] text-yellow-400 font-mono italic"
+                        title="Ya apostaste a este jugador">
+                        🎯 apostado
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1402,29 +1422,64 @@
             </section>
 
             <!-- Heatmap de roles -->
+            <!-- Role combo heatmap removed: tabla de correlación rol × rol no aportaba
+                 mucho. Se mantiene la data en el backend; si la queremos otra vez,
+                 descomentar este bloque. -->
+            <!--
             <section v-if="analyticsData.role_combo_stats.length">
               <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🎯 COMBOS DE ROLES (TÚ × COMPAÑERO)</p>
-              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
-                <p class="text-white/30 text-[9px] font-mono mb-2">Filas = tu rol · Columnas = rol del compañero</p>
-                <table class="mx-auto text-[11px] font-mono border-separate border-spacing-1">
-                  <thead>
-                    <tr>
-                      <th class="w-12"></th>
-                      <th v-for="r in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="r"
-                        class="text-white/40 font-bold w-14 h-7 text-center">{{ r.slice(0,3) }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="my in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="my">
-                      <td class="text-white/40 font-bold w-12 text-right pr-2">{{ my.slice(0,3) }}</td>
-                      <td v-for="other in ['TOP','JUNGLE','MIDDLE','BOTTOM','UTILITY']" :key="other"
-                        class="w-14 h-10 text-center rounded font-bold" :style="heatmapCellStyle(my, other)">
-                        {{ heatmapCellText(my, other) }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              ... (oculto)
+            </section>
+            -->
+
+            <!-- Death heatmap (SR únicamente) -->
+            <section>
+              <div class="flex items-center justify-between mb-3">
+                <p class="text-white/30 text-[10px] font-mono tracking-widest">💀 HEATMAP DE MUERTES (SR)</p>
+                <button @click="loadDeathHeatmap" :disabled="heatmapLoading"
+                  class="text-[11px] font-mono px-2.5 py-1 border border-red-500/40 text-red-300 hover:border-red-400/80 rounded disabled:opacity-40">
+                  {{ heatmapLoading ? 'Procesando...' : (heatmapData ? 'Recargar' : 'Cargar últimas 10') }}
+                </button>
               </div>
+              <div v-if="heatmapData" class="bg-black/30 border border-white/10 rounded-xl p-3">
+                <p class="text-white/50 text-[10px] font-mono mb-2">
+                  {{ heatmapData.total_deaths }} muertes en {{ heatmapData.matches_processed }} partidas. Más rojo = más muertes en esa zona.
+                </p>
+                <div class="relative mx-auto rounded-lg overflow-hidden" style="max-width: 480px; aspect-ratio: 1 / 1;">
+                  <!-- Background SR shape: blue base bottom-left, red base top-right, jungle middle.
+                       No relying on external images — gradient + lane lines via CSS. -->
+                  <div class="absolute inset-0"
+                    style="background:
+                      radial-gradient(circle at 8% 92%, rgba(59,130,246,0.20) 0%, transparent 18%),
+                      radial-gradient(circle at 92% 8%, rgba(239,68,68,0.20) 0%, transparent 18%),
+                      linear-gradient(135deg, #1a2e3a 0%, #0f1f2a 50%, #2a1a1a 100%);"></div>
+                  <!-- Three lanes -->
+                  <svg class="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <!-- Top lane: top-left corner along the top + right side -->
+                    <path d="M 5,20 L 5,5 L 80,5 L 80,15" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
+                    <!-- Bot lane: bottom-left along bottom + right -->
+                    <path d="M 20,95 L 95,95 L 95,80" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
+                    <!-- Mid lane: diagonal -->
+                    <path d="M 12,88 L 88,12" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
+                    <!-- River: top-right to bottom-left perpendicular to mid -->
+                    <path d="M 70,30 Q 50,50 30,70" fill="none" stroke="rgba(56,189,248,0.18)" stroke-width="2" />
+                  </svg>
+                  <!-- Lane labels (subtle) -->
+                  <div class="absolute top-1 left-3 text-[9px] font-mono text-white/30">TOP</div>
+                  <div class="absolute bottom-1 right-3 text-[9px] font-mono text-white/30">BOT</div>
+                  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-mono text-white/20 rotate-[-45deg]">MID</div>
+                  <div class="absolute bottom-2 left-3 text-[9px] font-mono text-blue-400/50">BLUE</div>
+                  <div class="absolute top-2 right-3 text-[9px] font-mono text-red-400/50">RED</div>
+                  <!-- Heatmap canvas overlay -->
+                  <canvas ref="heatmapCanvas" class="absolute inset-0 w-full h-full pointer-events-none" />
+                </div>
+                <p v-if="!heatmapData.total_deaths" class="text-white/40 text-xs font-mono italic text-center mt-2">
+                  Sin muertes en las últimas {{ heatmapData.matches_processed }} partidas. Bien jugado 👀
+                </p>
+              </div>
+              <p v-else class="text-white/30 font-mono text-xs">
+                Pulsa cargar para ver dónde mueres más en el mapa. Solo SR ranked (SoloQ/Flex), las últimas 10 partidas.
+              </p>
             </section>
 
             <!-- Champion pool -->
@@ -1518,6 +1573,76 @@
       @close="betModalShow = false"
       @refresh="onBetRefresh"
     />
+
+    <!-- Player bet confirm overlay (one-click vs sistema) -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="playerBetState" class="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          @click.self="closePlayerBet">
+          <div class="bg-[#0d1b2a] border border-yellow-500/40 rounded-2xl shadow-2xl w-full max-w-sm">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
+                <span>🎯</span><span>Apostar al tumor</span>
+              </p>
+              <button @click="closePlayerBet" class="text-white/40 hover:text-white text-xl">✕</button>
+            </div>
+
+            <!-- Confirmación pre-bet -->
+            <div v-if="!playerBetState.result" class="p-5 space-y-4">
+              <div class="bg-black/30 border border-white/10 rounded-xl p-3 text-center">
+                <img v-if="playerBetState.target.champion_name"
+                  :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${playerBetState.target.champion_name}.png`"
+                  class="w-12 h-12 rounded-lg mx-auto mb-2" />
+                <p class="text-white text-sm font-mono font-bold">{{ playerBetState.target.nombre }}</p>
+                <p class="text-white/50 text-[11px] font-mono">{{ playerBetState.target.tier }} {{ playerBetState.target.division }}
+                  · prior <span :class="tumorColor(playerBetState.target.avg_tumor_score ?? 0)">{{ playerBetState.target.avg_tumor_score ?? '?' }}</span>
+                </p>
+              </div>
+              <p class="text-white/60 text-xs font-mono leading-relaxed">
+                Apuestas a que <span class="text-yellow-300 font-bold">{{ playerBetState.target.nombre.split('#')[0] }}</span> tendrá un
+                <span class="text-red-400 font-bold">tumor score &gt; 60</span> (será sus). El multiplicador
+                escala con su rango: cuanto mejor el rango, más payout (más sorprendente que caiga).
+              </p>
+              <div>
+                <p class="text-white/40 text-[10px] font-mono tracking-widest mb-1.5">STAKE TC</p>
+                <input type="number" v-model.number="playerBetState.amount" :min="10" :max="auth?.user?.value?.currency ?? 0"
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-lg focus:border-yellow-500/60 focus:outline-none" />
+                <div class="flex gap-1.5 mt-2">
+                  <button v-for="preset in [25, 50, 100, 250]" :key="preset"
+                    @click="playerBetState.amount = preset"
+                    class="text-[11px] font-mono px-2 py-1 border border-white/15 text-white/60 hover:text-white hover:border-white/30 rounded">
+                    {{ preset }}
+                  </button>
+                </div>
+              </div>
+              <p v-if="playerBetState.error" class="text-red-400 text-xs font-mono">{{ playerBetState.error }}</p>
+              <button @click="confirmPlayerBet" :disabled="playerBetState.loading || !playerBetState.amount || playerBetState.amount <= 0"
+                class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold px-4 py-3 rounded-lg transition">
+                {{ playerBetState.loading ? 'Apostando...' : `🎯 Apostar ${playerBetState.amount} TC` }}
+              </button>
+            </div>
+
+            <!-- Resultado post-bet -->
+            <div v-else class="p-5 space-y-4 text-center">
+              <p class="text-green-300 text-2xl">✓</p>
+              <p class="text-green-300 font-mono font-bold">¡Apuesta creada!</p>
+              <div class="bg-black/30 border border-yellow-500/30 rounded-xl p-3">
+                <p class="text-white/40 text-[10px] font-mono tracking-widest">MULTIPLICADOR</p>
+                <p class="text-yellow-300 text-3xl font-mono font-black mt-1">x{{ playerBetState.result.multiplier.toFixed(2) }}</p>
+                <p class="text-white/60 text-xs font-mono mt-1">
+                  Si {{ playerBetState.target.nombre.split('#')[0] }} es sus → ganas
+                  <span class="text-yellow-300 font-bold">{{ playerBetState.result.payout }} TC</span>
+                </p>
+              </div>
+              <button @click="closePlayerBet"
+                class="w-full bg-white/10 hover:bg-white/15 text-white font-mono px-4 py-2 rounded-lg transition">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
   </div>
 </template>
@@ -2558,7 +2683,9 @@ const evolutionAreaPath = computed(() => {
   return `${line} L${pts[pts.length - 1].x},160 L${pts[0].x},160 Z`
 })
 
-const heatmapCellStyle = (myRole: string, otherRole: string) => {
+// Heatmap helpers — la tabla se ocultó por petición del usuario, conservados
+// detrás de prefijo `_` por si re-habilitamos la sección en el futuro.
+const _heatmapCellStyle = (myRole: string, otherRole: string) => {
   const entry = analyticsData.value?.role_combo_stats.find(
     r => r.my_role === myRole && r.other_role === otherRole
   )
@@ -2573,14 +2700,16 @@ const heatmapCellStyle = (myRole: string, otherRole: string) => {
   const alpha = Math.min(0.6, 0.15 + (Math.abs(entry.winrate - 50) / 50) * 0.5)
   return { background: `hsla(${hue}, 70%, 40%, ${alpha})`, color: 'white' }
 }
+void _heatmapCellStyle
 
-const heatmapCellText = (myRole: string, otherRole: string) => {
+const _heatmapCellText = (myRole: string, otherRole: string) => {
   const entry = analyticsData.value?.role_combo_stats.find(
     r => r.my_role === myRole && r.other_role === otherRole
   )
   if (!entry) return '·'
   return `${entry.winrate}%`
 }
+void _heatmapCellText
 
 const championBlacklist = ref<string[]>([])
 
@@ -2606,6 +2735,144 @@ const toggleBlacklist = async (champion: string) => {
 
 const liveGame = ref<LiveGame | null>(null)
 const predictionStats = ref<{ total: number, correct: number, accuracy: number, pending: number } | null>(null)
+
+// Death heatmap (analytics) — usa Match v5 timeline para agregar posiciones
+// de muerte del usuario.
+const heatmapData = ref<{ total_deaths: number; matches_processed: number; deaths: Array<{ x: number; y: number }> } | null>(null)
+const heatmapLoading = ref(false)
+const heatmapCanvas = ref<HTMLCanvasElement | null>(null)
+
+async function loadDeathHeatmap() {
+  if (!summoner.value) return
+  heatmapLoading.value = true
+  try {
+    const [name, tag] = summoner.value.split('#')
+    const data = await auth.fetchDeathHeatmap(name, tag, 10, 420)
+    if (data) {
+      heatmapData.value = data
+      // Espera al next tick para que el canvas exista
+      await new Promise(r => setTimeout(r, 50))
+      drawHeatmap()
+    }
+  } finally {
+    heatmapLoading.value = false
+  }
+}
+
+function drawHeatmap() {
+  const canvas = heatmapCanvas.value
+  if (!canvas || !heatmapData.value) return
+  const rect = canvas.getBoundingClientRect()
+  canvas.width = rect.width
+  canvas.height = rect.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  const W = canvas.width
+  const H = canvas.height
+  const radius = Math.max(15, W * 0.04)
+
+  // Heatmap acumulativo: cada muerte deposita un gradiente radial
+  // y los píxeles se suman → escala de calor.
+  for (const d of heatmapData.value.deaths) {
+    // Riot's coords: (0,0) is bottom-left → flip y
+    const px = d.x * W
+    const py = (1 - d.y) * H
+    const grad = ctx.createRadialGradient(px, py, 0, px, py, radius)
+    grad.addColorStop(0, 'rgba(255, 60, 60, 0.55)')
+    grad.addColorStop(0.5, 'rgba(255, 100, 30, 0.25)')
+    grad.addColorStop(1, 'rgba(255, 200, 0, 0)')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.arc(px, py, radius, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+// Re-draw on resize
+onMounted(() => {
+  window.addEventListener('resize', drawHeatmap)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', drawHeatmap)
+})
+
+// Player-bet flow (one-click "este jugador será sus") — vs sistema, multiplicador
+// automático por tier. Solo 1 por match.
+const playerBetState = ref<{
+  target: LivePlayer
+  amount: number
+  loading: boolean
+  error: string
+  result: { multiplier: number; payout: number; share_code: string } | null
+} | null>(null)
+// Si tengo una player-bet activa en este match (bloquea las demás icons).
+const existingPlayerBet = ref<any | null>(null)
+
+const myUserIdLive = computed(() => auth?.user?.value?.id)
+function canBetPlayer(p: LivePlayer): boolean {
+  if (!isLiveQueueBettable.value) return false
+  if (p.is_me) return false
+  if (existingPlayerBet.value) return false
+  return true
+}
+
+function openPlayerBet(p: LivePlayer) {
+  if (!canBetPlayer(p)) return
+  playerBetState.value = { target: p, amount: 50, loading: false, error: '', result: null }
+}
+
+function closePlayerBet() {
+  playerBetState.value = null
+}
+
+async function confirmPlayerBet() {
+  const st = playerBetState.value
+  if (!st || !liveGame.value) return
+  st.loading = true
+  st.error = ''
+  try {
+    const bet = await auth.placePlayerBet(
+      liveGame.value.match_id,
+      st.target.puuid,
+      st.target.nombre,
+      st.amount,
+    )
+    existingPlayerBet.value = bet
+    st.result = {
+      multiplier: bet.payout_multiplier,
+      payout: Math.round(bet.amount * bet.payout_multiplier),
+      share_code: bet.share_code,
+    }
+  } catch (e: any) {
+    st.error = e?.message || 'Error'
+  } finally {
+    st.loading = false
+  }
+}
+
+async function checkExistingPlayerBet() {
+  if (!liveGame.value || !auth?.isLoggedIn?.value) {
+    existingPlayerBet.value = null
+    return
+  }
+  try {
+    const bets = await auth.fetchMyBets()
+    existingPlayerBet.value = bets.find((b: any) =>
+      b.match_id === liveGame.value!.match_id &&
+      b.bet_kind === 'stat' &&
+      b.creator_user_id === myUserIdLive.value &&
+      (b.status === 'open' || b.status === 'matched')
+    ) || null
+  } catch {
+    existingPlayerBet.value = null
+  }
+}
+
+watch(() => liveGame.value?.match_id, () => {
+  existingPlayerBet.value = null
+  checkExistingPlayerBet()
+})
 
 const fetchPredictionStats = async () => {
   try {

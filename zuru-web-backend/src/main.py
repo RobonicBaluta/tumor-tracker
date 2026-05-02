@@ -2183,6 +2183,121 @@ def _kmeans(points, k, max_iter=40, seed=42):
     return labels, centroids
 
 
+# ---------------------------------------------------------------------------
+# Death heatmap: agrega posiciones de muerte del jugador en sus últimas matches
+# ---------------------------------------------------------------------------
+
+# Summoner's Rift es ~ 14820 × 14881 unidades de juego. Lo normalizamos a [0,1].
+SR_MAP_SIZE = 14820.0
+
+
+def _get_timeline(match_id):
+    """Fetch match-v5 timeline con caché en Redis (7d TTL — timelines son inmutables)."""
+    try:
+        from redis_client import r_get_json, r_set_json
+        cached = r_get_json(f"timeline:{match_id}")
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
+    res = riot_get(f"{MATCH_DETAILS_URL}/{match_id}/timeline")
+    if res.status_code != 200:
+        return None
+    data = res.json()
+    try:
+        from redis_client import r_set_json
+        r_set_json(f"timeline:{match_id}", data, ttl=7 * 24 * 3600)
+    except Exception:
+        pass
+    return data
+
+
+@app.route('/analytics/death-heatmap', methods=['GET'])
+def analytics_death_heatmap():
+    """Agrega las posiciones de muerte del usuario en sus últimas N partidas
+    ranked (SR, mapa 11). Devuelve coords normalizadas [0,1].
+
+    Query params:
+      - game_name, tag_line: requeridos
+      - count: max 10 (default 10) — cada match consume 1 timeline call (Riot)
+      - queue: 420|440 (default 420)
+    """
+    game_name = request.args.get('game_name')
+    tag_line = request.args.get('tag_line')
+    if not game_name or not tag_line:
+        return jsonify({"error": "game_name + tag_line requeridos"}), 400
+    try:
+        count = max(1, min(10, int(request.args.get('count', 10))))
+    except Exception:
+        count = 10
+    queue = request.args.get('queue', '420')
+    try:
+        queue_int = int(queue)
+    except Exception:
+        queue_int = 420
+    if queue_int not in RANKED_QUEUES:
+        return jsonify({"error": "Heatmap solo en SoloQ/Flex"}), 400
+
+    acc = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}")
+    if acc.status_code != 200:
+        return jsonify({"error": "Cuenta no encontrada"}), 404
+    puuid = acc.json()["puuid"]
+
+    ids_res = riot_get(f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count={count}&queue={queue_int}")
+    if ids_res.status_code != 200:
+        return jsonify({"error": "No se pudieron listar partidas"}), 502
+    match_ids = ids_res.json() or []
+
+    deaths = []
+    matches_processed = 0
+    for mid in match_ids:
+        # Match details para resolver participantId del user
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
+        if mres.status_code != 200:
+            continue
+        info = mres.json().get("info", {})
+        if int(info.get("mapId", 0)) != 11:  # solo SR
+            continue
+        parts = info.get("participants", []) or []
+        # find user via puuid o riot_id (puuid rotation)
+        me = find_player_in_participants(parts, puuid, game_name, tag_line)
+        if not me:
+            continue
+        my_pid = me.get("participantId")
+        if not my_pid:
+            continue
+
+        timeline = _get_timeline(mid)
+        if not timeline:
+            continue
+        frames = timeline.get("info", {}).get("frames", []) or []
+        for frame in frames:
+            for ev in frame.get("events", []) or []:
+                if ev.get("type") != "CHAMPION_KILL":
+                    continue
+                if ev.get("victimId") != my_pid:
+                    continue
+                pos = ev.get("position") or {}
+                x = pos.get("x", 0)
+                y = pos.get("y", 0)
+                deaths.append({
+                    "x": round(x / SR_MAP_SIZE, 4),
+                    "y": round(y / SR_MAP_SIZE, 4),
+                    "match_id": mid,
+                    "timestamp_ms": ev.get("timestamp"),
+                    "killer_id": ev.get("killerId"),
+                })
+        matches_processed += 1
+
+    return jsonify({
+        "puuid": puuid,
+        "matches_processed": matches_processed,
+        "queue": queue_int,
+        "deaths": deaths,
+        "total_deaths": len(deaths),
+    })
+
+
 @app.route('/analytics/clusters', methods=['GET'])
 def analytics_clusters():
     """Cluster jugadores por estilo usando k-means sobre prior_tumor, recent_avg, win_rate, tilt/streak.
@@ -2993,6 +3108,50 @@ def _resolve_match_queue_id(match_id):
     return None
 
 
+TIER_MULTIPLIER = {
+    # Cuanto más alto el tier del jugador, más multiplicador da la apuesta de
+    # que será el peor (más sorprendente). Cuanto más bajo, menos paga porque
+    # es esperable que un Iron sea sus.
+    "IRON": 1.20, "BRONZE": 1.50, "SILVER": 1.80,
+    "GOLD": 2.20, "PLATINUM": 2.60, "EMERALD": 3.00,
+    "DIAMOND": 3.50, "MASTER": 4.00, "GRANDMASTER": 4.50, "CHALLENGER": 5.00,
+    "UNRANKED": 2.20, "": 2.20,
+}
+
+
+def _compute_player_bet_multiplier(target_puuid, match_id):
+    """Multiplicador para una apuesta house de "X será sus en este match".
+
+    Heurística:
+      base = TIER_MULTIPLIER[player_tier] (mejor rango → más payout, porque es
+        más sorprendente que el favorito caiga)
+      ajuste por prior: si el prior es bajo (<35) sube el multi (improbable),
+        si es alto (>65) baja (esperado).
+    """
+    try:
+        cache = load_live_cache()
+        snap = cache.get(match_id)
+        players = ((snap or {}).get("data") or {}).get("players") or []
+        target = next((p for p in players if p.get("puuid") == target_puuid), None)
+        if not target:
+            return 2.0
+        tier = (target.get("tier") or "UNRANKED").upper()
+        base = TIER_MULTIPLIER.get(tier, 2.2)
+        prior = target.get("avg_tumor_score")
+        if prior is None:
+            return round(max(1.05, min(6.0, base)), 2)
+        # Prior < 35 (jugador "limpio"): bonus +0.8 al multi (improbable que sea sus)
+        # Prior 35-65: neutral
+        # Prior > 65 (ya tumor): -0.5 (esperado, paga menos)
+        if prior < 35:
+            base += 0.8
+        elif prior > 65:
+            base -= 0.5
+        return round(max(1.05, min(6.0, base)), 2)
+    except Exception:
+        return 2.0
+
+
 def _compute_house_multiplier(match_id, side):
     """Item #2: multiplicador dinámico para house bets en partida live.
 
@@ -3080,14 +3239,77 @@ def bets_create():
             return jsonify({"error": "threshold inválido"}), 400
         if not target_puuid or stat_type not in _users.VALID_STAT_TYPES:
             return jsonify({"error": "stat_type inválido o falta target_puuid"}), 400
+        # No puedes apostar sobre ti mismo
+        if user.get("riot_puuid") and target_puuid == user["riot_puuid"]:
+            return jsonify({"error": "No puedes apostar sobre ti mismo"}), 400
+        mult = _compute_player_bet_multiplier(target_puuid, match_id) if is_house else 2.0
         bet = _users.create_bet(
             user["id"], match_id, game_id, side, amount,
             bet_kind="stat", target_puuid=target_puuid, target_name=target_name,
             stat_type=stat_type, threshold=threshold,
+            is_house=is_house, payout_multiplier=mult,
         )
     else:
         return jsonify({"error": "bet_kind inválido"}), 400
 
+    if not bet:
+        return jsonify({"error": "No se pudo crear la apuesta"}), 500
+    return jsonify(_augment_bet(bet))
+
+
+@app.route('/bets/player', methods=['POST'])
+def bets_player():
+    """Apuesta simple "este jugador será sus" — house mode, multiplicador
+    automático por tier + prior. Body: { match_id, target_puuid, target_name, amount }.
+
+    Restricciones:
+      - Solo en SoloQ/Flex (gating compartido).
+      - No puedes apostar sobre ti mismo.
+      - Solo 1 player-bet por match.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    match_id = data.get("match_id")
+    target_puuid = data.get("target_puuid")
+    target_name = data.get("target_name") or ""
+    try:
+        amount = int(data.get("amount", 0))
+    except Exception:
+        return jsonify({"error": "amount inválido"}), 400
+    if not match_id or not target_puuid or amount <= 0:
+        return jsonify({"error": "Faltan campos"}), 400
+    if amount > user["currency"]:
+        return jsonify({"error": "Saldo insuficiente"}), 400
+
+    queue_id = _resolve_match_queue_id(match_id)
+    if queue_id is not None and not allows_betting(queue_id):
+        return jsonify({"error": "Apuestas solo permitidas en SoloQ y Flex"}), 400
+
+    if user.get("riot_puuid") and target_puuid == user["riot_puuid"]:
+        return jsonify({"error": "No puedes apostar sobre ti mismo"}), 400
+
+    # 1 player-bet por match: ya existe stat bet de este user en este match?
+    existing = _users._exec(
+        """SELECT id FROM bets
+           WHERE creator_user_id=? AND match_id=? AND bet_kind='stat'
+           AND status IN ('open', 'matched')""",
+        (user["id"], match_id),
+    ).fetchone()
+    if existing:
+        return jsonify({"error": "Ya tienes una apuesta activa de jugador en este match"}), 400
+
+    # Multiplicador y threshold automáticos.
+    # Threshold = 60 (tumor score sus). Side = 'over'.
+    # El multiplicador escala con tier + prior (ver _compute_player_bet_multiplier).
+    mult = _compute_player_bet_multiplier(target_puuid, match_id)
+    bet = _users.create_bet(
+        user["id"], match_id, None, "over", amount,
+        bet_kind="stat", target_puuid=target_puuid, target_name=target_name,
+        stat_type="tumor_score", threshold=60.0,
+        is_house=True, payout_multiplier=mult,
+    )
     if not bet:
         return jsonify({"error": "No se pudo crear la apuesta"}), 500
     return jsonify(_augment_bet(bet))
