@@ -202,6 +202,12 @@ async function fetchDeathHeatmap(gameName: string, tagLine: string, count = 10, 
   return await res.json()
 }
 
+async function previewMultiplier(matchId: string, side: 'blue' | 'red') {
+  const res = await fetch(`${API_BASE}/bets/preview-multiplier?match_id=${encodeURIComponent(matchId)}&side=${side}`)
+  if (!res.ok) return null
+  return await res.json() as { multiplier: number; is_underdog: boolean; underdog_bonus: number }
+}
+
 // 1v1 Challenges
 async function createChallenge(opts: {
   statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage' | 'tumor_score'
@@ -471,6 +477,7 @@ export function useAuth() {
     fetchLeaderboard,
     fetchClusters,
     fetchDeathHeatmap,
+    previewMultiplier,
     createChallenge,
     acceptChallenge,
     cancelChallenge,
