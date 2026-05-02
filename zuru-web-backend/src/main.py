@@ -7,10 +7,12 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import (
     headers, ACCOUNT_BY_RIOT_ID_URL, MATCHES_BY_PUUID_URL,
-    MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, WORST_KDA_THRESHOLD,
+    MATCH_DETAILS_URL, MATCHES_COUNT, QUEUE_RANKED_SOLO, QUEUE_RANKED_FLEX,
+    RANKED_QUEUES, BETTING_ALLOWED_QUEUES, WORST_KDA_THRESHOLD,
     LEAGUE_ENTRIES_BY_PUUID_URL, ACTIVE_GAME_URL, RIOT_BASE_URL, CHAMPION_MASTERY_URL,
     RIOT_PLATFORM_URL, PLATFORM_HOSTS, platform_url_for,
     league_url, spectator_url, mastery_url,
+    queue_name, is_ranked_queue, allows_betting,
 )
 from riot_infra import riot_get as _riot_get, cache_stats
 from tumor_engine import (
@@ -629,7 +631,9 @@ def update_leaderboard(matches_overview):
     for match in matches_overview:
         if match["game_duration"] < 300:
             continue
-        w = match["worst"]
+        w = match.get("worst")
+        if not w:  # non-ranked queues no tienen worst player
+            continue
         nombre = w["nombre"]
         if nombre not in lb:
             lb[nombre] = {"nombre": nombre, "apariciones": 0, "champion_counts": {},
@@ -797,11 +801,27 @@ def calculate_tumor_score(player, game_duration, tier="GOLD", role="DEFAULT"):
     return _engine_match_score(player, game_duration, tier, role)
 
 
-def get_worst_player_in_match(participants, puuid):
+def find_player_in_participants(participants, puuid, game_name=None, tag_line=None):
+    """Encuentra al jugador en participants. Primero por puuid; si Riot ha rotado
+    el puuid (matches viejos tienen el puuid antiguo), fallback a Riot ID."""
+    p = next((x for x in participants if x.get("puuid") == puuid), None)
+    if p is not None:
+        return p
+    if game_name and tag_line:
+        gn_l = game_name.lower()
+        tl_l = tag_line.lower()
+        p = next((x for x in participants
+                  if (x.get("riotIdGameName") or "").lower() == gn_l
+                  and (x.get("riotIdTagline") or "").lower() == tl_l), None)
+        return p
+    return None
+
+
+def get_worst_player_in_match(participants, puuid, game_name=None, tag_line=None):
     """Encuentra el peor aliado en una partida.
     Devuelve None si el jugador no está en la partida (caso raro: cambio de
     region, match corrupto, etc)."""
-    my_player = next((p for p in participants if p["puuid"] == puuid), None)
+    my_player = find_player_in_participants(participants, puuid, game_name, tag_line)
     if my_player is None:
         return None
     my_team_id = my_player["teamId"]
@@ -980,9 +1000,28 @@ def get_el_peor(game_name, tag_line):
         return {"error": str(e)}, 500
 
 
-def get_overview(game_name, tag_line, start=0, tier_override=None):
-    """Obtiene el peor aliado por cada una de las últimas rankeds"""
+def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
+    """Obtiene el peor aliado por cada una de las últimas partidas del queue dado.
+
+    queue: None (default) → SoloQ. 0 / 'all' → todos los queues (sin filtro).
+    Para queues no-ranked (no en RANKED_QUEUES), se devuelve match raw stats sin
+    tumor score / lane diff / priors.
+    """
     try:
+        # Normaliza queue
+        if queue in (None, '', 'soloq'):
+            queue_int = QUEUE_RANKED_SOLO
+        elif queue == 'flex':
+            queue_int = QUEUE_RANKED_FLEX
+        elif queue == 'all' or queue == 0 or queue == '0':
+            queue_int = None  # sin filtro
+        else:
+            try:
+                queue_int = int(queue)
+            except (TypeError, ValueError):
+                queue_int = QUEUE_RANKED_SOLO
+        ranked_mode = is_ranked_queue(queue_int) if queue_int is not None else False
+
         # 1. Obtener PUUID
         account_url = f"{ACCOUNT_BY_RIOT_ID_URL}/{game_name}/{tag_line}"
         account_res = riot_get(account_url)
@@ -1000,14 +1039,17 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
         if start == 0:
             warmup_prefetch(puuid, count=30)
 
-        # 2. Obtener rango (solo en la primera carga; en "load more" se reutiliza)
+        # 2. Obtener rango (solo en la primera carga; en "load more" se reutiliza).
+        # Para queues no-ranked igual lo pedimos (es info útil del jugador), pero el
+        # tumor score solo se aplica a queues ranked.
         if tier_override:
             tier, division = tier_override, ""
         else:
             tier, division = get_player_rank(puuid, platform_host)
 
-        # 3. Obtener rankeds (SoloQ) desde el offset pedido
-        matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start={start}&count={MATCHES_COUNT}&queue={QUEUE_RANKED_SOLO}"
+        # 3. Obtener partidas del queue solicitado desde el offset pedido
+        queue_param = f"&queue={queue_int}" if queue_int is not None else ""
+        matches_url = f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start={start}&count={MATCHES_COUNT}{queue_param}"
         matches_res = riot_get(matches_url)
 
         if matches_res.status_code != 200:
@@ -1025,19 +1067,51 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
                 continue
 
             data = match_res.json()
-            participants = data["info"]["participants"]
-            game_duration = data["info"]["gameDuration"]
+            info = data.get("info", {})
+            participants = info.get("participants", []) or []
+            game_duration = info.get("gameDuration", 0)
+            match_queue_id = info.get("queueId", 0)
+            match_is_ranked = is_ranked_queue(match_queue_id)
 
-            worst_player = get_worst_player_in_match(participants, puuid)
-            if not worst_player:
-                continue
-
-            # Datos del propio jugador en esa partida
-            my_data = next((p for p in participants if p["puuid"] == puuid), None)
+            # Datos del propio jugador (fallback a riot id por puuid rotation)
+            my_data = find_player_in_participants(participants, puuid, game_name, tag_line)
             if my_data is None:
                 continue
             my_kda = calculate_kda(my_data["kills"], my_data["deaths"], my_data["assists"])
             my_cs = my_data["totalMinionsKilled"] + my_data["neutralMinionsKilled"]
+
+            # Para queues no-ranked (ARAM, Arena, normales, URF...) emitimos un
+            # match en modo "raw stats": sin tumor score, sin lane diff, sin
+            # peor jugador. Mostramos solo las stats del propio jugador.
+            if not match_is_ranked:
+                matches_overview.append({
+                    "match_id": match_id,
+                    "queue_id": match_queue_id,
+                    "queue_name": queue_name(match_queue_id),
+                    "is_ranked": False,
+                    "tumor_compatible": False,
+                    "game_duration": game_duration,
+                    "game_date": info.get("gameCreation", 0),
+                    "win": my_data["win"],
+                    "best_and_lost": False,
+                    "worst_is_me": False,
+                    "my_champion": my_data["championName"],
+                    "my_kills": my_data["kills"],
+                    "my_deaths": my_data["deaths"],
+                    "my_assists": my_data["assists"],
+                    "my_kda": round(my_kda, 2),
+                    "my_cs": my_cs,
+                    "my_damage": my_data["totalDamageDealtToChampions"],
+                    "my_gold": my_data.get("goldEarned", 0),
+                    "my_vision": my_data.get("visionScore", 0),
+                    "worst": None,  # raw mode: no worst player
+                })
+                continue
+
+            # === Path normal (queue ranked): tumor + worst player ===
+            worst_player = get_worst_player_in_match(participants, puuid, game_name, tag_line)
+            if not worst_player:
+                continue
 
             # Equipo aliado
             team = [p for p in participants if p["teamId"] == my_data["teamId"]]
@@ -1045,7 +1119,8 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
 
             # ¿Eres el mejor de tu equipo y aun así perdiste?
             best_and_lost = not my_data["win"] and my_kda == max(team_kdas)
-            worst_is_me = worst_player["puuid"] == puuid
+            # worst_is_me: compara via puuid (current); fallback a Riot ID por puuid rotation
+            worst_is_me = (worst_player.get("puuid") == my_data.get("puuid"))
 
             # Medias del equipo (para comparativa)
             def team_avg(field):
@@ -1092,8 +1167,12 @@ def get_overview(game_name, tag_line, start=0, tier_override=None):
 
             matches_overview.append({
                 "match_id": match_id,
+                "queue_id": match_queue_id,
+                "queue_name": queue_name(match_queue_id),
+                "is_ranked": True,
+                "tumor_compatible": True,
                 "game_duration": game_duration,
-                "game_date": data["info"].get("gameCreation", 0),
+                "game_date": info.get("gameCreation", 0),
                 "win": my_data["win"],
                 "best_and_lost": best_and_lost,
                 "worst_is_me": worst_is_me,
@@ -2857,6 +2936,30 @@ def _augment_bet(bet):
     return bet
 
 
+def _resolve_match_queue_id(match_id):
+    """Resuelve el queueId de un match. Devuelve int o None si no se puede.
+
+    Order: live cache (partidas en curso) → Match v5 (terminadas).
+    """
+    try:
+        cache = load_live_cache()
+        snap = cache.get(match_id)
+        if snap:
+            data = snap.get("data") or {}
+            qid = data.get("queue_id") or data.get("queueId")
+            if qid is not None:
+                return int(qid)
+    except Exception:
+        pass
+    try:
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+        if mres.status_code == 200:
+            return int(mres.json().get("info", {}).get("queueId", 0))
+    except Exception:
+        pass
+    return None
+
+
 def _compute_house_multiplier(match_id, side):
     """Item #2: multiplicador dinámico para house bets en partida live.
 
@@ -2911,6 +3014,15 @@ def bets_create():
         return jsonify({"error": "Faltan campos o son inválidos"}), 400
     if amount > user["currency"]:
         return jsonify({"error": "Saldo insuficiente"}), 400
+
+    # Gate: solo SoloQ + Flex permiten apuestas. Resolvemos el queue:
+    # - Live game: viene del live cache (game ya iniciado, queue conocido)
+    # - Match terminado: lo leemos del Match v5
+    queue_id = _resolve_match_queue_id(match_id)
+    if queue_id is not None and not allows_betting(queue_id):
+        return jsonify({
+            "error": f"Apuestas solo permitidas en SoloQ y Flex (queue actual: {queue_name(queue_id)})"
+        }), 400
 
     if bet_kind == "match":
         if side not in ("blue", "red"):
@@ -3104,12 +3216,19 @@ def _poll_one_challenge(ch):
         return None
 
     def _matches_after(puuid):
-        # Match v5 — match-list por puuid, queue 420 (ranked solo)
-        url = f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids?queue=420&start=0&count=20&startTime={accepted_ts_ms // 1000}"
-        res = riot_get(url)
-        if res.status_code != 200:
-            return []
-        return res.json() or []
+        # Match v5 — Riot solo deja filtrar 1 queue por llamada → llamamos por
+        # cada queue de RANKED_QUEUES y mergemos. Mantenemos el orden por id (más
+        # reciente primero coincide con orden lexicográfico inverso de match_id).
+        ids = []
+        for q in sorted(RANKED_QUEUES):
+            url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids"
+                   f"?queue={q}&start=0&count=20&startTime={accepted_ts_ms // 1000}")
+            res = riot_get(url)
+            if res.status_code == 200:
+                ids.extend(res.json() or [])
+        # Dedup preservando orden
+        seen = set()
+        return [m for m in ids if not (m in seen or seen.add(m))]
 
     def _process(puuid, match_ids, prefix):
         wins = 0
@@ -3371,16 +3490,17 @@ def _resolve_one_room_bet(rb):
         return None
 
     parts = _users.list_room_bet_participants(rbid)
-    # Step 1+2: find each participant's first ranked solo after started_at
+    # Step 1+2: find each participant's first ranked match (solo o flex) after started_at
     for p in parts:
         if p.get("match_id"):
             continue  # ya procesado
-        url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{p['puuid']}/ids"
-               f"?queue=420&start=0&count=10&startTime={started_ms // 1000}")
-        res = riot_get(url)
-        if res.status_code != 200:
-            continue
-        ids = res.json() or []
+        ids = []
+        for q in sorted(RANKED_QUEUES):
+            url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{p['puuid']}/ids"
+                   f"?queue={q}&start=0&count=10&startTime={started_ms // 1000}")
+            res = riot_get(url)
+            if res.status_code == 200:
+                ids.extend(res.json() or [])
         if not ids:
             continue
         # tomamos la más antigua después de started_at
@@ -3864,11 +3984,12 @@ def get_overview_endpoint():
     tag_line = request.args.get('tag_line')
     start = int(request.args.get('start', 0))
     tier_override = request.args.get('tier') or None
+    queue = request.args.get('queue') or None
 
     if not game_name or not tag_line:
         return jsonify({"error": "Falta game_name y/o tag_line como query params"}), 400
 
-    result = get_overview(game_name, tag_line, start=start, tier_override=tier_override)
+    result = get_overview(game_name, tag_line, start=start, tier_override=tier_override, queue=queue)
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     return jsonify(result)

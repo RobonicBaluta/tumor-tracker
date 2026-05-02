@@ -264,6 +264,23 @@
         </div>
       </div>
 
+      <!-- Queue selector -->
+      <div class="flex flex-wrap items-center gap-2 mb-3 animate-fade">
+        <span class="text-white/30 text-[10px] font-mono tracking-widest">QUEUE</span>
+        <div class="flex rounded-lg overflow-hidden border border-white/10 bg-black/20">
+          <button v-for="opt in QUEUE_OPTIONS" :key="opt.key"
+            @click="setSelectedQueue(opt.key)"
+            :class="selectedQueue === opt.key ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
+            class="px-3 py-1.5 text-xs font-mono transition flex items-center gap-1.5">
+            {{ opt.label }}
+            <span v-if="!opt.bettingAllowed" class="text-[9px] opacity-60" title="No se puede apostar en este queue">🚫</span>
+          </button>
+        </div>
+        <span v-if="!isRankedQueue" class="text-white/30 text-[10px] font-mono italic">
+          · stats raw, sin tumor score · sin apuestas
+        </span>
+      </div>
+
       <!-- Filter bar -->
       <div class="flex flex-wrap items-center gap-3 mb-4 animate-fade">
         <!-- Win/Loss -->
@@ -357,11 +374,43 @@
               </div>
             </div>
 
-            <!-- Arrow -->
-            <div class="flex items-center px-3 text-white/20 text-lg">→</div>
+            <!-- Arrow (solo si hay worst player a la derecha) -->
+            <div v-if="match.worst" class="flex items-center px-3 text-white/20 text-lg">→</div>
 
-            <!-- Worst player -->
-            <div class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
+            <!-- Non-ranked: raw stats card (sin worst player ni tumor) -->
+            <div v-if="!match.worst" class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
+              <span class="text-[10px] font-mono px-2 py-0.5 rounded border border-white/15 text-white/50 shrink-0">
+                {{ match.queue_name || 'NON-RANKED' }}
+              </span>
+              <div class="grid grid-cols-4 gap-x-3 gap-y-1 flex-1 min-w-0">
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">CS</p>
+                  <p class="text-white/80 text-xs font-bold">{{ match.my_cs }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">DMG</p>
+                  <p class="text-white/80 text-xs font-bold">{{ formatGold(match.my_damage) }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">ORO</p>
+                  <p class="text-yellow-400/80 text-xs font-bold">{{ formatGold(match.my_gold || 0) }}</p>
+                </div>
+                <div class="text-center">
+                  <p class="text-white/40 text-[9px] font-mono">VIS</p>
+                  <p class="text-white/80 text-xs font-bold">{{ match.my_vision || 0 }}</p>
+                </div>
+                <div class="text-center col-span-4">
+                  <p class="text-white/40 text-[9px] font-mono">DURACIÓN</p>
+                  <p class="text-white/60 text-xs font-mono">{{ formatDuration(match.game_duration) }}</p>
+                </div>
+              </div>
+              <div class="shrink-0 text-center text-white/30 text-[10px] font-mono italic pl-3 border-l border-white/10 min-w-[64px]">
+                sin tumor<br>(no ranked)
+              </div>
+            </div>
+
+            <!-- Ranked: worst player + tumor -->
+            <div v-else class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
               <div class="relative shrink-0">
                 <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.worst.campeon}.png`"
                   class="w-11 h-11 rounded-lg" />
@@ -813,11 +862,16 @@
                 title="Recalcula priors saltando la caché de 6h">
                 ↻ Forzar refresh
               </button>
-              <button v-if="liveGame && liveGame.match_id" @click="openCreateBet"
+              <button v-if="liveGame && liveGame.match_id && isLiveQueueBettable" @click="openCreateBet"
                 class="text-xs font-mono px-3 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/20 hover:border-yellow-400/70 rounded transition"
                 title="Apuesta TC contra otro user sobre el resultado">
                 ☢ Apostar
               </button>
+              <span v-else-if="liveGame && liveGame.match_id"
+                class="text-[11px] font-mono px-2 py-1.5 text-white/30 italic"
+                title="Apuestas solo en SoloQ y Flex">
+                🚫 sin apuestas (no ranked)
+              </span>
               <div v-if="resolveResult" class="text-xs font-mono flex items-center gap-2">
                 <template v-if="(resolveResult as any).pending">
                   <span class="text-yellow-400">⏳ {{ (resolveResult as any).pending }}</span>
@@ -1500,6 +1554,10 @@ interface LeaderboardEntry {
 
 interface MatchOverview {
   match_id: string
+  queue_id?: number
+  queue_name?: string
+  is_ranked?: boolean
+  tumor_compatible?: boolean
   game_duration: number
   game_date: number
   win: boolean
@@ -1512,7 +1570,9 @@ interface MatchOverview {
   my_kda: number
   my_cs: number
   my_damage: number
-  worst: WorstPlayer
+  my_gold?: number
+  my_vision?: number
+  worst: WorstPlayer | null
 }
 
 interface DetailPlayer {
@@ -1609,6 +1669,28 @@ const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
 const tier = ref('')
 const division = ref('')
+// Queue selector — persiste en localStorage. 'soloq' (default) | 'flex' | '450' (ARAM) | '1700' (Arena) | 'all'
+const QUEUE_STORAGE_KEY = 'tumor.selectedQueue'
+const selectedQueue = ref<string>(localStorage.getItem(QUEUE_STORAGE_KEY) || 'soloq')
+function setSelectedQueue(q: string) {
+  selectedQueue.value = q
+  try { localStorage.setItem(QUEUE_STORAGE_KEY, q) } catch {}
+}
+const QUEUE_OPTIONS: { key: string; label: string; bettingAllowed: boolean }[] = [
+  { key: 'soloq', label: 'SoloQ',  bettingAllowed: true },
+  { key: 'flex',  label: 'Flex',   bettingAllowed: true },
+  { key: '450',   label: 'ARAM',   bettingAllowed: false },
+  { key: '1700',  label: 'Arena',  bettingAllowed: false },
+  { key: 'all',   label: 'Todos',  bettingAllowed: false },
+]
+const isRankedQueue = computed(() => selectedQueue.value === 'soloq' || selectedQueue.value === 'flex')
+
+// Apuestas solo permitidas en SoloQ (420) y Flex (440)
+const BETTABLE_QUEUE_IDS = new Set([420, 440])
+const isLiveQueueBettable = computed(() => {
+  const q = liveGame.value?.queue_id
+  return q != null && BETTABLE_QUEUE_IDS.has(q)
+})
 const tierIconFailed = ref(false)
 const tierFullLabel = computed(() => {
   if (!tier.value) return ''
@@ -1860,6 +1942,16 @@ const rollExcuse = () => {
 const scanMessage = ref(SCAN_MESSAGES[0])
 let scanInterval: ReturnType<typeof setInterval> | null = null
 
+// Cuando cambia el queue seleccionado, si ya hay un summoner cargado recargamos.
+watch(selectedQueue, () => {
+  if (summoner.value) {
+    currentStart.value = 0
+    hasMore.value = false
+    matches.value = []
+    login()
+  }
+})
+
 watch(scanning, (v) => {
   // Lock scroll del body mientras corre el X-Ray para que no se pueda
   // scrollear el contenido detrás del overlay.
@@ -1953,11 +2045,13 @@ const personalStats = computed<PersonalStats | null>(() => {
 })
 
 const topTumores = computed<TopTumor[]>(() => {
-  const valid = validMatches.value.filter(m => !m.worst_is_me)
+  // Solo matches ranked tienen worst player
+  const valid = validMatches.value.filter(m => !m.worst_is_me && m.worst)
   if (!valid.length) return []
 
   const counts = new Map<string, WorstPlayer[]>()
   for (const m of valid) {
+    if (!m.worst) continue
     const n = m.worst.nombre
     if (!counts.has(n)) counts.set(n, [])
     counts.get(n)!.push(m.worst)
@@ -2089,6 +2183,7 @@ const login = async () => {
     const params = new URLSearchParams({
       game_name: formData.value.gameName,
       tag_line: formData.value.tagLine,
+      queue: selectedQueue.value,
     })
 
     const res = await fetch(`${API_BASE}/getOverview?${params}`)
@@ -2130,6 +2225,7 @@ const loadMore = async () => {
       tag_line: summoner.value.split('#')[1],
       start: String(currentStart.value),
       tier: tier.value,
+      queue: selectedQueue.value,
     })
 
     const res = await fetch(`${API_BASE}/getOverview?${params}`)
