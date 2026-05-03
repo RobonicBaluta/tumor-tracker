@@ -85,13 +85,24 @@
                 <p v-if="b.status === 'resolved'" class="text-xs font-mono mt-1.5"
                   :class="isPush(b) ? 'text-white/50' : didIWin(b) ? 'text-green-400' : 'text-red-400'">
                   <template v-if="b.bet_kind === 'stat'">
-                    {{ isPush(b) ? '↻ Push (refund)' : didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    <span v-if="isPush(b)">↻ Push (refund)</span>
+                    <span v-else>
+                      {{ didIWin(b) ? '✓ Ganaste' : '✗ Perdiste' }}
+                      <span class="font-bold">{{ netGain(b) >= 0 ? '+' : '' }}{{ netGain(b) }} TC</span>
+                      <span v-if="b.is_house" class="text-white/40"> (x{{ b.payout_multiplier?.toFixed(2) }})</span>
+                    </span>
                     · actual: <span class="font-bold">{{ b.stat_actual }}</span> / target {{ b.threshold }}
                   </template>
                   <template v-else>
-                    {{ didIWin(b) ? '✓ ' + $t('bets.won_amount', { amount: b.amount }) : '✗ ' + $t('bets.lost_amount', { amount: b.amount }) }}
+                    {{ didIWin(b) ? '✓ Ganaste' : '✗ Perdiste' }}
+                    <span class="font-bold">{{ netGain(b) >= 0 ? '+' : '' }}{{ netGain(b) }} TC</span>
+                    <span v-if="b.is_house" class="text-white/40"> (x{{ b.payout_multiplier?.toFixed(2) }})</span>
                     · {{ $t('bets.won_team') }} {{ b.winner_side === 'blue' ? '🔵' : '🔴' }}
                   </template>
+                </p>
+                <!-- Status overlay para refunded -->
+                <p v-else-if="(b.status as string) === 'refunded'" class="text-xs font-mono mt-1.5 text-white/50">
+                  ↻ Refundado · {{ b.amount }} TC devueltos<span v-if="(b as any).refund_reason"> ({{ (b as any).refund_reason }})</span>
                 </p>
 
                 <!-- Acciones -->
@@ -152,9 +163,11 @@ interface Bet {
   bet_kind?: 'match' | 'stat'
   target_puuid?: string | null
   target_name?: string | null
-  stat_type?: 'kills' | 'deaths' | 'assists' | 'kda' | null
+  stat_type?: 'kills' | 'deaths' | 'assists' | 'kda' | 'tumor_score' | null
   threshold?: number | null
   stat_actual?: number | null
+  is_house?: boolean
+  payout_multiplier?: number
 }
 
 const bets = ref<Bet[]>([])
@@ -224,6 +237,19 @@ function isPush(b: Bet) {
   return b.status === 'resolved' && b.bet_kind === 'stat' && !b.winner_side
 }
 
+// Ganancia/pérdida neta para una bet resuelta (positivo si ganaste, negativo si perdiste).
+// House bets usan multiplier; P2P son 1:1.
+function netGain(b: Bet): number {
+  if (b.status !== 'resolved') return 0
+  if (isPush(b)) return 0
+  const isHouse = (b as any).is_house
+  const mult = (b as any).payout_multiplier ?? 2.0
+  if (didIWin(b)) {
+    return isHouse ? Math.round(b.amount * (mult - 1)) : b.amount
+  }
+  return -b.amount
+}
+
 function statusIcon(b: Bet) {
   if (b.status === 'open')      return '⏳'
   if (b.status === 'matched')   return '⚔'
@@ -276,7 +302,8 @@ const summary = computed(() => {
   if (!resolved.length) return null
   const won = resolved.filter(b => didIWin(b)).length
   const lost = resolved.length - won
-  const net = resolved.reduce((s, b) => s + (didIWin(b) ? b.amount : -b.amount), 0)
+  // Suma de ganancias netas — usa multiplier para house bets
+  const net = resolved.reduce((s, b) => s + netGain(b), 0)
   return { total: bets.value.length, won, lost, net }
 })
 </script>

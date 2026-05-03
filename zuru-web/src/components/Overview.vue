@@ -1536,25 +1536,55 @@
               </div>
             </section>
 
-            <!-- Dúo ideal -->
+            <!-- Duos: media de tumor cuando jugáis juntos -->
             <section v-if="analyticsData.duo_stats.length">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🤝 ALIADOS RECURRENTES</p>
+              <div class="flex items-center justify-between mb-3">
+                <p class="text-white/30 text-[10px] font-mono tracking-widest">🤝 DUOS · TUMOR MEDIO JUNTOS</p>
+                <div class="flex gap-1">
+                  <button @click="duoSortBy = 'combined'"
+                    :class="duoSortBy === 'combined' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
+                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">tumor</button>
+                  <button @click="duoSortBy = 'games'"
+                    :class="duoSortBy === 'games' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
+                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">partidas</button>
+                  <button @click="duoSortBy = 'winrate'"
+                    :class="duoSortBy === 'winrate' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
+                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">winrate</button>
+                </div>
+              </div>
               <div class="bg-black/30 border border-white/10 rounded-xl divide-y divide-white/5">
-                <div v-for="(d, i) in analyticsData.duo_stats" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
+                <div v-for="(d, i) in sortedDuos" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
                   <span class="text-white/30 text-xs font-mono w-6">#{{ i + 1 }}</span>
                   <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
                     class="w-10 h-10 rounded-lg border border-white/20" />
                   <div class="flex-1 min-w-0">
-                    <p class="text-white text-sm font-mono truncate">{{ d.nombre }}</p>
-                    <p class="text-white/30 text-[10px] font-mono">{{ d.top_champion }} · {{ d.games }} partidas juntos</p>
+                    <a :href="profileUrl(d.nombre)" target="_blank" rel="noopener" @click.stop
+                      class="text-white text-sm font-mono truncate block hover:text-[#c89b3c] hover:underline transition">{{ d.nombre }}</a>
+                    <p class="text-white/30 text-[10px] font-mono">{{ d.top_champion }} · {{ d.games }} partidas juntos · {{ d.wins }}W/{{ d.games - d.wins }}L</p>
                   </div>
-                  <div class="text-right">
+                  <!-- Tumor medio combinado (color escala 0-100, peor = más rojo) -->
+                  <div class="text-center w-16 shrink-0">
+                    <p :class="tumorColor(d.combined_avg_tumor ?? 0)" class="text-2xl font-mono font-black">{{ d.combined_avg_tumor ?? '?' }}</p>
+                    <p class="text-white/30 text-[9px] font-mono">tumor medio</p>
+                  </div>
+                  <!-- Breakdown tu/él -->
+                  <div class="text-right w-20 shrink-0">
+                    <p class="text-[10px] font-mono">
+                      <span class="text-white/40">tú</span>
+                      <span :class="tumorColor(d.my_avg_tumor ?? 0)" class="ml-1 font-bold">{{ d.my_avg_tumor ?? '?' }}</span>
+                    </p>
+                    <p class="text-[10px] font-mono">
+                      <span class="text-white/40">él</span>
+                      <span :class="tumorColor(d.their_avg_tumor ?? 0)" class="ml-1 font-bold">{{ d.their_avg_tumor ?? '?' }}</span>
+                    </p>
                     <p :class="d.winrate >= 60 ? 'text-green-400' : d.winrate >= 50 ? 'text-yellow-400' : 'text-red-400'"
-                      class="text-lg font-mono font-black">{{ d.winrate }}%</p>
-                    <p class="text-white/30 text-[9px] font-mono">{{ d.wins }}W/{{ d.games - d.wins }}L</p>
+                      class="text-[11px] font-mono font-bold mt-0.5">{{ d.winrate }}%</p>
                   </div>
                 </div>
               </div>
+              <p class="text-white/30 text-[10px] font-mono italic mt-2">
+                "tumor medio" = media del tumor combinado de ambos en las partidas que jugasteis juntos. Más alto = pareja más tóxica.
+              </p>
             </section>
 
           </div>
@@ -1629,9 +1659,11 @@
               <div class="bg-black/30 border border-yellow-500/30 rounded-xl p-3">
                 <p class="text-white/40 text-[10px] font-mono tracking-widest">MULTIPLICADOR</p>
                 <p class="text-yellow-300 text-3xl font-mono font-black mt-1">x{{ playerBetState.result.multiplier.toFixed(2) }}</p>
-                <p class="text-white/60 text-xs font-mono mt-1">
-                  Si {{ playerBetState.target.nombre.split('#')[0] }} es sus → ganas
-                  <span class="text-yellow-300 font-bold">{{ playerBetState.result.payout }} TC</span>
+                <p class="text-white/60 text-xs font-mono mt-1.5 leading-relaxed">
+                  Stake: <span class="text-white/80">{{ playerBetState.amount }} TC</span><br>
+                  Si {{ playerBetState.target.nombre.split('#')[0] }} es sus, beneficio:
+                  <span class="text-green-400 font-bold">+{{ Math.round(playerBetState.amount * (playerBetState.result.multiplier - 1)) }} TC</span>
+                  <span class="text-white/40">(recibes {{ playerBetState.result.payout }} en total)</span>
                 </p>
               </div>
               <button @click="closePlayerBet"
@@ -2493,7 +2525,17 @@ interface LiveGame {
 interface EvolutionPoint { date: number; tumor: number; win: boolean; champion: string; kda: number }
 interface HourStat { hour: number; games: number; winrate: number; avg_tumor: number }
 interface WeekStat { games: number; wins: number; winrate: number; avg_tumor: number }
-interface DuoStat { puuid: string; nombre: string; games: number; wins: number; winrate: number; top_champion: string }
+interface DuoStat {
+  puuid: string
+  nombre: string
+  games: number
+  wins: number
+  winrate: number
+  top_champion: string
+  my_avg_tumor?: number
+  their_avg_tumor?: number
+  combined_avg_tumor?: number
+}
 interface RoleComboStat { my_role: string; other_role: string; games: number; wins: number; winrate: number }
 interface ChampionPoolEntry { champion: string; games: number; wins: number; winrate: number; avg_tumor: number }
 interface AnalyticsData {
@@ -2738,6 +2780,21 @@ const predictionStats = ref<{ total: number, correct: number, accuracy: number, 
 
 // Death heatmap (analytics) — usa Match v5 timeline para agregar posiciones
 // de muerte del usuario.
+// Duos: orden configurable
+const duoSortBy = ref<'combined' | 'games' | 'winrate'>('combined')
+const sortedDuos = computed<DuoStat[]>(() => {
+  const list = [...(analyticsData.value?.duo_stats || [])]
+  if (duoSortBy.value === 'games') {
+    list.sort((a, b) => b.games - a.games || (b.winrate - a.winrate))
+  } else if (duoSortBy.value === 'winrate') {
+    list.sort((a, b) => b.winrate - a.winrate || (b.games - a.games))
+  } else {
+    // combined tumor descending (más tumor primero — los duos más tóxicos arriba)
+    list.sort((a, b) => (b.combined_avg_tumor ?? 0) - (a.combined_avg_tumor ?? 0))
+  }
+  return list
+})
+
 const heatmapData = ref<{ total_deaths: number; matches_processed: number; deaths: Array<{ x: number; y: number }> } | null>(null)
 const heatmapLoading = ref(false)
 const heatmapCanvas = ref<HTMLCanvasElement | null>(null)
