@@ -1954,12 +1954,33 @@ def player_analytics_endpoint():
 
         for t in teammates:
             name = f"{t.get('riotIdGameName','?')}#{t.get('riotIdTagline','?')}"
-            d = duo_stats.setdefault(t["puuid"], {"name": name, "games": 0, "wins": 0,
-                                                  "champion_counts": {}})
+            d = duo_stats.setdefault(t["puuid"], {
+                "name": name, "games": 0, "wins": 0,
+                "champion_counts": {},
+                "my_tumor_sum": 0.0,
+                "their_tumor_sum": 0.0,
+            })
             d["games"] += 1
             d["wins"] += int(win)
             ch = t.get("championName", "?")
             d["champion_counts"][ch] = d["champion_counts"].get(ch, 0) + 1
+            # Tumor del usuario en esta partida (ya calculado arriba como `tumor`)
+            d["my_tumor_sum"] += tumor
+            # Tumor del compañero en la misma partida
+            try:
+                t_role = t.get("teamPosition") or t.get("individualPosition") or role
+                t_stats = {
+                    "kda": calculate_kda(t["kills"], t["deaths"], t["assists"]),
+                    "cs": t["totalMinionsKilled"] + t["neutralMinionsKilled"],
+                    "damage": t["totalDamageDealtToChampions"],
+                    "vision_score": t["visionScore"],
+                    "time_dead": t["totalTimeSpentDead"],
+                }
+                t_tumor = calculate_tumor_score(t_stats, info["gameDuration"], tier, t_role)
+                d["their_tumor_sum"] += t_tumor
+            except Exception:
+                # Si falla, contamos solo el tuyo y la media will be off-by-1; aceptable
+                pass
 
         if role != "DEFAULT":
             for t in teammates:
@@ -2009,6 +2030,9 @@ def player_analytics_endpoint():
         if v["games"] < 2:
             continue
         top_champ = max(v["champion_counts"], key=lambda c: v["champion_counts"][c])
+        my_avg = round(v["my_tumor_sum"] / v["games"], 1) if v["games"] else 0
+        their_avg = round(v["their_tumor_sum"] / v["games"], 1) if v["games"] else 0
+        combined_avg = round((my_avg + their_avg) / 2.0, 1)
         duo_out.append({
             "puuid": pp,
             "nombre": v["name"],
@@ -2016,6 +2040,9 @@ def player_analytics_endpoint():
             "wins": v["wins"],
             "winrate": round(v["wins"] / v["games"] * 100),
             "top_champion": top_champ,
+            "my_avg_tumor": my_avg,
+            "their_avg_tumor": their_avg,
+            "combined_avg_tumor": combined_avg,
         })
     duo_out.sort(key=lambda d: (d["games"], d["winrate"]), reverse=True)
 

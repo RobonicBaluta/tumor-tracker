@@ -53,8 +53,10 @@
               <p v-else class="text-white/40 text-[10px] font-mono mt-0.5">
                 Vas con el favorito
               </p>
-              <p v-if="amount > 0" class="text-white/60 text-xs font-mono mt-1.5">
-                Si ganas → <span class="text-yellow-300 font-bold">{{ Math.round(amount * previewMult) }} TC</span>
+              <p v-if="amount > 0" class="text-white/60 text-xs font-mono mt-1.5 leading-relaxed">
+                Stake: <span class="text-white/80">{{ amount }} TC</span><br>
+                Beneficio si ganas: <span class="text-green-400 font-bold">+{{ Math.round(amount * (previewMult - 1)) }} TC</span>
+                <span class="text-white/30">(recibes {{ Math.round(amount * previewMult) }} en total)</span>
               </p>
             </div>
           </div>
@@ -147,10 +149,12 @@
         <div v-else-if="mode === 'created'" class="p-5 space-y-4">
           <div class="bg-green-950/40 border border-green-500/40 rounded-xl p-4 text-center">
             <p class="text-green-300 text-sm font-mono font-bold">✓ {{ $t('bets.bet_created') }}</p>
-            <p class="text-white/60 text-xs font-mono mt-1">{{ createdBet?.amount }} TC</p>
-            <p v-if="createdBet?.is_house" class="text-purple-300 text-xs font-mono mt-1">
-              🎰 vs Sistema · multiplicador <span class="font-bold">x{{ createdBet?.payout_multiplier?.toFixed(2) }}</span>
-              · payout potencial <span class="text-yellow-300 font-bold">{{ Math.round(createdBet?.amount * createdBet?.payout_multiplier) }} TC</span>
+            <p class="text-white/60 text-xs font-mono mt-1">Stake: {{ createdBet?.amount }} TC</p>
+            <p v-if="createdBet?.is_house" class="text-purple-300 text-xs font-mono mt-1.5 leading-relaxed">
+              🎰 vs Sistema · multi <span class="font-bold">x{{ createdBet?.payout_multiplier?.toFixed(2) }}</span><br>
+              Beneficio si ganas:
+              <span class="text-green-400 font-bold">+{{ Math.round(createdBet?.amount * (createdBet?.payout_multiplier - 1)) }} TC</span>
+              <span class="text-white/40">(recibes {{ Math.round(createdBet?.amount * createdBet?.payout_multiplier) }} en total)</span>
             </p>
             <p v-else class="text-white/40 text-xs font-mono mt-1">{{ $t('bets.share_link_msg') }}</p>
           </div>
