@@ -216,7 +216,15 @@ async function fetchDeathHeatmap(gameName: string, tagLine: string, count = 10, 
 async function previewMultiplier(matchId: string, side: 'blue' | 'red') {
   const res = await fetch(`${API_BASE}/bets/preview-multiplier?match_id=${encodeURIComponent(matchId)}&side=${side}`)
   if (!res.ok) return null
-  return await res.json() as { multiplier: number; is_underdog: boolean; underdog_bonus: number }
+  return await res.json() as {
+    multiplier: number
+    is_underdog: boolean
+    underdog_bonus: number
+    elapsed_seconds: number | null
+    betting_closed: boolean
+    close_at_elapsed: number
+    decay_factor: number
+  }
 }
 
 // 1v1 Challenges
@@ -224,7 +232,8 @@ async function createChallenge(opts: {
   statType: 'kills' | 'deaths' | 'assists' | 'kda' | 'cs' | 'gold' | 'damage' | 'tumor_score'
   amount: number
   comparison?: 'higher_wins' | 'lower_wins'
-  format?: 'single' | 'bo3' | 'bo5' | 'bo10'
+  format?: 'single' | 'bo3' | 'tumor_race' | 'streak'
+  challengedUserId?: number
 }) {
   const res = await authedFetch('/challenges/create', {
     method: 'POST',
@@ -233,6 +242,7 @@ async function createChallenge(opts: {
       amount: opts.amount,
       comparison: opts.comparison,
       format: opts.format || 'single',
+      challenged_user_id: opts.challengedUserId,
     }),
   })
   const data = await res.json()
@@ -382,10 +392,10 @@ async function joinRoom(code: string, riotId?: string) {
   return data
 }
 
-async function leaveRoom(code: string, riotId: string) {
+async function leaveRoom(code: string, riotId?: string) {
   const res = await authedFetch(`/rooms/${code}/leave`, {
     method: 'POST',
-    body: JSON.stringify({ riot_id: riotId }),
+    body: JSON.stringify(riotId ? { riot_id: riotId } : {}),
   })
   return res.ok
 }
@@ -394,6 +404,18 @@ async function fetchRoom(code: string) {
   const res = await fetch(`${API_BASE}/rooms/${code}`)
   if (!res.ok) return null
   return await res.json()
+}
+
+async function fetchMyRooms() {
+  if (!token.value) return []
+  const res = await authedFetch('/rooms/mine')
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function deleteRoom(code: string) {
+  const res = await authedFetch(`/rooms/${code}`, { method: 'DELETE' })
+  return res.ok
 }
 
 async function fetchAchievements() {
@@ -511,9 +533,88 @@ export function useAuth() {
     joinRoom,
     leaveRoom,
     fetchRoom,
+    fetchMyRooms,
+    deleteRoom,
     fetchAchievements,
     fetchSettings,
     saveSettings,
     fetchPublicProfile,
+    braveryData,
+    braveryRoll,
+    braveryLock,
+    braveryCancel,
+    braveryMine,
+    braveryRoomLocks,
+    braveryResolveMine,
   }
+}
+
+// ---- Bravery API ----
+async function braveryData() {
+  const res = await fetch(`${API_BASE}/bravery/data`)
+  if (!res.ok) return null
+  return await res.json() as {
+    version: string
+    champions: { id: number; key: string; name: string }[]
+    items: { id: number; name: string; gold: number; tags: string[] }[]
+    fetched_at: number
+  }
+}
+
+async function braveryRoll(opts: {
+  dimensions: string[]
+  lane_filter?: string | null
+  item_count?: number
+}) {
+  const res = await authedFetch('/bravery/roll', {
+    method: 'POST',
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) return null
+  return await res.json()
+}
+
+async function braveryLock(opts: {
+  champion_id: number
+  champion_name: string
+  lane?: string | null
+  items?: { id: number; name: string; gold?: number }[] | null
+  stake: number
+  room_code?: string | null
+}) {
+  const res = await authedFetch('/bravery/lock', {
+    method: 'POST',
+    body: JSON.stringify(opts),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error al lockear bravery')
+  await refreshBalance()
+  return data
+}
+
+async function braveryCancel(lid: number) {
+  const res = await authedFetch(`/bravery/${lid}/cancel`, { method: 'POST' })
+  if (!res.ok) return null
+  await refreshBalance()
+  return await res.json()
+}
+
+async function braveryMine() {
+  const res = await authedFetch('/bravery/mine')
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function braveryRoomLocks(code: string) {
+  const res = await fetch(`${API_BASE}/bravery/room/${encodeURIComponent(code)}`)
+  if (!res.ok) return []
+  return await res.json()
+}
+
+async function braveryResolveMine() {
+  const res = await authedFetch('/bravery/resolve-mine', { method: 'POST' })
+  if (!res.ok) return null
+  const data = await res.json()
+  await refreshBalance()
+  return data
 }

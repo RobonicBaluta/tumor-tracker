@@ -219,6 +219,7 @@ def _init_sqlite(conn):
         ("challenged_tumor_total", "REAL NOT NULL DEFAULT 0"),
         ("matches_required", "INTEGER NOT NULL DEFAULT 1"),
         ("last_polled_at", "REAL"),
+        ("target_user_id", "INTEGER"),  # si está set, sólo este user puede aceptar
     ]:
         if name not in ch_cols:
             try:
@@ -255,6 +256,34 @@ def _init_sqlite(conn):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_room_bets_status ON room_bets(status, resolves_at)")
+
+    # Bravery locks: user roleó champ/lane/items, juega su próxima partida
+    # con ese setup, gana TC según tumor + style_mult.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS bravery_locks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            puuid TEXT NOT NULL,
+            room_code TEXT,
+            champion_id INTEGER NOT NULL,
+            champion_name TEXT NOT NULL,
+            lane TEXT,
+            items_json TEXT,
+            dimensions INTEGER NOT NULL DEFAULT 1,
+            style_mult REAL NOT NULL DEFAULT 1.0,
+            stake INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            match_id_resolved TEXT,
+            tumor_score REAL,
+            payout INTEGER NOT NULL DEFAULT 0,
+            compliance_json TEXT,
+            created_at REAL NOT NULL,
+            resolved_at REAL,
+            expires_at REAL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_user_status ON bravery_locks(user_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_room ON bravery_locks(room_code, status)")
 
 
 def _init_pg(conn):
@@ -413,6 +442,7 @@ def _init_pg(conn):
         "challenged_tumor_total DOUBLE PRECISION NOT NULL DEFAULT 0",
         "matches_required INTEGER NOT NULL DEFAULT 1",
         "last_polled_at DOUBLE PRECISION",
+        "target_user_id INTEGER REFERENCES users(id)",
     ]:
         try:
             cur.execute(f"ALTER TABLE challenges ADD COLUMN IF NOT EXISTS {col_def}")
@@ -447,6 +477,31 @@ def _init_pg(conn):
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_room_bets_status ON room_bets(status, resolves_at)")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bravery_locks (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            puuid TEXT NOT NULL,
+            room_code TEXT,
+            champion_id INTEGER NOT NULL,
+            champion_name TEXT NOT NULL,
+            lane TEXT,
+            items_json TEXT,
+            dimensions INTEGER NOT NULL DEFAULT 1,
+            style_mult DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+            stake INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            match_id_resolved TEXT,
+            tumor_score DOUBLE PRECISION,
+            payout INTEGER NOT NULL DEFAULT 0,
+            compliance_json TEXT,
+            created_at DOUBLE PRECISION NOT NULL,
+            resolved_at DOUBLE PRECISION,
+            expires_at DOUBLE PRECISION
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bravery_user_status ON bravery_locks(user_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bravery_room ON bravery_locks(room_code, status)")
     cur.close()
 
 
@@ -966,6 +1021,25 @@ def list_stat_bets_for_match(match_id):
     return [_row_to_bet(r) for r in cur.fetchall()]
 
 
+def list_pending_match_ids(min_age_seconds=120, limit=50):
+    """Devuelve match_ids distintos que tienen al menos una bet matched cuyo
+    created_at es de hace al menos min_age_seconds (filtro para no acribillar
+    Riot con bets recién creadas).
+
+    Útil para el sweep global de auto-resolución que se ejecuta al cargar la home.
+    Limita a `limit` match_ids para no quemar rate budget en una sola pasada.
+    """
+    cutoff = time.time() - max(0, int(min_age_seconds))
+    cur = _exec(
+        """SELECT DISTINCT match_id FROM bets
+           WHERE status='matched' AND created_at < ?
+           ORDER BY created_at ASC
+           LIMIT ?""",
+        (cutoff, int(limit)),
+    )
+    return [r[0] for r in cur.fetchall() if r[0]]
+
+
 # ---------------------------------------------------------------------------
 # 1v1 Challenges: dos users, cada uno juega su propia partida, se comparan stats
 # ---------------------------------------------------------------------------
@@ -979,14 +1053,15 @@ _CHALLENGE_COLS = (
     "challenger_match_id, challenger_value, challenged_match_id, challenged_value, "
     "status, winner_user_id, created_at, accepted_at, resolved_at, expires_at, "
     "format, challenger_wins, challenged_wins, "
-    "challenger_tumor_total, challenged_tumor_total, matches_required, last_polled_at"
+    "challenger_tumor_total, challenged_tumor_total, matches_required, last_polled_at, "
+    "target_user_id"
 )
 
 CHALLENGE_FORMATS = {
-    "single": 1,    # legacy: cada uno submitea 1 match manual
-    "bo3": 2,       # first to 2
-    "bo5": 3,       # first to 3
-    "bo10": 6,      # first to 6
+    "single": 1,        # legacy: cada uno submitea 1 match manual
+    "bo3": 2,           # first to 2 wins
+    "tumor_race": 1,    # cada uno juega 1 match; menor tumor score gana
+    "streak": 2,        # primer jugador en conseguir 2 wins seguidas
 }
 
 
@@ -1020,10 +1095,11 @@ def _row_to_challenge(row):
         "challenged_tumor_total": float(row[23]) if len(row) > 23 and row[23] is not None else 0.0,
         "matches_required": row[24] if len(row) > 24 else 1,
         "last_polled_at": row[25] if len(row) > 25 else None,
+        "target_user_id": row[26] if len(row) > 26 else None,
     }
 
 
-def create_challenge(challenger_user_id, stat_type, amount, comparison="higher_wins", fmt="single"):
+def create_challenge(challenger_user_id, stat_type, amount, comparison="higher_wins", fmt="single", target_user_id=None):
     """Crea un challenge 1v1. Escrowa el amount del challenger.
 
     'higher_wins' es lo natural para kills/assists/kda/cs/gold/damage.
@@ -1060,16 +1136,37 @@ def create_challenge(challenger_user_id, stat_type, amount, comparison="higher_w
     now = time.time()
     # bo* challenges se resuelven en background, dame más TTL (7 días)
     ttl = (7 * 24 * 3600) if fmt != "single" else CHALLENGE_DEFAULT_TTL
+    # Validar target_user_id si viene: existe + no es self
+    if target_user_id is not None:
+        if target_user_id == challenger_user_id:
+            add_currency(challenger_user_id, amount, "challenge refund (self target)")
+            return None
+        if get_user_by_id(target_user_id) is None:
+            add_currency(challenger_user_id, amount, "challenge refund (target not found)")
+            return None
     cid = _exec_returning(
         """INSERT INTO challenges (
             share_code, challenger_user_id, challenger_puuid,
             stat_type, comparison, amount, status, created_at, expires_at,
-            format, matches_required
-        ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)""",
+            format, matches_required, target_user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)""",
         (code, challenger_user_id, user["riot_puuid"], stat_type,
          comparison, amount, now, now + ttl,
-         fmt, CHALLENGE_FORMATS[fmt]),
+         fmt, CHALLENGE_FORMATS[fmt], target_user_id),
     )
+    # Notificación dirigida si hay target
+    if target_user_id:
+        try:
+            push_notification(
+                user_id=target_user_id,
+                notif_type="challenge_invite",
+                title=f"⚔ Challenge directo de {user['username']}",
+                body=f"{amount} TC en juego · format {fmt}",
+                link="#/social",
+                icon="⚔",
+            )
+        except Exception:
+            pass
     return get_challenge_by_id(cid)
 
 
@@ -1082,6 +1179,9 @@ def accept_challenge(challenged_user_id, share_code):
         return f"Challenge ya {ch['status']}"
     if ch["challenger_user_id"] == challenged_user_id:
         return "No puedes aceptar tu propio challenge"
+    # Si tiene target_user_id, sólo ese user puede aceptar
+    if ch.get("target_user_id") and ch["target_user_id"] != challenged_user_id:
+        return "Este challenge está dirigido a otro usuario"
     if ch["expires_at"] and time.time() > ch["expires_at"]:
         # Auto-expirar y devolver stake al challenger
         _exec("UPDATE challenges SET status='expired' WHERE id=?", (ch["id"],))
@@ -1212,11 +1312,31 @@ def get_challenge_by_code(code):
     return _row_to_challenge(cur.fetchone())
 
 
-def list_open_challenges(limit=50):
-    cur = _exec(
-        f"SELECT {_CHALLENGE_COLS} FROM challenges WHERE status='open' ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    )
+def list_open_challenges(viewer_user_id=None, limit=50):
+    """Feed público de challenges abiertas.
+    Incluye:
+      - Challenges sin target_user_id (abiertas a cualquiera)
+      - Challenges dirigidas AL viewer (target_user_id == viewer_user_id)
+    Excluye:
+      - Challenges dirigidas a otros (no debe verlas nadie excepto el target)
+      - Las creadas por el propio viewer (no puede unirse a las suyas)
+    """
+    if viewer_user_id is not None:
+        cur = _exec(
+            f"""SELECT {_CHALLENGE_COLS} FROM challenges
+                WHERE status='open'
+                  AND challenger_user_id != ?
+                  AND (target_user_id IS NULL OR target_user_id = ?)
+                ORDER BY created_at DESC LIMIT ?""",
+            (viewer_user_id, viewer_user_id, limit),
+        )
+    else:
+        cur = _exec(
+            f"""SELECT {_CHALLENGE_COLS} FROM challenges
+                WHERE status='open' AND target_user_id IS NULL
+                ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
     return [_row_to_challenge(r) for r in cur.fetchall()]
 
 
@@ -1738,6 +1858,39 @@ def remove_room_member(room_id, riot_id):
     _exec("DELETE FROM room_members WHERE room_id=? AND riot_id=?", (room_id, riot_id))
 
 
+def list_rooms_for_user(user_id, riot_id):
+    """Lista salas donde el user es owner o miembro (por riot_id).
+    Devuelve lista de dicts room (con members) ordenada por created_at DESC."""
+    if not riot_id:
+        # Sólo owner
+        cur = _exec(
+            "SELECT id, code, owner_user_id, name, created_at FROM rooms "
+            "WHERE owner_user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        )
+    else:
+        cur = _exec(
+            """SELECT DISTINCT r.id, r.code, r.owner_user_id, r.name, r.created_at
+               FROM rooms r
+               LEFT JOIN room_members m ON m.room_id = r.id
+               WHERE r.owner_user_id=? OR m.riot_id=?
+               ORDER BY r.created_at DESC""",
+            (user_id, riot_id),
+        )
+    return [_row_to_room(r) for r in cur.fetchall()]
+
+
+def delete_room(room_id, owner_user_id):
+    """Sólo el owner puede borrar. Borra miembros y la sala."""
+    cur = _exec("SELECT owner_user_id FROM rooms WHERE id=?", (room_id,))
+    row = cur.fetchone()
+    if not row or row[0] != owner_user_id:
+        return False
+    _exec("DELETE FROM room_members WHERE room_id=?", (room_id,))
+    _exec("DELETE FROM rooms WHERE id=?", (room_id,))
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Achievements
 # ---------------------------------------------------------------------------
@@ -1944,3 +2097,140 @@ def get_users_brief(user_ids):
             "avatar": row[3],
         }
     return out
+
+
+# ---------------------------------------------------------------------------
+# Bravery: "ARAM-mode for ranked" — roll champion + lane + items, lock in,
+# play your next match with that setup, payout = stake * tumor_perf * style_mult.
+# ---------------------------------------------------------------------------
+
+VALID_BRAVERY_LANES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
+BRAVERY_TTL_SECONDS = 3 * 60 * 60   # 3h para jugar la partida bravery
+BRAVERY_REFUND_AFTER = 6 * 60 * 60  # tras 6h sin partida, refund automático
+
+_BRAVERY_COLS = (
+    "id, user_id, puuid, room_code, champion_id, champion_name, lane, "
+    "items_json, dimensions, style_mult, stake, status, match_id_resolved, "
+    "tumor_score, payout, compliance_json, created_at, resolved_at, expires_at"
+)
+
+
+def _row_to_bravery(row):
+    if not row:
+        return None
+    import json as _json
+    return {
+        "id": row[0], "user_id": row[1], "puuid": row[2],
+        "room_code": row[3], "champion_id": row[4], "champion_name": row[5],
+        "lane": row[6],
+        "items": _json.loads(row[7]) if row[7] else None,
+        "dimensions": row[8], "style_mult": float(row[9]) if row[9] is not None else 1.0,
+        "stake": row[10], "status": row[11],
+        "match_id_resolved": row[12], "tumor_score": float(row[13]) if row[13] is not None else None,
+        "payout": row[14],
+        "compliance": _json.loads(row[15]) if row[15] else None,
+        "created_at": row[16], "resolved_at": row[17], "expires_at": row[18],
+    }
+
+
+def create_bravery_lock(user_id, puuid, champion_id, champion_name,
+                        lane, items, dimensions, style_mult, stake,
+                        room_code=None):
+    """Crea un bravery lock pending. Escrowa el stake. Devuelve dict o None."""
+    import json as _json
+    if stake <= 0:
+        return None
+    if dimensions not in (1, 2, 3):
+        return None
+    new_balance = add_currency(user_id, -stake, "bravery escrow")
+    if new_balance is None:
+        return None
+    now = time.time()
+    items_json = _json.dumps(items) if items else None
+    lid = _exec_returning(
+        """INSERT INTO bravery_locks (
+            user_id, puuid, room_code, champion_id, champion_name,
+            lane, items_json, dimensions, style_mult, stake,
+            status, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+        (user_id, puuid, room_code, int(champion_id), champion_name,
+         lane, items_json, int(dimensions), float(style_mult), int(stake),
+         now, now + BRAVERY_TTL_SECONDS),
+    )
+    return get_bravery_lock_by_id(lid)
+
+
+def get_bravery_lock_by_id(lid):
+    cur = _exec(f"SELECT {_BRAVERY_COLS} FROM bravery_locks WHERE id=?", (lid,))
+    return _row_to_bravery(cur.fetchone())
+
+
+def list_user_bravery_locks(user_id, limit=30):
+    cur = _exec(
+        f"SELECT {_BRAVERY_COLS} FROM bravery_locks WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+        (user_id, int(limit)),
+    )
+    return [_row_to_bravery(r) for r in cur.fetchall()]
+
+
+def list_room_bravery_locks(room_code, limit=50):
+    cur = _exec(
+        f"SELECT {_BRAVERY_COLS} FROM bravery_locks WHERE room_code=? ORDER BY created_at DESC LIMIT ?",
+        (room_code, int(limit)),
+    )
+    return [_row_to_bravery(r) for r in cur.fetchall()]
+
+
+def list_pending_bravery_locks(limit=50):
+    """Locks pendientes de resolver, por antigüedad (más viejos primero)."""
+    cur = _exec(
+        f"SELECT {_BRAVERY_COLS} FROM bravery_locks WHERE status='pending' ORDER BY created_at ASC LIMIT ?",
+        (int(limit),),
+    )
+    return [_row_to_bravery(r) for r in cur.fetchall()]
+
+
+def cancel_bravery_lock(user_id, lid):
+    lock = get_bravery_lock_by_id(lid)
+    if not lock or lock["user_id"] != user_id or lock["status"] != "pending":
+        return None
+    _exec("UPDATE bravery_locks SET status='cancelled', resolved_at=? WHERE id=?",
+          (time.time(), lid))
+    add_currency(user_id, lock["stake"], f"bravery cancel refund · #{lid}")
+    return get_bravery_lock_by_id(lid)
+
+
+def resolve_bravery_lock(lid, match_id, tumor_score, compliance, payout):
+    """Marca un lock como resolved. Paga payout (puede ser 0). Devuelve dict."""
+    import json as _json
+    lock = get_bravery_lock_by_id(lid)
+    if not lock or lock["status"] != "pending":
+        return None
+    payout = max(0, int(payout))
+    if payout > 0:
+        add_currency(lock["user_id"], payout, f"bravery payout · #{lid} ({match_id})")
+    _exec(
+        """UPDATE bravery_locks SET status='resolved', match_id_resolved=?,
+           tumor_score=?, payout=?, compliance_json=?, resolved_at=? WHERE id=?""",
+        (match_id, float(tumor_score) if tumor_score is not None else None,
+         payout, _json.dumps(compliance), time.time(), lid),
+    )
+    return get_bravery_lock_by_id(lid)
+
+
+def refund_bravery_lock(lid, reason="expired"):
+    lock = get_bravery_lock_by_id(lid)
+    if not lock or lock["status"] != "pending":
+        return None
+    _exec("UPDATE bravery_locks SET status='refunded', payout=?, resolved_at=? WHERE id=?",
+          (lock["stake"], time.time(), lid))
+    add_currency(lock["user_id"], lock["stake"], f"bravery refund ({reason}) · #{lid}")
+    return get_bravery_lock_by_id(lid)
+
+
+def user_has_pending_bravery(user_id):
+    cur = _exec(
+        "SELECT id FROM bravery_locks WHERE user_id=? AND status='pending' LIMIT 1",
+        (user_id,),
+    )
+    return cur.fetchone() is not None

@@ -204,44 +204,85 @@
               {{ $t('social.challenges_intro') }}
             </p>
 
-            <!-- Crear challenge -->
-            <div class="bg-black/30 border border-white/10 rounded-xl p-3 mb-4">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">{{ $t('social.create') }}</p>
-              <!-- Format toggle -->
-              <div class="grid grid-cols-4 gap-1 mb-2">
-                <button v-for="f in ['single', 'bo3', 'bo5', 'bo10']" :key="f"
-                  @click="newChallengeFormat = f as any"
-                  :class="newChallengeFormat === f ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50' : 'bg-black/40 text-white/50 border-white/10 hover:text-white/80'"
-                  class="text-[10px] font-mono px-2 py-1 rounded border transition">
-                  {{ f === 'single' ? '1x' : f.toUpperCase() }}
+            <!-- Crear challenge: cards visuales para cada formato -->
+            <div class="bg-gradient-to-br from-purple-900/20 via-black/30 to-cyan-900/20 border border-white/10 rounded-xl p-3 mb-4">
+              <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">{{ $t('social.create') }} · ELIGE FORMATO</p>
+
+              <!-- Cards de formato -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                <button v-for="fmt in CHALLENGE_FORMATS" :key="fmt.key"
+                  @click="newChallengeFormat = fmt.key as any"
+                  class="relative p-2 rounded-lg border-2 transition transform hover:scale-105"
+                  :class="newChallengeFormat === fmt.key
+                    ? 'bg-black/40 shadow-lg'
+                    : 'bg-black/20 border-white/10 opacity-60 hover:opacity-100'"
+                  :style="newChallengeFormat === fmt.key
+                    ? { borderColor: fmt.color, boxShadow: `0 0 20px -5px ${fmt.color}80` }
+                    : {}">
+                  <div class="text-3xl">{{ fmt.emoji }}</div>
+                  <p class="text-[11px] font-mono font-bold mt-1"
+                    :style="newChallengeFormat === fmt.key ? { color: fmt.color } : { color: 'rgba(255,255,255,0.7)' }">
+                    {{ fmt.name }}
+                  </p>
+                  <p class="text-white/30 text-[8px] font-mono mt-0.5">⏱ {{ fmt.duration }}</p>
                 </button>
               </div>
-              <p class="text-white/30 text-[9px] font-mono mb-2">
-                {{ newChallengeFormat === 'single'
-                  ? 'Cada uno submitea 1 match manualmente.'
-                  : 'Background poller cuenta wins en ranked solo. Tiebreaker: menor tumor score acumulado. 7d max.' }}
+
+              <!-- Descripción del formato -->
+              <p class="text-white/60 text-[10px] font-mono mb-3 italic leading-relaxed px-1">
+                {{ formatMeta(newChallengeFormat).desc }}
               </p>
-              <div class="grid grid-cols-2 gap-2 mb-2">
+
+              <!-- Inputs: stat (solo single) + rival picker + stake -->
+              <div v-if="newChallengeFormat === 'single'" class="mb-2">
+                <label class="text-white/40 text-[9px] font-mono tracking-widest">ESTADÍSTICA A COMPARAR</label>
                 <select v-model="newChallengeStat"
-                  :disabled="newChallengeFormat !== 'single'"
-                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none disabled:opacity-50">
-                  <option value="kda">KDA</option>
-                  <option value="kills">Kills</option>
-                  <option value="deaths">Deaths ({{ $t('social.lower_wins_label') }})</option>
-                  <option value="assists">Assists</option>
-                  <option value="cs">CS</option>
-                  <option value="gold">Gold</option>
-                  <option value="damage">Damage</option>
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1">
+                  <option value="kda">📊 KDA</option>
+                  <option value="kills">🗡 Kills</option>
+                  <option value="deaths">💀 Deaths ({{ $t('social.lower_wins_label') }})</option>
+                  <option value="assists">🤝 Assists</option>
+                  <option value="cs">🌾 CS</option>
+                  <option value="gold">💰 Gold</option>
+                  <option value="damage">💥 Damage</option>
                   <option value="tumor_score">☢ Tumor Score</option>
                 </select>
-                <input type="number" v-model.number="newChallengeAmount" :min="10"
-                  class="bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none"
-                  :placeholder="$t('social.stake_placeholder')" />
               </div>
+
+              <!-- Rival picker -->
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                  <label class="text-white/40 text-[9px] font-mono tracking-widest">RIVAL</label>
+                  <select v-model="newChallengeRival"
+                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1">
+                    <option :value="null">🌐 Cualquiera (share code)</option>
+                    <option v-for="f in friends" :key="f.id || f.user_id" :value="f.id || f.user_id">
+                      👤 {{ f.username }}
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-white/40 text-[9px] font-mono tracking-widest">STAKE TC</label>
+                  <input type="number" v-model.number="newChallengeAmount" :min="10"
+                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1"
+                    :placeholder="$t('social.stake_placeholder')" />
+                </div>
+              </div>
+
               <button @click="onCreateChallenge" :disabled="!newChallengeAmount || newChallengeAmount <= 0"
-                class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold text-xs px-3 py-1.5 rounded transition">
-                {{ $t('social.launch_challenge') }} · {{ newChallengeFormat.toUpperCase() }} · {{ newChallengeAmount }} TC
+                class="w-full font-mono font-bold text-xs px-3 py-2 rounded transition disabled:opacity-30"
+                :style="{
+                  background: `linear-gradient(135deg, ${formatMeta(newChallengeFormat).color}, ${formatMeta(newChallengeFormat).color}88)`,
+                  color: '#0d1b2a',
+                  boxShadow: `0 0 15px -5px ${formatMeta(newChallengeFormat).color}`,
+                }">
+                {{ formatMeta(newChallengeFormat).emoji }} Lanzar {{ formatMeta(newChallengeFormat).name }} · {{ newChallengeAmount }} TC
               </button>
+              <p class="text-white/40 text-[9px] font-mono mt-1.5 text-center italic">
+                {{ newChallengeRival
+                  ? '📨 Directo a tu amigo — sólo él/ella podrá aceptar'
+                  : '🌐 Apuesta abierta — aparecerá en el feed público para que cualquiera se una' }}
+              </p>
               <p v-if="challengeError" class="text-red-400 text-[10px] font-mono mt-1.5">{{ challengeError }}</p>
             </div>
 
@@ -249,48 +290,96 @@
               {{ $t('common.loading') }}
             </div>
 
-            <!-- Mis challenges -->
-            <div v-if="myChallenges.length" class="space-y-1.5 mb-4">
+            <!-- Mis challenges — vista dinámica con progreso visual -->
+            <div v-if="myChallenges.length" class="space-y-3 mb-4">
               <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.my_challenges') }}</p>
               <div v-for="c in myChallenges" :key="c.id"
-                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2">
-                <div class="flex items-center gap-2 text-xs font-mono flex-wrap">
-                  <code class="text-yellow-300">{{ c.share_code }}</code>
-                  <span v-if="c.format && c.format !== 'single'"
-                    class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-900/40 text-purple-300 border border-purple-500/40">
-                    {{ c.format.toUpperCase() }}
-                  </span>
-                  <span class="text-purple-300 font-bold">{{ c.stat_type }}</span>
-                  <span class="text-white/40">·</span>
-                  <span class="text-yellow-300">{{ c.amount }} TC</span>
-                  <span class="text-white/40 ml-auto text-[10px] uppercase">{{ c.status }}</span>
-                </div>
-                <p v-if="c.format && c.format !== 'single' && (c.challenger_wins || c.challenged_wins)"
-                  class="text-white/60 text-[10px] font-mono mt-0.5">
-                  Score: <span class="text-cyan-300">{{ c.challenger_wins }}</span>
-                  - <span class="text-pink-300">{{ c.challenged_wins }}</span>
-                  · meta {{ c.matches_required }}
-                </p>
-                <p class="text-white/50 text-[11px] font-mono mt-1">
-                  <span :class="c.challenger_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
-                    {{ c.challenger?.username || '?' }}
-                  </span>
-                  <span class="text-white/30 mx-1">vs</span>
-                  <span v-if="c.challenged" :class="c.challenged_user_id === myUserId ? 'text-yellow-300 font-bold' : ''">
-                    {{ c.challenged.username }}
-                  </span>
-                  <span v-else class="text-white/30 italic">{{ $t('social.waiting_rival') }}</span>
-                </p>
+                class="relative bg-black/30 rounded-xl border-2 p-3 overflow-hidden"
+                :style="{
+                  borderColor: formatMeta(c.format || 'single').color + '55',
+                  background: `linear-gradient(135deg, ${formatMeta(c.format || 'single').color}11 0%, transparent 50%)`
+                }">
 
-                <!-- Stats si están -->
-                <p v-if="c.challenger_value !== null || c.challenged_value !== null" class="text-white/60 text-[10px] font-mono mt-1">
-                  <span class="text-cyan-300">A: {{ c.challenger_value ?? '?' }}</span>
-                  ·
-                  <span class="text-pink-300">B: {{ c.challenged_value ?? '?' }}</span>
+                <!-- Header: emoji + name + share_code + amount + status -->
+                <div class="flex items-center gap-2 flex-wrap mb-2">
+                  <span class="text-2xl shrink-0">{{ formatMeta(c.format || 'single').emoji }}</span>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-mono font-bold text-sm"
+                      :style="{ color: formatMeta(c.format || 'single').color }">
+                      {{ formatMeta(c.format || 'single').name }}
+                    </p>
+                    <p class="text-white/30 text-[9px] font-mono">{{ c.share_code }} · {{ c.amount }} TC</p>
+                  </div>
+                  <span class="text-[9px] font-bold px-2 py-0.5 rounded uppercase"
+                    :class="c.status === 'open' ? 'bg-yellow-900/40 text-yellow-300'
+                          : c.status === 'accepted' ? 'bg-cyan-900/40 text-cyan-300'
+                          : c.status === 'resolved' ? 'bg-green-900/40 text-green-300'
+                          : 'bg-white/10 text-white/40'">
+                    {{ c.status }}
+                  </span>
+                </div>
+
+                <!-- Players: A vs B -->
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                  <div class="text-center p-2 rounded bg-cyan-950/30 border border-cyan-500/30">
+                    <p class="text-cyan-300 text-[10px] font-mono font-bold truncate"
+                      :class="{ 'underline': c.challenger_user_id === myUserId }">
+                      {{ c.challenger?.username || '?' }}
+                    </p>
+                    <p v-if="(c.format === 'streak' || c.format === 'bo3')" class="text-cyan-200 text-2xl font-mono font-black mt-1">
+                      {{ c.challenger_wins ?? 0 }}
+                    </p>
+                    <p v-else-if="c.format === 'tumor_race'" class="text-cyan-200 text-lg font-mono font-black mt-1">
+                      ☢ {{ c.challenger_value ?? '?' }}
+                    </p>
+                    <p v-else class="text-cyan-200 text-lg font-mono font-black mt-1">
+                      {{ c.challenger_value ?? '—' }}
+                    </p>
+                  </div>
+                  <div class="text-center p-2 rounded bg-pink-950/30 border border-pink-500/30">
+                    <p class="text-pink-300 text-[10px] font-mono font-bold truncate"
+                      :class="{ 'underline': c.challenged_user_id === myUserId }">
+                      {{ c.challenged?.username || (c.status === 'open' ? '...esperando rival' : '?') }}
+                    </p>
+                    <p v-if="(c.format === 'streak' || c.format === 'bo3')" class="text-pink-200 text-2xl font-mono font-black mt-1">
+                      {{ c.challenged_wins ?? 0 }}
+                    </p>
+                    <p v-else-if="c.format === 'tumor_race'" class="text-pink-200 text-lg font-mono font-black mt-1">
+                      ☢ {{ c.challenged_value ?? '?' }}
+                    </p>
+                    <p v-else class="text-pink-200 text-lg font-mono font-black mt-1">
+                      {{ c.challenged_value ?? '—' }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- Progress bar para bo3 / streak -->
+                <div v-if="(c.format === 'bo3' || c.format === 'streak') && c.matches_required"
+                  class="mb-2">
+                  <div class="flex items-center justify-between text-[9px] font-mono mb-1">
+                    <span class="text-cyan-400">{{ c.challenger_wins ?? 0 }} / {{ c.matches_required }}</span>
+                    <span class="text-white/30">{{ c.format === 'streak' ? 'streak actual' : 'target' }}</span>
+                    <span class="text-pink-400">{{ c.challenged_wins ?? 0 }} / {{ c.matches_required }}</span>
+                  </div>
+                  <div class="flex gap-px h-1.5">
+                    <div v-for="i in (c.matches_required)" :key="`c${i}`" class="flex-1 rounded-full"
+                      :class="(c.challenger_wins ?? 0) >= i ? 'bg-cyan-400' : 'bg-cyan-950/40'"></div>
+                    <div class="w-2"></div>
+                    <div v-for="i in (c.matches_required)" :key="`d${i}`" class="flex-1 rounded-full"
+                      :class="(c.challenged_wins ?? 0) >= i ? 'bg-pink-400' : 'bg-pink-950/40'"></div>
+                  </div>
+                </div>
+
+                <!-- Time remaining for active challenges -->
+                <p v-if="c.status === 'accepted' && c.expires_at" class="text-white/40 text-[9px] font-mono text-center mb-1">
+                  ⏳ Expira en {{ humanizeTimeUntil(c.expires_at) }}
+                </p>
+                <p v-else-if="c.status === 'open'" class="text-white/40 text-[9px] font-mono text-center italic mb-1">
+                  Esperando a alguien que acepte...
                 </p>
 
                 <!-- Resultado -->
-                <p v-if="c.status === 'resolved'" class="text-[11px] font-mono mt-1 font-bold"
+                <p v-if="c.status === 'resolved'" class="text-center text-[11px] font-mono font-bold mt-1"
                   :class="c.winner_user_id === myUserId ? 'text-green-400' : c.winner_user_id ? 'text-red-400' : 'text-white/50'">
                   {{
                     c.winner_user_id === myUserId ? $t('social.challenge_won', { amount: c.amount }) :
@@ -299,7 +388,7 @@
                   }}
                 </p>
 
-                <!-- Submit match -->
+                <!-- Submit match (legacy single) -->
                 <div v-if="challengeNeedsSubmit(c)" class="flex gap-2 mt-2">
                   <input v-model="matchIdInput" placeholder="EUW1_1234567890"
                     class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-yellow-500/60 focus:outline-none" />
@@ -309,7 +398,7 @@
                   </button>
                 </div>
 
-                <!-- Cancel si abierto y soy el creator -->
+                <!-- Cancel -->
                 <button v-if="c.status === 'open' && c.challenger_user_id === myUserId"
                   @click="onCancelChallenge(c)"
                   class="text-[10px] font-mono px-2 py-1 mt-2 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
@@ -319,20 +408,39 @@
             </div>
 
             <!-- Open challenges feed -->
-            <div v-if="openChallenges.length" class="space-y-1.5">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest">{{ $t('social.challenges_open_caption') }}</p>
-              <div v-for="c in openChallenges.filter((o: any) => o.challenger_user_id !== myUserId)" :key="c.id"
-                class="bg-black/30 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-3">
+            <div v-if="openChallenges.length" class="space-y-2">
+              <p class="text-white/40 text-[10px] font-mono tracking-widest">🌐 ÚNETE · {{ openChallenges.length }} ABIERTAS</p>
+              <div v-for="c in openChallenges" :key="c.id"
+                class="rounded-xl border-2 p-2.5 flex items-center gap-3"
+                :style="{
+                  borderColor: formatMeta(c.format || 'single').color + '66',
+                  background: `linear-gradient(135deg, ${formatMeta(c.format || 'single').color}15 0%, transparent 60%)`
+                }">
+                <span class="text-2xl shrink-0">{{ formatMeta(c.format || 'single').emoji }}</span>
                 <div class="flex-1 min-w-0">
-                  <p class="text-xs font-mono">
-                    <span class="text-cyan-300">{{ c.challenger?.username || '?' }}</span>
-                    · <span class="text-purple-300">{{ c.stat_type }}</span>
-                    · <span class="text-yellow-300">{{ c.amount }} TC</span>
+                  <div class="flex items-center gap-1 flex-wrap">
+                    <span class="font-mono font-bold text-[11px]"
+                      :style="{ color: formatMeta(c.format || 'single').color }">
+                      {{ formatMeta(c.format || 'single').name }}
+                    </span>
+                    <span v-if="c.target_user_id === myUserId"
+                      class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200">
+                      📨 PARA TI
+                    </span>
+                  </div>
+                  <p class="text-white/70 text-[11px] font-mono mt-0.5 truncate">
+                    <span class="text-cyan-300 font-bold">{{ c.challenger?.username || '?' }}</span>
+                    <span v-if="c.format === 'single' && c.stat_type" class="text-white/40"> · {{ c.stat_type }}</span>
+                    <span class="text-yellow-300"> · {{ c.amount }} TC</span>
                   </p>
                 </div>
                 <button @click="onAcceptChallenge(c)"
-                  class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                  {{ $t('common.accept') }}
+                  class="text-[10px] font-mono font-bold px-3 py-1.5 rounded shrink-0"
+                  :style="{
+                    background: formatMeta(c.format || 'single').color,
+                    color: '#0d1b2a',
+                  }">
+                  Unirme
                 </button>
               </div>
             </div>
@@ -341,6 +449,11 @@
               class="text-white/30 text-sm font-mono text-center py-4">
               {{ $t('social.no_challenges') }}
             </div>
+          </div>
+
+          <!-- BRAVERY -->
+          <div v-else-if="active === 'bravery'">
+            <BraveryPanel :room-code="null" />
           </div>
 
           <!-- FRIENDS -->
@@ -389,52 +502,118 @@
 
           <!-- ROOMS -->
           <div v-else-if="active === 'rooms'">
-            <div class="grid grid-cols-2 gap-3 mb-4">
-              <div class="bg-black/30 border border-white/10 rounded-xl p-3">
-                <p class="text-white/40 text-[10px] font-mono mb-2">CREAR SALA</p>
-                <div class="flex gap-2">
-                  <input v-model="newRoomName" placeholder="Nombre (opcional)"
-                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
-                  <button @click="onCreateRoom"
-                    class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                    Crear
-                  </button>
+            <!-- VISTA LISTA: cuando no hay currentRoom -->
+            <div v-if="!currentRoom" class="space-y-4">
+              <!-- Crear + Unirse -->
+              <div class="grid grid-cols-2 gap-3">
+                <div class="bg-gradient-to-br from-yellow-900/20 to-black/40 border border-yellow-500/30 rounded-xl p-3">
+                  <p class="text-yellow-400 text-[10px] font-mono tracking-widest mb-2">+ CREAR SALA</p>
+                  <div class="flex gap-2">
+                    <input v-model="newRoomName" placeholder="Nombre opcional" maxlength="40"
+                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                    <button @click="onCreateRoom"
+                      class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
+                      Crear
+                    </button>
+                  </div>
+                </div>
+                <div class="bg-gradient-to-br from-cyan-900/20 to-black/40 border border-cyan-500/30 rounded-xl p-3">
+                  <p class="text-cyan-400 text-[10px] font-mono tracking-widest mb-2">→ UNIRSE</p>
+                  <div class="flex gap-2">
+                    <input v-model="joinCodeInput" placeholder="ABCD12" maxlength="6"
+                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs uppercase tracking-widest focus:border-cyan-500/60 focus:outline-none" />
+                    <button @click="onJoinRoom"
+                      class="text-xs font-mono px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded">
+                      Entrar
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div class="bg-black/30 border border-white/10 rounded-xl p-3">
-                <p class="text-white/40 text-[10px] font-mono mb-2">UNIRSE POR CÓDIGO</p>
-                <div class="flex gap-2">
-                  <input v-model="joinCodeInput" placeholder="ABCD12" maxlength="6"
-                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs uppercase focus:border-yellow-500/60 focus:outline-none" />
-                  <button @click="onJoinRoom"
-                    class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
-                    Entrar
+
+              <!-- Mis salas -->
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <p class="text-white/40 text-[10px] font-mono tracking-widest">🏠 MIS SALAS</p>
+                  <button @click="loadMyRooms" class="text-[9px] font-mono text-white/40 hover:text-white">
+                    🔄 refrescar
+                  </button>
+                </div>
+
+                <div v-if="myRoomsLoading" class="text-white/30 text-xs font-mono text-center py-6">
+                  Cargando...
+                </div>
+                <div v-else-if="!myRooms.length"
+                  class="bg-black/20 border border-dashed border-white/10 rounded-lg p-6 text-center">
+                  <p class="text-white/40 text-xs font-mono">No estás en ninguna sala.</p>
+                  <p class="text-white/30 text-[10px] font-mono mt-1">Crea una arriba o únete con un código.</p>
+                </div>
+                <div v-else class="grid grid-cols-1 gap-2">
+                  <button v-for="r in myRooms" :key="r.code"
+                    @click="currentRoom = r"
+                    class="text-left bg-black/30 hover:bg-black/50 border border-white/10 hover:border-yellow-500/40 rounded-xl p-3 transition group">
+                    <div class="flex items-center gap-3">
+                      <div class="text-2xl">🏠</div>
+                      <div class="flex-1 min-w-0">
+                        <p class="text-white font-mono font-bold text-sm truncate">
+                          {{ r.name || 'Sala sin nombre' }}
+                          <span v-if="r.owner_user_id === myUserId"
+                            class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-yellow-900/40 text-yellow-300 ml-1">OWNER</span>
+                        </p>
+                        <div class="flex items-center gap-2 text-[10px] font-mono mt-0.5">
+                          <code class="text-yellow-300/80 tracking-widest">{{ r.code }}</code>
+                          <span class="text-white/40">·</span>
+                          <span class="text-white/50">👥 {{ r.members.length }}/8</span>
+                        </div>
+                      </div>
+                      <span class="text-white/30 group-hover:text-yellow-300 text-lg">→</span>
+                    </div>
                   </button>
                 </div>
               </div>
             </div>
 
-            <div v-if="currentRoom" class="bg-black/30 border border-yellow-500/40 rounded-xl p-4">
-              <div class="flex items-center justify-between mb-3">
-                <div>
-                  <p class="text-yellow-300 font-mono font-bold">{{ currentRoom.name || 'Sala sin nombre' }}</p>
-                  <code class="text-white/60 font-mono text-xl tracking-widest">{{ currentRoom.code }}</code>
+            <!-- VISTA DETALLE: cuando currentRoom set -->
+            <div v-else class="bg-gradient-to-br from-yellow-900/10 via-black/30 to-purple-900/10 border-2 border-yellow-500/50 rounded-xl p-4">
+              <!-- Header con back + acciones -->
+              <div class="flex items-center gap-2 mb-3">
+                <button @click="onBackToList"
+                  class="text-[11px] font-mono px-2 py-1 border border-white/15 text-white/70 hover:text-white hover:border-white/40 rounded">
+                  ← Salas
+                </button>
+                <div class="flex-1 min-w-0">
+                  <p class="text-yellow-300 font-mono font-bold text-sm truncate">{{ currentRoom.name || 'Sala sin nombre' }}</p>
+                  <code class="text-white/60 font-mono text-base tracking-widest">{{ currentRoom.code }}</code>
                 </div>
-                <button @click="copyRoomLink" class="text-[10px] font-mono px-2 py-1 border border-white/15 text-white/60 hover:text-white rounded">
-                  {{ roomCopied ? '✓ Copiado' : '📋 Link' }}
+                <button @click="copyRoomLink" class="text-[10px] font-mono px-2 py-1 border border-white/15 text-white/60 hover:text-white rounded shrink-0">
+                  {{ roomCopied ? '✓' : '📋' }} Link
                 </button>
               </div>
-              <p class="text-white/40 text-[10px] font-mono mb-2">MIEMBROS ({{ currentRoom.members.length }}/8)</p>
-              <div class="space-y-1">
+
+              <!-- Acciones destructivas -->
+              <div class="flex gap-2 mb-3">
+                <button v-if="!isRoomOwner" @click="onLeaveCurrent" :disabled="leavingRoom"
+                  class="flex-1 text-[10px] font-mono px-2 py-1.5 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded disabled:opacity-30">
+                  {{ leavingRoom ? '...' : '🚪 Salir de la sala' }}
+                </button>
+                <button v-if="isRoomOwner" @click="onDeleteCurrent" :disabled="deletingRoom"
+                  class="flex-1 text-[10px] font-mono px-2 py-1.5 border border-red-500/50 text-red-300 hover:bg-red-900/30 rounded disabled:opacity-30">
+                  {{ deletingRoom ? '...' : '⚠ Borrar sala (owner)' }}
+                </button>
+              </div>
+
+              <p class="text-white/40 text-[10px] font-mono mb-2">👥 MIEMBROS ({{ currentRoom.members.length }}/8)</p>
+              <div class="grid grid-cols-2 gap-1.5">
                 <div v-for="m in currentRoom.members" :key="m.riot_id"
-                  class="flex items-center justify-between bg-black/20 border border-white/5 rounded px-2 py-1">
-                  <span class="text-white text-xs font-mono">{{ m.riot_id }}</span>
-                  <button v-if="auth?.user.value?.riot_id === m.riot_id" @click="onLeaveRoom(m.riot_id)"
-                    class="text-[10px] font-mono text-red-400 hover:text-red-300">salir</button>
+                  class="flex items-center bg-black/30 border border-white/10 rounded px-2 py-1.5"
+                  :class="{ 'border-yellow-500/50': auth?.user.value?.riot_id === m.riot_id }">
+                  <span class="text-xs">👤</span>
+                  <span class="text-white text-[11px] font-mono truncate ml-1.5">{{ m.riot_id }}</span>
+                  <span v-if="auth?.user.value?.riot_id === m.riot_id"
+                    class="text-[8px] font-mono ml-auto text-yellow-300/70">tú</span>
                 </div>
               </div>
-              <p v-if="!currentRoom.members.length" class="text-white/30 text-xs font-mono text-center py-4">
-                Sin miembros aún. Invita por código.
+              <p v-if="!currentRoom.members.length" class="text-white/30 text-xs font-mono text-center py-4 italic">
+                Sin miembros aún. Comparte el código.
               </p>
 
               <!-- Pool de la sala (room bets) -->
@@ -525,10 +704,13 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Bravery de la sala -->
+              <div class="mt-4 pt-3 border-t border-white/10">
+                <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">🎲 BRAVERY · SALA</p>
+                <BraveryPanel :room-code="currentRoom.code" />
+              </div>
             </div>
-            <p v-else class="text-white/30 text-sm font-mono text-center py-8">
-              Crea una sala o únete con un código de 6 chars.
-            </p>
           </div>
         </div>
       </div>
@@ -541,6 +723,7 @@
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ROLE_LABEL } from '../composables/overviewConstants'
+import BraveryPanel from './BraveryPanel.vue'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
@@ -548,12 +731,13 @@ const emit = defineEmits<{ close: []; refresh: [] }>()
 const auth = inject<any>('auth')
 const { t } = useI18n()
 
-type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'challenges' | 'friends' | 'rooms'
+type TabKey = 'hot' | 'leaderboards' | 'clusters' | 'challenges' | 'bravery' | 'friends' | 'rooms'
 const tabs = computed<{ key: TabKey; label: string }[]>(() => [
   { key: 'hot', label: `🔥 ${t('social.hot_bets')}` },
   { key: 'leaderboards', label: `🏆 ${t('social.leaderboards')}` },
   { key: 'clusters', label: `🧬 ${t('social.clusters')}` },
   { key: 'challenges', label: `⚔ ${t('social.challenges')}` },
+  { key: 'bravery', label: `🎲 Bravery` },
   { key: 'friends', label: `👥 ${t('social.friends')}` },
   { key: 'rooms', label: `🏠 ${t('social.rooms')}` },
 ])
@@ -574,7 +758,64 @@ const challengesLoading = ref(false)
 const challengeError = ref('')
 const newChallengeStat = ref<'kills'|'deaths'|'assists'|'kda'|'cs'|'gold'|'damage'|'tumor_score'>('kda')
 const newChallengeAmount = ref(50)
-const newChallengeFormat = ref<'single'|'bo3'|'bo5'|'bo10'>('single')
+const newChallengeFormat = ref<'single'|'bo3'|'tumor_race'|'streak'>('tumor_race')
+const newChallengeRival = ref<number | null>(null)
+
+// Metadata visual de cada formato (orden = orden de presentación)
+const CHALLENGE_FORMATS = [
+  {
+    key: 'tumor_race',
+    emoji: '⚡',
+    name: 'Tumor Race',
+    short: 'Race',
+    desc: 'Cada uno juega su próxima ranked. Menor tumor score gana.',
+    duration: '~40 min',
+    color: '#22d3ee',  // cyan-400
+  },
+  {
+    key: 'streak',
+    emoji: '🔥',
+    name: 'Win Streak',
+    short: 'Streak',
+    desc: 'Primero en lograr 2 wins seguidas gana. Tracking automático.',
+    duration: '~1-3h',
+    color: '#f97316',  // orange-500
+  },
+  {
+    key: 'bo3',
+    emoji: '⚔',
+    name: 'Best of 3',
+    short: 'BO3',
+    desc: 'Primero en ganar 2 partidas ranked. Tiebreaker por tumor.',
+    duration: '~3-6h',
+    color: '#a855f7',  // purple-500
+  },
+  {
+    key: 'single',
+    emoji: '🎯',
+    name: 'Stat Duel',
+    short: '1x',
+    desc: 'Cada uno submitea 1 partida manualmente. Compara la stat elegida.',
+    duration: 'manual',
+    color: '#facc15',  // yellow-400
+  },
+] as const
+
+function formatMeta(key: string) {
+  return CHALLENGE_FORMATS.find(f => f.key === key) || CHALLENGE_FORMATS[0]
+}
+
+function humanizeTimeUntil(iso: string | null | undefined): string {
+  if (!iso) return '?'
+  const ms = new Date(iso).getTime() - Date.now()
+  if (ms <= 0) return 'expirado'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`
+  if (h >= 1) return `${h}h ${m}m`
+  return `${m}m`
+}
+
 const submittingMatchFor = ref('')   // share_code currently submitting
 const matchIdInput = ref('')
 const openBets = ref<any[]>([])
@@ -588,6 +829,11 @@ const newRoomName = ref('')
 const joinCodeInput = ref('')
 const currentRoom = ref<any>(null)
 const roomCopied = ref(false)
+const myRooms = ref<any[]>([])
+const myRoomsLoading = ref(false)
+const leavingRoom = ref(false)
+const deletingRoom = ref(false)
+const LAST_ROOM_KEY = 'zuruweb-last-room-code'
 
 // Room bets (item #4 UI)
 const roomBets = ref<any[]>([])
@@ -676,6 +922,16 @@ async function loadActive() {
   if (active.value === 'clusters') await loadClusters()
   if (active.value === 'challenges') await loadChallenges()
   if (active.value === 'friends') friends.value = await auth.fetchFriends()
+  if (active.value === 'rooms') {
+    await loadMyRooms()
+    // Re-hidratar sala persistida si sigue siendo mía
+    const last = localStorage.getItem(LAST_ROOM_KEY)
+    if (last && !currentRoom.value) {
+      const found = myRooms.value.find((r: any) => r.code === last)
+      if (found) currentRoom.value = found
+      else localStorage.removeItem(LAST_ROOM_KEY)
+    }
+  }
 }
 
 async function loadChallenges() {
@@ -699,7 +955,9 @@ async function onCreateChallenge() {
       statType: newChallengeStat.value,
       amount: newChallengeAmount.value,
       format: newChallengeFormat.value,
+      challengedUserId: newChallengeRival.value ?? undefined,
     })
+    newChallengeRival.value = null
     await loadChallenges()
   } catch (e: any) {
     challengeError.value = e.message || 'Error'
@@ -803,10 +1061,22 @@ async function onRejectFriend(id: number) {
   friends.value = await auth.fetchFriends()
 }
 
+async function loadMyRooms() {
+  myRoomsLoading.value = true
+  try {
+    myRooms.value = await auth.fetchMyRooms()
+  } finally {
+    myRoomsLoading.value = false
+  }
+}
+
 async function onCreateRoom() {
   try {
-    currentRoom.value = await auth.createRoom(newRoomName.value)
+    const r = await auth.createRoom(newRoomName.value)
+    currentRoom.value = r
     newRoomName.value = ''
+    localStorage.setItem(LAST_ROOM_KEY, r.code)
+    await loadMyRooms()
   } catch (e: any) {
     alert(e.message || 'Error creando sala')
   }
@@ -816,17 +1086,51 @@ async function onJoinRoom() {
   const code = joinCodeInput.value.trim().toUpperCase()
   if (!code) return
   try {
-    currentRoom.value = await auth.joinRoom(code)
+    const r = await auth.joinRoom(code)
+    currentRoom.value = r
     joinCodeInput.value = ''
+    localStorage.setItem(LAST_ROOM_KEY, r.code)
+    await loadMyRooms()
   } catch (e: any) {
     alert(e.message || 'Error uniéndose')
   }
 }
 
-async function onLeaveRoom(riotId: string) {
+async function onLeaveCurrent() {
   if (!currentRoom.value) return
-  await auth.leaveRoom(currentRoom.value.code, riotId)
-  currentRoom.value = await auth.fetchRoom(currentRoom.value.code)
+  if (!confirm(`¿Salir de "${currentRoom.value.name || currentRoom.value.code}"?`)) return
+  leavingRoom.value = true
+  try {
+    await auth.leaveRoom(currentRoom.value.code)
+    localStorage.removeItem(LAST_ROOM_KEY)
+    currentRoom.value = null
+    await loadMyRooms()
+  } finally {
+    leavingRoom.value = false
+  }
+}
+
+async function onDeleteCurrent() {
+  if (!currentRoom.value) return
+  if (!confirm(`⚠ Borrar "${currentRoom.value.name || currentRoom.value.code}" para todos? Esta acción no se puede deshacer.`)) return
+  deletingRoom.value = true
+  try {
+    const ok = await auth.deleteRoom(currentRoom.value.code)
+    if (!ok) {
+      alert('No se pudo borrar la sala')
+      return
+    }
+    localStorage.removeItem(LAST_ROOM_KEY)
+    currentRoom.value = null
+    await loadMyRooms()
+  } finally {
+    deletingRoom.value = false
+  }
+}
+
+function onBackToList() {
+  localStorage.removeItem(LAST_ROOM_KEY)
+  currentRoom.value = null
 }
 
 async function copyRoomLink() {
