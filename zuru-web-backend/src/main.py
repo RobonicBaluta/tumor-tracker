@@ -17,6 +17,7 @@ from config import (
 from riot_infra import riot_get as _riot_get, cache_stats
 from tumor_engine import (
     compute_match_tumor_from_stats as _engine_match_score,
+    compute_match_tumor as _engine_match_score_from_participant,
     compute_prior_tumor as _engine_prior,
     compute_team_tumor as _engine_team,
     predict_team_outcome as _engine_predict,
@@ -817,30 +818,56 @@ def find_player_in_participants(participants, puuid, game_name=None, tag_line=No
     return None
 
 
-def get_worst_player_in_match(participants, puuid, game_name=None, tag_line=None):
+def get_worst_player_in_match(participants, puuid, game_name=None, tag_line=None,
+                              game_duration=None, tier=None):
     """Encuentra el peor aliado en una partida.
-    Devuelve None si el jugador no está en la partida (caso raro: cambio de
-    region, match corrupto, etc)."""
+
+    Si se proveen game_duration + tier, selecciona por TUMOR SCORE MÁS ALTO
+    (coherente con lo que la UI muestra como "tumor score" del peor). Sin esos
+    params, fallback a KDA MÁS BAJO (comportamiento legacy, p.ej. getTurboCancer
+    que filtra por KDA<1 explícitamente).
+
+    Devuelve None si el jugador no está en la partida.
+    """
     my_player = find_player_in_participants(participants, puuid, game_name, tag_line)
     if my_player is None:
         return None
     my_team_id = my_player["teamId"]
 
-    worst_player = None
-    worst_kda = float("inf")
+    use_tumor = (game_duration is not None and tier is not None)
 
+    if not use_tumor:
+        worst_player = None
+        worst_kda = float("inf")
+        for p in participants:
+            if p["teamId"] != my_team_id:
+                continue
+            kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
+            p["kda"] = kda
+            if kda < worst_kda:
+                worst_kda = kda
+                worst_player = p
+        return worst_player
+
+    # Selección por tumor_score: el peor = el de mayor puntuación de tumor,
+    # coherente con la métrica mostrada en la UI.
+    worst_player = None
+    worst_tumor = -1
     for p in participants:
-        # Solo aliados (incluyéndote a ti)
         if p["teamId"] != my_team_id:
             continue
-
-        kda = calculate_kda(p["kills"], p["deaths"], p["assists"])
-        p["kda"] = kda
-
-        if kda < worst_kda:
-            worst_kda = kda
+        # Pre-calcular KDA para downstream
+        p["kda"] = calculate_kda(p["kills"], p["deaths"], p["assists"])
+        role = p.get("teamPosition") or p.get("individualPosition") or ""
+        try:
+            # compute_match_tumor devuelve (score, components)
+            result = _engine_match_score_from_participant(p, game_duration, tier, role)
+            t_score = result[0] if isinstance(result, tuple) else result
+        except Exception:
+            t_score = 0
+        if t_score > worst_tumor:
+            worst_tumor = t_score
             worst_player = p
-
     return worst_player
 
 
@@ -1109,7 +1136,12 @@ def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
                 continue
 
             # === Path normal (queue ranked): tumor + worst player ===
-            worst_player = get_worst_player_in_match(participants, puuid, game_name, tag_line)
+            # Pasamos game_duration + tier para que el peor se seleccione por
+            # TUMOR SCORE (coherente con el número mostrado en la card), no por KDA.
+            worst_player = get_worst_player_in_match(
+                participants, puuid, game_name, tag_line,
+                game_duration=game_duration, tier=tier,
+            )
             if not worst_player:
                 continue
 
@@ -3154,17 +3186,19 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
         más sorprendente que el favorito caiga)
       ajuste por prior: si el prior es bajo (<35) sube el multi (improbable),
         si es alto (>65) baja (esperado).
+
+    Lee de `live_snapshots` (SQLite) — guarda player_priors[puuid] al hacer
+    /liveGame.
     """
     try:
-        cache = load_live_cache()
-        snap = cache.get(match_id)
-        players = ((snap or {}).get("data") or {}).get("players") or []
-        target = next((p for p in players if p.get("puuid") == target_puuid), None)
+        snap = get_live_snapshot(match_id)
+        priors = (snap or {}).get("player_priors") or {}
+        target = priors.get(target_puuid)
         if not target:
             return 2.0
         tier = (target.get("tier") or "UNRANKED").upper()
         base = TIER_MULTIPLIER.get(tier, 2.2)
-        prior = target.get("avg_tumor_score")
+        prior = target.get("prior_tumor")
         if prior is None:
             return round(max(1.05, min(6.0, base)), 2)
         # Prior < 35 (jugador "limpio"): bonus +0.8 al multi (improbable que sea sus)
@@ -3182,6 +3216,27 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
 UNDERDOG_BONUS = 1.30  # +30% extra cuando apuestas contra la predicción
 
 
+def _get_match_prediction(match_id):
+    """Devuelve la predicción 5v5 guardada del match (winner, confidence) o None.
+
+    Fuente única de verdad: SQLite `live_snapshots` (escrita al final del
+    flujo de /liveGame). El JSON `live_game_cache.json` es para priors POR
+    jugador, no por match.
+    """
+    snap = get_live_snapshot(match_id)
+    if not snap:
+        return None
+    pred = snap.get("prediction") or {}
+    winner = pred.get("winner")
+    if winner not in ("blue", "red"):
+        return None
+    try:
+        confidence = float(pred.get("confidence") or 0)
+    except Exception:
+        confidence = 0.0
+    return {"winner": winner, "confidence": confidence}
+
+
 def _compute_house_multiplier(match_id, side):
     """Multiplicador dinámico para house bets en partida live.
 
@@ -3195,19 +3250,13 @@ def _compute_house_multiplier(match_id, side):
     Si no hay snapshot (raro), devuelve 2.0 (fair odds).
     """
     try:
-        cache = load_live_cache()
-        snap = cache.get(match_id)
-        if not snap:
-            return 2.0
-        pred = (snap.get("data") or {}).get("prediction") or {}
-        winner = pred.get("winner")  # 'blue'|'red'|'tie'
-        confidence = float(pred.get("confidence") or 0)  # 0-100
-        if winner not in ("blue", "red"):
+        pred = _get_match_prediction(match_id)
+        if not pred:
             return 2.0
         # Confidence → probabilidad del winner side. confidence=0 → 0.5,
         # confidence=100 → 0.92 (cap para que el multi nunca colapse a ~1.0).
-        prob_winner = min(0.92, 0.5 + 0.42 * (confidence / 100.0))
-        is_against = (side != winner)
+        prob_winner = min(0.92, 0.5 + 0.42 * (pred["confidence"] / 100.0))
+        is_against = (side != pred["winner"])
         prob_side = prob_winner if not is_against else (1 - prob_winner)
         mult = 0.95 / max(0.08, prob_side)
         if is_against:
@@ -3230,22 +3279,14 @@ def bets_preview_multiplier():
     if queue_id is not None and not allows_betting(queue_id):
         return jsonify({"error": f"Apuestas solo en SoloQ/Flex (queue: {queue_name(queue_id)})"}), 400
     mult = _compute_house_multiplier(match_id, side)
-    # Indicar si es underdog
-    is_underdog = False
-    try:
-        cache = load_live_cache()
-        snap = cache.get(match_id)
-        if snap:
-            pred = (snap.get("data") or {}).get("prediction") or {}
-            winner = pred.get("winner")
-            if winner in ('blue', 'red') and side != winner:
-                is_underdog = True
-    except Exception:
-        pass
+    pred = _get_match_prediction(match_id)
+    is_underdog = bool(pred and side != pred["winner"])
     return jsonify({
         "multiplier": mult,
         "is_underdog": is_underdog,
         "underdog_bonus": UNDERDOG_BONUS if is_underdog else 1.0,
+        "predicted_winner": pred["winner"] if pred else None,
+        "predicted_confidence": pred["confidence"] if pred else None,
     })
 
 
