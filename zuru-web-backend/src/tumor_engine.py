@@ -402,26 +402,43 @@ def predict_team_outcome(players, tie_threshold=4, confidence_scale=6):
     diff = red_team_tumor - blue_team_tumor
     abs_diff = abs(diff)
 
-    # Tiebreaker: si las medianas son iguales, usar suma total de priors.
-    # Solo se declara "tie" (no hay predicción, no cuenta para accuracy) si
-    # las medianas Y las sumas son EXACTAMENTE iguales.
+    # Tiebreaker: si las medianas son EXACTAMENTE iguales, usa la suma total.
+    # NUNCA usar sum tiebreaker cuando la mediana difiere — eso producía casos
+    # donde el winner mostrado tenía la mediana MÁS ALTA que el loser (incoherente
+    # con la UI, que muestra la mediana como tumor del equipo). Si el usuario ve
+    # blue=14 / red=11, blue NO puede ser el predicted winner por mucho que la
+    # suma diga lo contrario. La mediana es el lord, el sum solo desempata 100% empates.
     blue_sum = sum(p for p in blue_priors if p is not None)
     red_sum  = sum(p for p in red_priors  if p is not None)
     sum_diff = red_sum - blue_sum
 
-    if abs_diff >= tie_threshold:
+    # Tiebreaker secundario: media de los priors válidos (NO suma cruda).
+    # Razón: si blue tiene 4 validos y red tiene 5, sum(blue) será
+    # estructuralmente menor por tener una muestra menos, dando ventaja
+    # artificial al equipo con más streamers. La media normaliza eso.
+    blue_valid_only = [p for p in blue_priors if p is not None]
+    red_valid_only  = [p for p in red_priors  if p is not None]
+    blue_mean = sum(blue_valid_only) / len(blue_valid_only) if blue_valid_only else 50.0
+    red_mean  = sum(red_valid_only)  / len(red_valid_only)  if red_valid_only  else 50.0
+
+    if abs_diff > 0:
+        # Mediana difiere — esa decide, simple y coherente con lo mostrado en UI.
         winner = "blue" if blue_team_tumor < red_team_tumor else "red"
-    elif abs_diff > 0 or abs(sum_diff) > 0:
-        # Medianas cerca o iguales → desempata por suma (menos tumor total gana)
-        if abs(sum_diff) > 0:
-            winner = "blue" if blue_sum < red_sum else "red"
-        else:
-            winner = "blue" if blue_team_tumor < red_team_tumor else "red"
+    elif blue_mean != red_mean:
+        # Medianas exactamente iguales → desempata por media (más justa que suma).
+        winner = "blue" if blue_mean < red_mean else "red"
     else:
-        # Absolutamente idénticos en mediana Y suma: no hay prediccion
+        # Absolutamente idénticos en mediana Y media: no hay prediccion
         winner = "tie"
 
-    confidence = min(99, abs_diff * confidence_scale)
+    # Confidence: si la mediana decide, basada en abs_diff de medianas.
+    # Si tiebreaker por media, escala más suave (eran medianas iguales).
+    if abs_diff > 0:
+        confidence = min(99, abs_diff * confidence_scale)
+    elif blue_mean != red_mean:
+        confidence = min(40, int(abs(blue_mean - red_mean)) * 2)
+    else:
+        confidence = 0
 
     return {
         "blue_team_tumor": blue_team_tumor,
