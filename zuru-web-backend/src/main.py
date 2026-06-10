@@ -24,6 +24,7 @@ from tumor_engine import (
 )
 import auth as _auth
 import users_db as _users
+import bravery_engine as _bravery
 from flask import redirect
 
 
@@ -1803,8 +1804,12 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
 
     # Persistir snapshot: priors + predicción para reutilizar en matchDetail.
     try:
+        # Spectator devuelve gameStartTime en ms (epoch). 0 cuando aún no empezó (loading screen).
+        gst_ms = game.get("gameStartTime") or 0
+        game_start_ts = (gst_ms / 1000.0) if gst_ms else None
         snapshot = {
             "prediction": prediction,
+            "game_start_ts": game_start_ts,
             "player_priors": {
                 p["puuid"]: {
                     "prior_tumor": p.get("avg_tumor_score"),
@@ -3183,14 +3188,43 @@ def rooms_join(code):
 
 @app.route('/rooms/<code>/leave', methods=['POST'])
 def rooms_leave(code):
+    """Sale de la sala. Usa el riot_id del user logueado (body opcional)."""
     room = _users.get_room_by_code(code)
     if not room:
         return jsonify({"error": "Sala no encontrada"}), 404
-    data = request.get_json() or {}
-    riot_id = data.get("riot_id", "").strip()
+    user = _current_user()
+    data = request.get_json(silent=True) or {}
+    riot_id = (data.get("riot_id") or "").strip()
+    if not riot_id and user and user.get("riot_id"):
+        riot_id = user["riot_id"]
     if not riot_id:
         return jsonify({"error": "riot_id requerido"}), 400
     _users.remove_room_member(room["id"], riot_id)
+    return jsonify({"ok": True})
+
+
+@app.route('/rooms/mine', methods=['GET'])
+def rooms_mine():
+    """Lista salas donde el user es owner o miembro."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    rooms = _users.list_rooms_for_user(user["id"], user.get("riot_id"))
+    return jsonify(rooms)
+
+
+@app.route('/rooms/<code>', methods=['DELETE'])
+def rooms_delete(code):
+    """Sólo el owner puede borrar la sala completa."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    ok = _users.delete_room(room["id"], user["id"])
+    if not ok:
+        return jsonify({"error": "Solo el dueño puede borrar la sala"}), 403
     return jsonify({"ok": True})
 
 
@@ -3274,12 +3308,59 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
             base += 0.8
         elif prior > 65:
             base -= 0.5
+        # Decay temporal (mismo modelo que match bets)
+        base *= _payout_decay_factor(_live_elapsed_seconds(match_id))
         return round(max(1.05, min(6.0, base)), 2)
     except Exception:
         return 2.0
 
 
 UNDERDOG_BONUS = 1.30  # +30% extra cuando apuestas contra la predicción
+
+# Ventana de apuestas en una partida live.
+# Una SoloQ típica dura ~28-32 min; cerramos a los 25 min de gametime para evitar
+# apuestas "con foresight" muy cerca del final.
+BET_CLOSE_AT_ELAPSED = 25 * 60  # 1500s
+# El payout decae linealmente entre min 5 y BET_CLOSE_AT_ELAPSED hasta el floor.
+PAYOUT_DECAY_START   = 5 * 60   # antes de min 5 no hay decay
+PAYOUT_DECAY_END     = 25 * 60  # a 25 min queda el floor
+PAYOUT_DECAY_FLOOR   = 0.55     # multiplier no cae por debajo de 55% del nominal
+
+
+def _live_elapsed_seconds(match_id):
+    """Segundos transcurridos desde el inicio real de la partida live.
+    Devuelve None si no hay snapshot o no se conoce gameStartTime aún (loading screen).
+    """
+    snap = get_live_snapshot(match_id)
+    if not snap:
+        return None
+    g0 = snap.get("game_start_ts")
+    if not g0:
+        return None
+    return max(0.0, time.time() - float(g0))
+
+
+def _payout_decay_factor(elapsed):
+    """Factor multiplicativo [PAYOUT_DECAY_FLOOR..1.0] aplicado al multiplier.
+
+    Antes de PAYOUT_DECAY_START → 1.0 (sin decay).
+    Entre START..END → decae linealmente hasta PAYOUT_DECAY_FLOOR.
+    Después de END → PAYOUT_DECAY_FLOOR (pero igualmente apuestas estarán cerradas).
+    """
+    if elapsed is None or elapsed <= PAYOUT_DECAY_START:
+        return 1.0
+    if elapsed >= PAYOUT_DECAY_END:
+        return PAYOUT_DECAY_FLOOR
+    frac = (elapsed - PAYOUT_DECAY_START) / (PAYOUT_DECAY_END - PAYOUT_DECAY_START)
+    return 1.0 - frac * (1.0 - PAYOUT_DECAY_FLOOR)
+
+
+def _is_betting_closed(match_id):
+    """True si la ventana de apuestas ya cerró por tiempo de juego elapsed.
+    Si no podemos determinar elapsed (sin snapshot), permitimos apostar.
+    """
+    elapsed = _live_elapsed_seconds(match_id)
+    return elapsed is not None and elapsed >= BET_CLOSE_AT_ELAPSED
 
 
 def _get_match_prediction(match_id):
@@ -3327,6 +3408,9 @@ def _compute_house_multiplier(match_id, side):
         mult = 0.95 / max(0.08, prob_side)
         if is_against:
             mult *= UNDERDOG_BONUS
+        # Decay temporal: cuanto más avanzada la partida cuando apuestas,
+        # peor payout (cada vez sabes "más" del resultado).
+        mult *= _payout_decay_factor(_live_elapsed_seconds(match_id))
         return max(1.05, min(6.5, round(mult, 2)))
     except Exception:
         return 2.0
@@ -3344,6 +3428,8 @@ def bets_preview_multiplier():
     queue_id = _resolve_match_queue_id(match_id)
     if queue_id is not None and not allows_betting(queue_id):
         return jsonify({"error": f"Apuestas solo en SoloQ/Flex (queue: {queue_name(queue_id)})"}), 400
+    elapsed = _live_elapsed_seconds(match_id)
+    closed = elapsed is not None and elapsed >= BET_CLOSE_AT_ELAPSED
     mult = _compute_house_multiplier(match_id, side)
     pred = _get_match_prediction(match_id)
     is_underdog = bool(pred and side != pred["winner"])
@@ -3353,6 +3439,10 @@ def bets_preview_multiplier():
         "underdog_bonus": UNDERDOG_BONUS if is_underdog else 1.0,
         "predicted_winner": pred["winner"] if pred else None,
         "predicted_confidence": pred["confidence"] if pred else None,
+        "elapsed_seconds": elapsed,
+        "betting_closed": closed,
+        "close_at_elapsed": BET_CLOSE_AT_ELAPSED,
+        "decay_factor": round(_payout_decay_factor(elapsed), 3) if elapsed is not None else 1.0,
     })
 
 
@@ -3388,6 +3478,12 @@ def bets_create():
     if queue_id is not None and not allows_betting(queue_id):
         return jsonify({
             "error": f"Apuestas solo permitidas en SoloQ y Flex (queue actual: {queue_name(queue_id)})"
+        }), 400
+
+    # Gate temporal: bets cerradas pasados BET_CLOSE_AT_ELAPSED segundos de partida.
+    if _is_betting_closed(match_id):
+        return jsonify({
+            "error": "Ventana de apuestas cerrada — la partida lleva demasiado tiempo (>25 min). Próxima partida será otra cosa."
         }), 400
 
     if bet_kind == "match":
@@ -3704,10 +3800,15 @@ def challenges_create():
     if amount <= 0 or stat_type not in _users.VALID_CHALLENGE_STATS:
         return jsonify({"error": "stat_type/amount inválidos"}), 400
     if fmt not in _users.CHALLENGE_FORMATS:
-        return jsonify({"error": "format debe ser single|bo3|bo5|bo10"}), 400
+        return jsonify({"error": "format debe ser single|bo3|tumor_race|streak"}), 400
     if amount > user["currency"]:
         return jsonify({"error": "Saldo insuficiente"}), 400
-    ch = _users.create_challenge(user["id"], stat_type, amount, comparison, fmt=fmt)
+    target_user_id = data.get("challenged_user_id")
+    try:
+        target_user_id = int(target_user_id) if target_user_id else None
+    except Exception:
+        target_user_id = None
+    ch = _users.create_challenge(user["id"], stat_type, amount, comparison, fmt=fmt, target_user_id=target_user_id)
     if not ch:
         return jsonify({"error": "No se pudo crear el challenge"}), 500
     return jsonify(_augment_challenge(ch))
@@ -3717,70 +3818,82 @@ def challenges_create():
 # Best-of-N challenge poller (item #3)
 # ---------------------------------------------------------------------------
 
+def _matches_after_accepted(puuid, accepted_ts_sec):
+    """Lista match_ids ranked (SoloQ + Flex) jugados tras accepted_ts_sec.
+    Mantiene orden de Riot (más reciente primero por id)."""
+    ids = []
+    for q in sorted(RANKED_QUEUES):
+        url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids"
+               f"?queue={q}&start=0&count=20&startTime={int(accepted_ts_sec)}")
+        res = riot_get(url)
+        if res.status_code == 200:
+            ids.extend(res.json() or [])
+    seen = set()
+    return [m for m in ids if not (m in seen or seen.add(m))]
+
+
+def _enriched_matches_for_player(puuid, match_ids):
+    """Devuelve [(game_creation_ts, match_id, won, tumor_score)] orden ascendente."""
+    enriched = []
+    for mid in match_ids:
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
+        if mres.status_code != 200:
+            continue
+        info_full = mres.json()
+        info = info_full.get("info", {})
+        parts = info.get("participants", []) or []
+        p = next((x for x in parts if x.get("puuid") == puuid), None)
+        if not p:
+            continue
+        won = bool(p.get("win"))
+        ts = _extract_player_stat(info_full, puuid, "tumor_score") or 0
+        enriched.append((info.get("gameCreation", 0), mid, won, float(ts)))
+    enriched.sort(key=lambda x: x[0])  # oldest first
+    return enriched
+
+
 def _poll_one_challenge(ch):
-    """Procesa un challenge bo* aceptado: trae partidas ranked solo de ambos
-    posteriores al accepted_at, cuenta wins, decide si resolver."""
+    """Procesa un challenge no-single aceptado. Format-aware:
+       - bo3:       primero en 2 wins
+       - tumor_race: cada uno juega 1 match; menor tumor gana
+       - streak:    primer jugador en lograr 2 wins seguidas
+    """
     accepted_ts_ms = int((ch.get("accepted_at") or 0) * 1000)
     if accepted_ts_ms == 0:
         return None
-
     challenger_puuid = ch["challenger_puuid"]
     challenged_puuid = ch["challenged_puuid"]
     if not challenged_puuid:
         return None
 
-    def _matches_after(puuid):
-        # Match v5 — Riot solo deja filtrar 1 queue por llamada → llamamos por
-        # cada queue de RANKED_QUEUES y mergemos. Mantenemos el orden por id (más
-        # reciente primero coincide con orden lexicográfico inverso de match_id).
-        ids = []
-        for q in sorted(RANKED_QUEUES):
-            url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{puuid}/ids"
-                   f"?queue={q}&start=0&count=20&startTime={accepted_ts_ms // 1000}")
-            res = riot_get(url)
-            if res.status_code == 200:
-                ids.extend(res.json() or [])
-        # Dedup preservando orden
-        seen = set()
-        return [m for m in ids if not (m in seen or seen.add(m))]
+    fmt = ch.get("format") or "bo3"
+    accepted_ts_sec = accepted_ts_ms // 1000
 
-    def _process(puuid, match_ids, prefix):
-        wins = 0
-        tumor_total = 0.0
-        for mid in match_ids:
-            mres = riot_get(f"{MATCH_DETAILS_URL}/{mid}")
-            if mres.status_code != 200:
-                continue
-            info = mres.json()
-            parts = info.get("info", {}).get("participants", []) or []
-            p = next((x for x in parts if x.get("puuid") == puuid), None)
-            if not p:
-                continue
-            if p.get("win"):
-                wins += 1
-            ts = _extract_player_stat(info, puuid, "tumor_score")
-            if ts is not None:
-                tumor_total += ts
-        return wins, tumor_total
+    ch_matches = _matches_after_accepted(challenger_puuid, accepted_ts_sec)
+    dh_matches = _matches_after_accepted(challenged_puuid, accepted_ts_sec)
+    ch_enriched = _enriched_matches_for_player(challenger_puuid, ch_matches)
+    dh_enriched = _enriched_matches_for_player(challenged_puuid, dh_matches)
 
-    challenger_matches = _matches_after(challenger_puuid)
-    challenged_matches = _matches_after(challenged_puuid)
-    cw, ct = _process(challenger_puuid, challenger_matches, "challenger")
-    dw, dt = _process(challenged_puuid, challenged_matches, "challenged")
+    expired = (ch.get("expires_at") or 0) > 0 and time.time() > ch["expires_at"]
 
-    _users.update_challenge_progress(ch["id"], cw, dw, ct, dt)
-
-    needed = ch["matches_required"]
-    # Mayoría alcanzada
-    if cw >= needed and cw > dw:
-        return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason=f"{cw}-{dw}")
-    if dw >= needed and dw > cw:
-        return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason=f"{cw}-{dw}")
-
-    # Expirado: tiebreaker por tumor total más bajo
-    if (ch.get("expires_at") or 0) > 0 and time.time() > ch["expires_at"]:
-        if cw == dw:
-            # Empate puro → menor tumor gana, si vale 0 → push (refund)
+    # === Format: BO3 — primer en alcanzar 2 wins ===
+    if fmt == "bo3":
+        cw = sum(1 for _, _, won, _ in ch_enriched if won)
+        dw = sum(1 for _, _, won, _ in dh_enriched if won)
+        ct = sum(t for _, _, _, t in ch_enriched)
+        dt = sum(t for _, _, _, t in dh_enriched)
+        _users.update_challenge_progress(ch["id"], cw, dw, ct, dt)
+        needed = ch["matches_required"]
+        if cw >= needed and cw > dw:
+            return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason=f"{cw}-{dw}")
+        if dw >= needed and dw > cw:
+            return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason=f"{cw}-{dw}")
+        if expired:
+            if cw > dw:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason=f"expired {cw}-{dw}")
+            if dw > cw:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason=f"expired {cw}-{dw}")
+            # Tiebreak por tumor (menor gana)
             if ct == dt:
                 _users.push_challenge_refund(ch["id"], reason="tie_no_data")
             elif ct < dt:
@@ -3789,12 +3902,101 @@ def _poll_one_challenge(ch):
             else:
                 _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
                                                  reason=f"tiebreak tumor {dt:.0f}<{ct:.0f}")
-        elif cw > dw:
-            _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
-                                             reason=f"expired {cw}-{dw}")
-        else:
-            _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
-                                             reason=f"expired {cw}-{dw}")
+            return _users.get_challenge_by_id(ch["id"])
+        return None
+
+    # === Format: TUMOR RACE — cada uno juega 1 match, menor tumor gana ===
+    if fmt == "tumor_race":
+        # Tomamos el PRIMER match cronológico de cada uno (oldest first)
+        c_first = ch_enriched[0] if ch_enriched else None
+        d_first = dh_enriched[0] if dh_enriched else None
+        # Almacenamos progreso usando los campos existentes
+        c_tumor = c_first[3] if c_first else 0.0
+        d_tumor = d_first[3] if d_first else 0.0
+        c_games = 1 if c_first else 0
+        d_games = 1 if d_first else 0
+        _users.update_challenge_progress(ch["id"], c_games, d_games, c_tumor, d_tumor)
+
+        if c_first and d_first:
+            if c_tumor < d_tumor:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
+                    reason=f"tumor race {c_tumor:.0f}<{d_tumor:.0f}")
+            if d_tumor < c_tumor:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
+                    reason=f"tumor race {d_tumor:.0f}<{c_tumor:.0f}")
+            # Empate exacto → tiebreak por quién ganó la partida (los wins valen)
+            c_won = c_first[2]; d_won = d_first[2]
+            if c_won and not d_won:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
+                    reason="tumor tie, you won")
+            if d_won and not c_won:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
+                    reason="tumor tie, you won")
+            _users.push_challenge_refund(ch["id"], reason="tumor tie + both lost/won")
+            return _users.get_challenge_by_id(ch["id"])
+
+        if expired:
+            # Alguien no jugó: el que SÍ jugó gana por walkover; si ninguno, refund
+            if c_first and not d_first:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason="walkover")
+            if d_first and not c_first:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason="walkover")
+            _users.push_challenge_refund(ch["id"], reason="nobody played")
+            return _users.get_challenge_by_id(ch["id"])
+        return None
+
+    # === Format: STREAK — primero en 2 wins seguidas (cronológicamente) ===
+    if fmt == "streak":
+        required = ch["matches_required"] or 2
+
+        def _find_streak_completion(enriched, n):
+            """Devuelve (game_creation_ts, current_streak, max_streak).
+            game_creation_ts es el timestamp donde el jugador alcanzó la streak
+            (None si nunca). current_streak es la racha actual al final."""
+            streak = 0
+            max_streak = 0
+            reached_ts = None
+            for ts, _mid, won, _tumor in enriched:
+                if won:
+                    streak += 1
+                    if streak > max_streak:
+                        max_streak = streak
+                    if streak >= n and reached_ts is None:
+                        reached_ts = ts
+                else:
+                    streak = 0
+            return reached_ts, streak, max_streak
+
+        c_reach, c_curr, c_max = _find_streak_completion(ch_enriched, required)
+        d_reach, d_curr, d_max = _find_streak_completion(dh_enriched, required)
+
+        # Guardamos current_streak en challenger_wins / challenged_wins (display).
+        # tumor_total guarda el max_streak alcanzado por si lo queremos mostrar.
+        _users.update_challenge_progress(ch["id"], c_curr, d_curr, float(c_max), float(d_max))
+
+        if c_reach and d_reach:
+            # Ambos llegaron → el primero cronológicamente gana
+            winner_id = ch["challenger_user_id"] if c_reach <= d_reach else ch["challenged_user_id"]
+            return _users.resolve_bestofn_challenge(ch["id"], winner_id, reason=f"streak {required}")
+        if c_reach:
+            return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"], reason=f"streak {required}")
+        if d_reach:
+            return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"], reason=f"streak {required}")
+
+        if expired:
+            if c_max > d_max:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenger_user_id"],
+                    reason=f"expired max streak {c_max}>{d_max}")
+            if d_max > c_max:
+                return _users.resolve_bestofn_challenge(ch["id"], ch["challenged_user_id"],
+                    reason=f"expired max streak {d_max}>{c_max}")
+            _users.push_challenge_refund(ch["id"], reason="streak tied")
+            return _users.get_challenge_by_id(ch["id"])
+        return None
+
+    # Format desconocido (legacy bo5/bo10 sin migrar) — refund a ambos
+    if expired:
+        _users.push_challenge_refund(ch["id"], reason=f"unknown_format:{fmt}")
         return _users.get_challenge_by_id(ch["id"])
     return None
 
@@ -3880,7 +4082,12 @@ def challenges_submit(share_code):
 
 @app.route('/challenges/open', methods=['GET'])
 def challenges_open_feed():
-    return jsonify([_augment_challenge(c) for c in _users.list_open_challenges(limit=50)])
+    user = _current_user()
+    viewer_id = user["id"] if user else None
+    return jsonify([
+        _augment_challenge(c)
+        for c in _users.list_open_challenges(viewer_user_id=viewer_id, limit=50)
+    ])
 
 
 @app.route('/challenges/mine', methods=['GET'])
@@ -4342,18 +4549,28 @@ def remove_blacklist():
 
 
 def _resolve_pending_predictions(limit=None):
-    """Resuelve predicciones sin resolver consultando el match detail real."""
+    """Resuelve predicciones sin resolver consultando el match detail real.
+    También dispara la resolución de TODAS las bets matched de ese match_id
+    (match bets P2P + house, y stat bets) para que no haga falta abrir
+    MyBetsModal para que se resuelvan."""
     db = _pred_db()
     q = "SELECT match_id, viewer_puuid, predicted_winner FROM predictions WHERE resolved=0"
     if limit:
         q += f" LIMIT {int(limit)}"
     rows = db.execute(q).fetchall()
+    # Agrupar por match_id para una sola llamada Match v5 por partida
+    by_match = {}
     for match_id, viewer_puuid, predicted in rows:
-        if predicted is None:
-            db.execute(
-                "UPDATE predictions SET resolved=1 WHERE match_id=? AND viewer_puuid=?",
-                (match_id, viewer_puuid),
-            )
+        by_match.setdefault(match_id, []).append((viewer_puuid, predicted))
+
+    for match_id, viewers in by_match.items():
+        # Si no quedan viewers con predicted, marca todos resolved sin Riot fetch
+        if all(predicted is None for _, predicted in viewers):
+            for viewer_puuid, _ in viewers:
+                db.execute(
+                    "UPDATE predictions SET resolved=1 WHERE match_id=? AND viewer_puuid=?",
+                    (match_id, viewer_puuid),
+                )
             continue
         mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
         if mres.status_code != 200:
@@ -4364,13 +4581,117 @@ def _resolve_pending_predictions(limit=None):
             continue
         blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
         actual = "blue" if blue_win else "red"
-        predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
+
+        # game_end_ts para refund window
+        game_end_ts = None
+        try:
+            end_ms = info.get("gameEndTimestamp")
+            if end_ms:
+                game_end_ts = float(end_ms) / 1000.0
+            else:
+                start_ms = info.get("gameStartTimestamp")
+                dur = info.get("gameDuration", 0) or 0
+                if start_ms:
+                    game_end_ts = (float(start_ms) / 1000.0) + float(dur)
+        except Exception:
+            pass
+
+        # Marcar predicciones resueltas
+        for viewer_puuid, predicted in viewers:
+            if predicted is None:
+                db.execute(
+                    "UPDATE predictions SET resolved=1 WHERE match_id=? AND viewer_puuid=?",
+                    (match_id, viewer_puuid),
+                )
+            else:
+                predictions_mark_resolved(match_id, viewer_puuid, actual, predicted)
+
+        # Auto-resolver match bets (P2P + house) — idempotente, sólo toca status='matched'
+        try:
+            _users.resolve_bets_for_match(match_id, actual, game_end_ts=game_end_ts)
+        except Exception:
+            pass
+
+        # Auto-resolver stat bets de ese match
+        try:
+            stat_bets = _users.list_stat_bets_for_match(match_id)
+            for sb in (stat_bets or []):
+                tp = sb.get("target_puuid")
+                stype = sb.get("stat_type")
+                if not tp or not stype:
+                    continue
+                actual_val = _extract_player_stat(mres.json(), tp, stype)
+                if actual_val is None:
+                    continue
+                _users.resolve_stat_bet(sb["id"], actual_val)
+        except Exception:
+            pass
+
+
+def _auto_resolve_orphan_bets(max_matches=20):
+    """Sweep para bets matched cuyo match_id NO está en `predictions`.
+    Esto cubre apuestas hechas sobre matches que el viewer no haya predicho
+    (e.g. apostó en partida ajena). Por throttling, limita a max_matches calls
+    a Riot por invocación.
+
+    Filtra match_ids ya cubiertos por `_resolve_pending_predictions` mirando
+    si todavía quedan bets matched de ese match (lo cual significa que la
+    función anterior no las resolvió → probable: sin row en `predictions`).
+    """
+    try:
+        match_ids = _users.list_pending_match_ids(min_age_seconds=180, limit=max_matches)
+    except Exception:
+        return
+    for match_id in match_ids:
+        mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+        if mres.status_code != 200:
+            continue
+        info = mres.json().get("info", {})
+        parts = info.get("participants", []) or []
+        if not parts:
+            continue
+        blue_win = next((p["win"] for p in parts if p["teamId"] == 100), False)
+        actual = "blue" if blue_win else "red"
+        game_end_ts = None
+        try:
+            end_ms = info.get("gameEndTimestamp")
+            if end_ms:
+                game_end_ts = float(end_ms) / 1000.0
+            else:
+                start_ms = info.get("gameStartTimestamp")
+                dur = info.get("gameDuration", 0) or 0
+                if start_ms:
+                    game_end_ts = (float(start_ms) / 1000.0) + float(dur)
+        except Exception:
+            pass
+        try:
+            _users.resolve_bets_for_match(match_id, actual, game_end_ts=game_end_ts)
+        except Exception:
+            pass
+        try:
+            stat_bets = _users.list_stat_bets_for_match(match_id)
+            for sb in (stat_bets or []):
+                tp = sb.get("target_puuid")
+                stype = sb.get("stat_type")
+                if not tp or not stype:
+                    continue
+                actual_val = _extract_player_stat(mres.json(), tp, stype)
+                if actual_val is None:
+                    continue
+                _users.resolve_stat_bet(sb["id"], actual_val)
+        except Exception:
+            pass
 
 
 @app.route('/predictionStats', methods=['GET'])
 def prediction_stats_endpoint():
-    """Resuelve predicciones pendientes y devuelve el acierto global."""
+    """Resuelve predicciones pendientes y devuelve el acierto global.
+    También barre bets matched de matches sin predicción asociada."""
     _resolve_pending_predictions()
+    try:
+        _auto_resolve_orphan_bets(max_matches=15)
+    except Exception:
+        pass
     preds = predictions_all()
 
     resolved = [p for p in preds if p.get("resolved") and p.get("predicted_winner")]
@@ -4679,6 +5000,219 @@ def get_el_peor_endpoint():
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Bravery endpoints — randomize champion/lane/items, lock in, resolve post-match
+# ---------------------------------------------------------------------------
+
+@app.route('/bravery/data', methods=['GET'])
+def bravery_data():
+    """Devuelve {version, champions, items} de Data Dragon (cacheado 24h).
+    items son finales (>=2000g, no upgradeable, sin componentes ni consumibles)."""
+    data = _bravery.get_data()
+    if not data:
+        return jsonify({"error": "Data Dragon no disponible"}), 503
+    return jsonify(data)
+
+
+@app.route('/bravery/roll', methods=['POST'])
+def bravery_roll():
+    """Genera un roll de bravery sin lockearlo aún.
+    Body: {dimensions: ['champion','lane'?,'items'?], lane_filter?, item_count?}
+    Devuelve {champion, lane, items, dimensions, style_mult}."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    dims = data.get("dimensions") or ["champion"]
+    if "champion" not in dims:
+        dims = ["champion"] + list(dims)
+    lane_filter = data.get("lane_filter")
+    try:
+        item_count = int(data.get("item_count", 5))
+    except Exception:
+        item_count = 5
+    item_count = max(3, min(6, item_count))
+    rolled = _bravery.roll(dims, lane_filter=lane_filter, item_count=item_count)
+    if not rolled:
+        return jsonify({"error": "Data Dragon no disponible"}), 503
+    return jsonify(rolled)
+
+
+@app.route('/bravery/lock', methods=['POST'])
+def bravery_lock():
+    """Lockea un roll. Escrowa el stake.
+    Body: {champion_id, champion_name, lane?, items?, dimensions, stake, room_code?}
+    items es lista de {id, name, gold}."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"error": "Vincula tu Riot ID antes de bravery"}), 400
+    data = request.get_json() or {}
+    try:
+        champion_id = int(data.get("champion_id"))
+        stake = int(data.get("stake"))
+    except Exception:
+        return jsonify({"error": "champion_id/stake inválidos"}), 400
+    champion_name = data.get("champion_name") or ""
+    if not champion_name:
+        return jsonify({"error": "champion_name requerido"}), 400
+    if stake <= 0 or stake > user["currency"]:
+        return jsonify({"error": "Stake inválido o saldo insuficiente"}), 400
+    if _users.user_has_pending_bravery(user["id"]):
+        return jsonify({"error": "Ya tienes un bravery pending. Cancélalo o juega antes de crear otro."}), 400
+
+    lane = data.get("lane")
+    if lane and lane not in _bravery.VALID_LANES:
+        return jsonify({"error": "lane inválida"}), 400
+    items = data.get("items")
+    # Validamos items mínimamente: lista de dicts con id+name
+    if items is not None:
+        if not isinstance(items, list) or not all(
+            isinstance(it, dict) and "id" in it and "name" in it for it in items
+        ):
+            return jsonify({"error": "items debe ser lista de {id, name}"}), 400
+
+    dims = set(["champion"])
+    if lane: dims.add("lane")
+    if items: dims.add("items")
+    style_mult = _bravery.style_mult_for_dims(dims)
+    room_code = data.get("room_code") or None
+
+    lock = _users.create_bravery_lock(
+        user_id=user["id"],
+        puuid=user["riot_puuid"],
+        champion_id=champion_id,
+        champion_name=champion_name,
+        lane=lane,
+        items=items,
+        dimensions=len(dims),
+        style_mult=style_mult,
+        stake=stake,
+        room_code=room_code,
+    )
+    if not lock:
+        return jsonify({"error": "No se pudo crear el lock"}), 500
+    return jsonify(lock)
+
+
+@app.route('/bravery/<int:lid>/cancel', methods=['POST'])
+def bravery_cancel(lid):
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    res = _users.cancel_bravery_lock(user["id"], lid)
+    if not res:
+        return jsonify({"error": "Lock no cancelable"}), 400
+    return jsonify(res)
+
+
+@app.route('/bravery/mine', methods=['GET'])
+def bravery_mine():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    return jsonify(_users.list_user_bravery_locks(user["id"]))
+
+
+@app.route('/bravery/room/<code>', methods=['GET'])
+def bravery_room_locks(code):
+    """Locks de bravery de una sala (para verlos junto a los miembros)."""
+    return jsonify(_users.list_room_bravery_locks(code))
+
+
+def _resolve_one_bravery(lock):
+    """Resuelve un bravery lock pendiente buscando la primera partida del
+    user posterior al lock. Devuelve dict {status, payout?, match_id?, error?}."""
+    now = time.time()
+    # Expiración: si pasaron BRAVERY_REFUND_AFTER, refund automático
+    if lock.get("created_at") and (now - lock["created_at"]) > _users.BRAVERY_REFUND_AFTER:
+        _users.refund_bravery_lock(lock["id"], reason="expired_no_match")
+        return {"status": "refunded", "reason": "expired"}
+
+    # Buscar matches posteriores al lock (ranked + normal + aram acepta)
+    start_time = int(lock["created_at"])
+    url = (f"{RIOT_BASE_URL}/lol/match/v5/matches/by-puuid/{lock['puuid']}/ids"
+           f"?start=0&count=5&startTime={start_time}")
+    res = riot_get(url)
+    if res.status_code != 200:
+        return {"status": "skipped", "reason": "match_list_unavailable"}
+    match_ids = res.json() or []
+    # Tomamos el match más antiguo posterior al lock (Riot devuelve en orden DESC)
+    if not match_ids:
+        return {"status": "skipped", "reason": "no_matches_yet"}
+    target_id = match_ids[-1]
+
+    mres = riot_get(f"{MATCH_DETAILS_URL}/{target_id}")
+    if mres.status_code != 200:
+        return {"status": "skipped", "reason": "match_details_unavailable"}
+    info = mres.json().get("info", {})
+    parts = info.get("participants", []) or []
+    me = next((p for p in parts if p.get("puuid") == lock["puuid"]), None)
+    if not me:
+        return {"status": "skipped", "reason": "participant_not_found"}
+
+    # Compute tumor
+    queue_id = info.get("queueId")
+    game_duration = info.get("gameDuration") or 0
+    tier_guess = lock.get("tier") or "UNRANKED"  # no fiable; usamos UNRANKED por defecto
+    try:
+        tumor_score = _engine_match_score_from_participant(me, game_duration, tier_guess)
+    except Exception:
+        tumor_score = 50.0
+
+    compliance = _bravery.compute_compliance(lock, me)
+    payout = _bravery.compute_payout(lock["stake"], tumor_score, compliance)
+    _users.resolve_bravery_lock(
+        lid=lock["id"],
+        match_id=target_id,
+        tumor_score=tumor_score,
+        compliance=compliance,
+        payout=payout,
+    )
+    # Notificación
+    try:
+        if payout >= lock["stake"]:
+            push_notification(
+                user_id=lock["user_id"], notif_type="bravery_won",
+                title=f"☢ Bravery +{payout - lock['stake']} TC",
+                body=f"{lock['champion_name']} tumor {round(tumor_score)} · x{compliance['effective_mult']}",
+                link="#/social", icon="🎲",
+            )
+        else:
+            push_notification(
+                user_id=lock["user_id"], notif_type="bravery_lost",
+                title=f"☢ Bravery -{lock['stake'] - payout} TC",
+                body=f"{lock['champion_name']} no cumplió · pagó {payout} TC",
+                link="#/social", icon="💀",
+            )
+    except Exception:
+        pass
+    return {"status": "resolved", "payout": payout, "match_id": target_id,
+            "tumor_score": tumor_score, "compliance": compliance}
+
+
+@app.route('/bravery/resolve-mine', methods=['POST'])
+def bravery_resolve_mine():
+    """Escanea bravery locks pending del user y los resuelve si ya hay partida."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    cur = _users._exec(
+        f"SELECT {_users._BRAVERY_COLS} FROM bravery_locks WHERE user_id=? AND status='pending' ORDER BY created_at ASC",
+        (user["id"],),
+    )
+    locks = [_users._row_to_bravery(r) for r in cur.fetchall()]
+    out = []
+    for lk in locks:
+        try:
+            out.append(_resolve_one_bravery(lk))
+        except Exception as e:
+            out.append({"status": "skipped", "reason": str(e)})
+    # Si algo se resolvió/refundó, refresh balance del frontend
+    return jsonify({"checked": len(locks), "results": out})
 
 
 if __name__ == '__main__':

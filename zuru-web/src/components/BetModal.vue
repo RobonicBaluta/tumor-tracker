@@ -43,17 +43,25 @@
               Calculando multiplicador...
             </div>
             <div v-else-if="side && previewMult !== null" class="bg-black/30 border rounded-xl px-4 py-3 text-center"
-              :class="previewIsUnderdog ? 'border-green-500/50' : 'border-purple-500/30'">
+              :class="bettingClosed ? 'border-red-500/60' : previewIsUnderdog ? 'border-green-500/50' : 'border-purple-500/30'">
               <p class="text-white/40 text-[10px] font-mono tracking-widest">MULTIPLICADOR</p>
-              <p :class="previewIsUnderdog ? 'text-green-300' : 'text-purple-300'"
+              <p :class="bettingClosed ? 'text-red-400' : previewIsUnderdog ? 'text-green-300' : 'text-purple-300'"
                 class="text-3xl font-mono font-black mt-1">x{{ previewMult.toFixed(2) }}</p>
-              <p v-if="previewIsUnderdog" class="text-green-400 text-[10px] font-mono mt-0.5">
+              <p v-if="bettingClosed" class="text-red-400 text-[10px] font-mono font-bold mt-0.5">
+                🚫 VENTANA CERRADA · partida lleva >25 min
+              </p>
+              <p v-else-if="previewIsUnderdog" class="text-green-400 text-[10px] font-mono mt-0.5">
                 ⚡ vas contra la predicción · bonus +30%
               </p>
               <p v-else class="text-white/40 text-[10px] font-mono mt-0.5">
                 Vas con el favorito
               </p>
-              <p v-if="amount > 0" class="text-white/60 text-xs font-mono mt-1.5 leading-relaxed">
+              <!-- Indicador de decay temporal -->
+              <p v-if="!bettingClosed && previewElapsedSec !== null && previewDecay < 0.99"
+                class="text-yellow-400/80 text-[10px] font-mono mt-0.5">
+                ⏱ partida lleva {{ Math.floor(previewElapsedSec / 60) }} min · payout -{{ Math.round((1 - previewDecay) * 100) }}%
+              </p>
+              <p v-if="amount > 0 && !bettingClosed" class="text-white/60 text-xs font-mono mt-1.5 leading-relaxed">
                 Stake: <span class="text-white/80">{{ amount }} TC</span><br>
                 Beneficio si ganas: <span class="text-green-400 font-bold">+{{ Math.round(amount * (previewMult - 1)) }} TC</span>
                 <span class="text-white/30">(recibes {{ Math.round(amount * previewMult) }} en total)</span>
@@ -134,9 +142,10 @@
           <p v-if="error" class="text-red-400 text-xs font-mono">{{ error }}</p>
 
           <button @click="onCreate"
-            :disabled="creating || amount <= 0 || amount > balance || (betKind === 'match' ? !side : !canCreateStat)"
+            :disabled="creating || amount <= 0 || amount > balance || bettingClosed || (betKind === 'match' ? !side : !canCreateStat)"
             class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-mono font-bold px-4 py-3 rounded-lg transition">
             {{
+              bettingClosed ? '🚫 Ventana cerrada' :
               creating ? $t('bets.creating') :
               betKind === 'match'
                 ? `${amount} TC ${side === 'blue' ? '🔵' : side === 'red' ? '🔴' : ''}`
@@ -243,6 +252,9 @@ const side = ref<'blue' | 'red' | ''>('')
 const previewMult = ref<number | null>(null)
 const previewIsUnderdog = ref<boolean>(false)
 const previewLoading = ref<boolean>(false)
+const bettingClosed = ref<boolean>(false)
+const previewElapsedSec = ref<number | null>(null)
+const previewDecay = ref<number>(1.0)
 
 async function onSelectSide(s: 'blue' | 'red') {
   side.value = s
@@ -254,6 +266,9 @@ async function onSelectSide(s: 'blue' | 'red') {
     if (r) {
       previewMult.value = r.multiplier
       previewIsUnderdog.value = r.is_underdog
+      bettingClosed.value = !!r.betting_closed
+      previewElapsedSec.value = r.elapsed_seconds ?? null
+      previewDecay.value = r.decay_factor ?? 1.0
     }
   } finally {
     previewLoading.value = false
@@ -303,6 +318,9 @@ watch(() => props.show, v => {
     previewMult.value = null
     previewIsUnderdog.value = false
     previewLoading.value = false
+    bettingClosed.value = false
+    previewElapsedSec.value = null
+    previewDecay.value = 1.0
   }
 })
 
