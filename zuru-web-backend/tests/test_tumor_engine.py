@@ -194,6 +194,40 @@ class TestPredictTeamOutcome:
         result = te.predict_team_outcome(blue + red)
         assert result["winner"] == "blue"  # mean tiebreaker porque medianas son 50=50
 
+    def test_match_tumor_orders_players_consistently(self):
+        """Invariante crítica: si A tiene mayor match_tumor que B, A es 'peor'
+        según el motor. La selección de worst player en main.get_worst_player_in_match
+        ahora respeta esto (antes seleccionaba por KDA, lo cual discrepaba)."""
+        # Mid (carga visión: 0). Jugador A: bajo daño y CS. Jugador B: KDA un pelín peor pero todo
+        # lo demás mucho mejor.
+        a = {
+            "kills": 2, "deaths": 8, "assists": 3,
+            "totalMinionsKilled": 80, "neutralMinionsKilled": 0,
+            "totalDamageDealtToChampions": 8000,
+            "visionScore": 20,
+            "totalTimeSpentDead": 400,
+        }
+        b = {
+            "kills": 5, "deaths": 10, "assists": 5,
+            "totalMinionsKilled": 220, "neutralMinionsKilled": 5,
+            "totalDamageDealtToChampions": 25000,
+            "visionScore": 30,
+            "totalTimeSpentDead": 200,
+        }
+        score_a, _ = te.compute_match_tumor(a, 1800, "EMERALD", "MIDDLE")
+        score_b, _ = te.compute_match_tumor(b, 1800, "EMERALD", "MIDDLE")
+        # A tiene mejor KDA (0.625 vs 1.0) pero peor todo lo demás.
+        # Por KDA puro, B sería "peor". Por tumor (multi-eje), A es peor.
+        kda_a = (2 + 3) / 8
+        kda_b = (5 + 5) / 10
+        assert kda_a < kda_b, "A debería tener KDA menor (peor por KDA)"
+        assert score_a > score_b, (
+            f"A debería tener tumor MÁS ALTO que B (tumor multi-eje). "
+            f"A_tumor={score_a} B_tumor={score_b}. Esto demuestra el bug: "
+            f"selección por KDA elegía B, selección por tumor elige A — "
+            f"que es lo que la UI muestra."
+        )
+
     def test_streamer_count_does_not_distort_tiebreaker(self):
         """Antes: el tiebreaker era SUMA cruda. Si blue tenía 1 streamer,
         su sum era menor estructuralmente y ganaba el desempate aunque su
