@@ -100,29 +100,98 @@
             <div v-else-if="!clusters.length" class="text-white/30 text-sm font-mono text-center py-8">
               {{ $t('social.no_cluster_data') }}
             </div>
-            <div v-else class="space-y-3">
+            <div v-else class="space-y-4">
               <div v-for="c in clusters" :key="c.id"
-                class="bg-black/30 border border-white/10 rounded-xl p-3">
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="text-2xl">{{ c.emoji }}</span>
-                  <p class="text-white font-mono font-bold">{{ c.name }}</p>
-                  <span class="text-[10px] text-white/40 font-mono ml-auto">{{ $t('social.cluster_size', { n: c.size }) }}</span>
+                class="relative rounded-2xl overflow-hidden border-2 transition hover:scale-[1.01]"
+                :style="{
+                  borderColor: (c.color || '#64748b') + '99',
+                  background: `linear-gradient(135deg, ${c.color || '#64748b'}22 0%, transparent 50%, ${c.color || '#64748b'}11 100%)`,
+                  boxShadow: `0 0 30px -10px ${c.color || '#64748b'}66`
+                }">
+                <!-- Header con emoji enorme + nombre del archetype -->
+                <div class="flex items-center gap-3 p-4 border-b border-white/10">
+                  <div class="text-5xl shrink-0 drop-shadow-lg" style="filter: saturate(1.3)">
+                    {{ c.emoji }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-white font-mono font-black text-xl tracking-wide" :style="{ color: c.color || '#e2e8f0' }">
+                      {{ c.name }}
+                    </p>
+                    <p class="text-white/60 text-[11px] font-mono italic mt-0.5 leading-tight">
+                      {{ c.description || '' }}
+                    </p>
+                  </div>
+                  <div class="shrink-0 text-right">
+                    <p class="text-2xl font-mono font-black" :style="{ color: c.color || '#e2e8f0' }">{{ c.size }}</p>
+                    <p class="text-white/40 text-[9px] font-mono uppercase tracking-widest">jugadores</p>
+                  </div>
                 </div>
-                <div class="grid grid-cols-2 gap-2 mb-2 text-[10px] font-mono">
-                  <p class="text-white/50">{{ $t('social.cluster_avg_prior') }}: <span class="text-yellow-300">{{ c.centroid.avg_prior }}</span></p>
-                  <p class="text-white/50">{{ $t('social.cluster_recent') }}: <span class="text-yellow-300">{{ c.centroid.avg_recent }}</span></p>
-                  <p class="text-white/50">{{ $t('social.cluster_winrate') }}: <span class="text-green-400">{{ c.centroid.win_rate }}%</span></p>
-                  <p class="text-white/50">{{ $t('social.cluster_tilt') }}: <span class="text-orange-400">{{ c.centroid.tilt_frac }}%</span></p>
+
+                <!-- Stats con barras visuales -->
+                <div class="p-4 space-y-2.5">
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] font-mono mb-1">
+                      <span class="text-white/50">Tumor prior</span>
+                      <span class="text-yellow-300 font-bold">{{ c.centroid.avg_prior }}</span>
+                    </div>
+                    <div class="h-1.5 bg-black/40 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full transition-all"
+                        :style="{
+                          width: Math.min(100, c.centroid.avg_prior) + '%',
+                          background: `linear-gradient(90deg, #22c55e 0%, #eab308 50%, #ef4444 100%)`
+                        }"></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] font-mono mb-1">
+                      <span class="text-white/50">Tumor reciente</span>
+                      <span class="text-yellow-300 font-bold">{{ c.centroid.avg_recent }}</span>
+                    </div>
+                    <div class="h-1.5 bg-black/40 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full transition-all"
+                        :style="{
+                          width: Math.min(100, c.centroid.avg_recent) + '%',
+                          background: `linear-gradient(90deg, #22c55e 0%, #eab308 50%, #ef4444 100%)`
+                        }"></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between text-[10px] font-mono mb-1">
+                      <span class="text-white/50">Winrate</span>
+                      <span :class="c.centroid.win_rate >= 55 ? 'text-green-400' : c.centroid.win_rate <= 45 ? 'text-red-400' : 'text-yellow-300'"
+                        class="font-bold">{{ c.centroid.win_rate }}%</span>
+                    </div>
+                    <div class="h-1.5 bg-black/40 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full bg-green-500/70 transition-all"
+                        :style="{ width: c.centroid.win_rate + '%' }"></div>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3 text-[10px] font-mono pt-1">
+                    <p class="text-white/40">
+                      🌋 Tilteados: <span class="text-orange-400 font-bold">{{ c.centroid.tilt_frac }}%</span>
+                    </p>
+                    <p class="text-white/40">
+                      🔥 Hot streak: <span class="text-emerald-400 font-bold">{{ c.centroid.streak_frac }}%</span>
+                    </p>
+                  </div>
                 </div>
-                <div v-if="c.samples.length" class="space-y-1 mt-2">
-                  <p class="text-white/30 text-[9px] font-mono tracking-widest">{{ $t('social.cluster_examples') }}</p>
-                  <div v-for="(s, i) in (c.samples as any[])" :key="i"
-                    class="flex items-center gap-2 text-[10px] font-mono py-0.5">
-                    <span class="text-white/40 w-4">{{ Number(i) + 1 }}.</span>
-                    <span class="text-white/60 flex-1 truncate">{{ s.tier }} · {{ s.role || '?' }}</span>
-                    <span class="text-yellow-300">{{ s.prior_tumor }}</span>
-                    <span class="text-white/40">/</span>
-                    <span class="text-green-400">{{ s.win_rate }}%</span>
+
+                <!-- Ejemplos -->
+                <div v-if="c.samples.length" class="p-4 pt-2 border-t border-white/5 bg-black/20">
+                  <p class="text-white/30 text-[9px] font-mono tracking-widest mb-2">{{ $t('social.cluster_examples') }}</p>
+                  <div class="space-y-1">
+                    <div v-for="(s, i) in (c.samples as any[])" :key="i"
+                      class="flex items-center gap-2 text-[10px] font-mono py-0.5">
+                      <span class="text-white/30 w-4">{{ Number(i) + 1 }}.</span>
+                      <span class="text-white/70 truncate flex-1">
+                        <span class="text-white/40">{{ s.tier || 'UNRANKED' }}</span>
+                        <span class="text-white/20"> · </span>
+                        <span class="text-white/50">{{ ROLE_LABEL[s.role] || (s.role ? s.role.slice(0,3) : '?') }}</span>
+                      </span>
+                      <span class="text-yellow-300 w-7 text-right font-bold">{{ s.prior_tumor }}</span>
+                      <span class="text-white/30">·</span>
+                      <span class="text-green-400 w-10 text-right">{{ s.win_rate }}%</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -471,6 +540,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ROLE_LABEL } from '../composables/overviewConstants'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
