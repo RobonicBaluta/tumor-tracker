@@ -161,6 +161,54 @@ class TestPredictTeamOutcome:
         )
         assert big_diff["confidence"] > small_diff["confidence"]
 
+    # ---- Invariante crítica: el winner SIEMPRE tiene la mediana <= que el loser
+    def test_winner_median_never_exceeds_loser(self):
+        """Bug reproducido en producción: cuando sum_diff es grande y median_diff
+        es pequeño, el sum tiebreaker antiguo flipeaba el winner al equipo con
+        mediana MÁS ALTA. Inconsistente con la UI que muestra la mediana como
+        tumor del equipo. La mediana ahora es absoluta."""
+        # Blue: mediana=14, sum=53. Red: mediana=11, sum=73 (1 outlier alto).
+        blue = [self._player(100, x) for x in [10, 11, 14, 14, 14]]   # mediana 14
+        red  = [self._player(200, x) for x in [5, 8, 11, 13, 36]]      # mediana 11, sum 73
+        result = te.predict_team_outcome(blue + red)
+        # Red tiene mediana menor (11 < 14) → red gana, AUNQUE blue tenga sum menor
+        assert result["winner"] == "red"
+        assert result["red_team_tumor"] == 11
+        assert result["blue_team_tumor"] == 14
+        # Invariante: el winner siempre tiene team_tumor <= loser
+        wt = result["red_team_tumor"] if result["winner"] == "red" else result["blue_team_tumor"]
+        lt = result["blue_team_tumor"] if result["winner"] == "red" else result["red_team_tumor"]
+        assert wt <= lt, f"Winner tumor {wt} should NEVER exceed loser {lt}"
+
+    def test_median_difference_of_1_still_decides(self):
+        """Antes: median_diff < 4 abría puerta al sum tiebreaker. Ahora no."""
+        blue = [self._player(100, x) for x in [9, 10, 10, 10, 11]]   # mediana 10
+        red  = [self._player(200, x) for x in [10, 11, 11, 11, 12]]  # mediana 11
+        result = te.predict_team_outcome(blue + red)
+        assert result["winner"] == "blue"  # mediana 10 < 11
+
+    def test_sum_tiebreaker_only_kicks_in_when_medians_exactly_equal(self):
+        """Sólo cuando medianas son IGUALES la media-de-válidos decide."""
+        blue = [self._player(100, x) for x in [20, 40, 50, 60, 80]]   # mediana 50, mean 50.0
+        red  = [self._player(200, x) for x in [40, 45, 50, 80, 100]]  # mediana 50, mean 63.0
+        result = te.predict_team_outcome(blue + red)
+        assert result["winner"] == "blue"  # mean tiebreaker porque medianas son 50=50
+
+    def test_streamer_count_does_not_distort_tiebreaker(self):
+        """Antes: el tiebreaker era SUMA cruda. Si blue tenía 1 streamer,
+        su sum era menor estructuralmente y ganaba el desempate aunque su
+        mediana fuera peor. Ahora usa media-de-válidos: sin sesgo."""
+        # Blue mediana=52 (peor), 1 streamer → si fuera sum, blue ganaría falso
+        # Red mediana=50 (mejor)
+        blue = [self._player(100, None)] + [self._player(100, 52) for _ in range(4)]
+        red  = [self._player(200, 50) for _ in range(5)]
+        result = te.predict_team_outcome(blue + red)
+        # red tiene mediana más baja (50 < 52), red gana — y la media de blue
+        # válidos (52) también es mayor que red (50)
+        assert result["winner"] == "red"
+        assert result["red_team_tumor"] == 50
+        assert result["blue_team_tumor"] == 52
+
 
 class TestStreakModifiers:
     def test_tilt_adds_penalty(self):
