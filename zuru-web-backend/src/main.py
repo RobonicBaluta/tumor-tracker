@@ -2418,7 +2418,81 @@ def analytics_clusters():
 
     labels, centroids = _kmeans(points, k)
 
-    # Group + label clusters by their dominant trait
+    # ------------------------------------------------------------------
+    # Archetype classifier — orden de prioridad, primero que matchea gana.
+    # Cada uno: (key, predicate(centroid_dict), info dict)
+    # info: name, emoji, color (hex), description, sort_dir
+    #   sort_dir = -1: peor primero (tumor); +1: mejor primero (carry/limpios)
+    # ------------------------------------------------------------------
+    # NOTA: el centroid_summary tiene valores ya escalados a [0, 100]
+    # (avg_prior, avg_recent, win_rate, tilt_frac, streak_frac). Los predicados
+    # comparan en esa escala — no en [0, 1].
+    ARCHETYPES = [
+        ("tumor_cronico", lambda c: c["avg_prior"] > 65, {
+            "name": "Tumor Crónico",
+            "emoji": "💀",
+            "color": "#dc2626",  # red-600
+            "description": "Históricamente tóxicos. Tumor alto + winrate bajo. Si los ves, sufre.",
+            "sort_dir": -1,
+        }),
+        ("hot_streak", lambda c: c["streak_frac"] > 40, {
+            "name": "Hot Streak",
+            "emoji": "🔥",
+            "color": "#f97316",  # orange-500
+            "description": "En racha caliente últimos días. Cuidado: están on fire.",
+            "sort_dir": +1,
+        }),
+        ("en_tilt", lambda c: c["tilt_frac"] > 40, {
+            "name": "En Tilt",
+            "emoji": "🌋",
+            "color": "#ea580c",  # orange-600
+            "description": "Acaban de tener mala racha. Probable que sigan flojos.",
+            "sort_dir": -1,
+        }),
+        ("carry_estable", lambda c: c["avg_prior"] < 35 and c["win_rate"] > 55, {
+            "name": "Carry Estable",
+            "emoji": "👑",
+            "color": "#facc15",  # yellow-400
+            "description": "Tumor bajo + winrate alto. Los buenos de verdad.",
+            "sort_dir": +1,
+        }),
+        ("inestable", lambda c: abs(c["avg_prior"] - c["avg_recent"]) > 20, {
+            "name": "Inestable",
+            "emoji": "⚡",
+            "color": "#a855f7",  # purple-500
+            "description": "Su rendimiento varía mucho. Pueden hacer cualquier cosa.",
+            "sort_dir": -1,
+        }),
+        ("solido", lambda c: c["avg_prior"] < 45 and c["win_rate"] > 50, {
+            "name": "Sólido",
+            "emoji": "🛡",
+            "color": "#22c55e",  # green-500
+            "description": "Decente sin destacar. Reliable.",
+            "sort_dir": +1,
+        }),
+        ("bajon", lambda c: c["avg_recent"] > 55 and c["avg_prior"] < 50, {
+            "name": "En Bajón",
+            "emoji": "📉",
+            "color": "#0891b2",  # cyan-600
+            "description": "Prior medio pero últimas partidas malas. Quizás pase.",
+            "sort_dir": -1,
+        }),
+        ("victima", lambda c: c["avg_prior"] < 35 and c["win_rate"] < 45, {
+            "name": "Víctima",
+            "emoji": "😢",
+            "color": "#64748b",  # slate-500
+            "description": "Tumor bajo pero pierden mucho. Carry sin equipo.",
+            "sort_dir": +1,
+        }),
+        ("promedio", lambda c: True, {  # catch-all
+            "name": "Promedio",
+            "emoji": "⚖",
+            "color": "#94a3b8",  # slate-400
+            "description": "Sin nada llamativo. Ni para bien ni para mal.",
+            "sort_dir": -1,
+        }),
+    ]
+
     clusters = []
     for ci in range(k):
         members = [meta[i] for i in range(len(meta)) if labels[i] == ci]
@@ -2426,44 +2500,36 @@ def analytics_clusters():
             continue
         c = centroids[ci]
         prior_norm, recent_norm, win_rate, tilt_frac, streak_frac = c
-        # Heuristic naming
         avg_prior = prior_norm * 100
         avg_recent = recent_norm * 100
-        if avg_prior > 65:
-            name = "Tumores Crónicos"
-            emoji = "💀"
-        elif avg_prior < 35 and win_rate > 0.55:
-            name = "Carries Funcionales"
-            emoji = "🔥"
-        elif streak_frac > 0.4:
-            name = "Hot Streak"
-            emoji = "📈"
-        elif tilt_frac > 0.4:
-            name = "Tilteados"
-            emoji = "🌋"
-        elif avg_recent > 60:
-            name = "Bajón reciente"
-            emoji = "📉"
-        else:
-            name = "Promedio"
-            emoji = "·"
-        # Sort members by prior (worst first for tumor clusters, best first otherwise)
-        members.sort(key=lambda m: -m["prior_tumor"] if avg_prior > 50 else m["prior_tumor"])
+        centroid_summary = {
+            "avg_prior": round(avg_prior, 1),
+            "avg_recent": round(avg_recent, 1),
+            "win_rate": round(win_rate * 100, 1),
+            "tilt_frac": round(tilt_frac * 100, 1),
+            "streak_frac": round(streak_frac * 100, 1),
+        }
+        # Encuentra archetype
+        archetype = next(
+            (info for key, predicate, info in ARCHETYPES if predicate(centroid_summary)),
+            ARCHETYPES[-1][2],  # fallback Promedio
+        )
+        # Ordena samples según el archetype: si es bueno (sort_dir=+1) muestra
+        # los mejores primero, si es malo (sort_dir=-1) muestra los peores primero
+        members.sort(key=lambda m: (-m["prior_tumor"] if archetype["sort_dir"] == -1
+                                    else m["prior_tumor"]))
         clusters.append({
             "id": ci,
-            "name": name,
-            "emoji": emoji,
+            "name": archetype["name"],
+            "emoji": archetype["emoji"],
+            "color": archetype["color"],
+            "description": archetype["description"],
             "size": len(members),
-            "centroid": {
-                "avg_prior": round(avg_prior, 1),
-                "avg_recent": round(avg_recent, 1),
-                "win_rate": round(win_rate * 100, 1),
-                "tilt_frac": round(tilt_frac * 100, 1),
-                "streak_frac": round(streak_frac * 100, 1),
-            },
-            "samples": members[:6],  # top 6 per cluster
+            "centroid": centroid_summary,
+            "samples": members[:6],
         })
 
+    # Orden de visualización: peores primero (más alto avg_prior arriba)
     clusters.sort(key=lambda c: -c["centroid"]["avg_prior"])
     return jsonify({"clusters": clusters, "n": len(rows), "k": k})
 
