@@ -230,3 +230,10 @@ zuru-web-backend/src/champion_blacklist.json
 zuru-web-backend/src/live_game_cache.json
 zuru-web-backend/venv/
 zuru-web-backend/src/.env
+
+# Obsidian per-user state (no para git, cambia con cada apertura)
+obsidian-vault/.obsidian/workspace.json
+obsidian-vault/.obsidian/workspace-mobile.json
+
+# Script local del owner
+start-zuru.py
