@@ -15,12 +15,14 @@
           <div>
             <label class="block text-white text-sm font-semibold mb-2">Nombre del Juego</label>
             <input v-model="formData.gameName" type="text" placeholder="Nombre de invocador"
+              autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
               class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:pink transition"
               required />
           </div>
           <div>
             <label class="block text-white text-sm font-semibold mb-2">Tag/Usuario</label>
             <input v-model="formData.tagLine" type="text" placeholder="TAG (ej: EUW)"
+              autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
               class="w-32 px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:pink-400 transition"
               required />
           </div>

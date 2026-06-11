@@ -460,6 +460,7 @@
           <div v-else-if="active === 'friends'">
             <div class="flex gap-2 mb-4">
               <input v-model="friendSearchInput" placeholder="Riot ID (Nombre#TAG)"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="flex-1 bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none" />
               <button @click="onAddFriend" :disabled="addingFriend"
                 class="text-xs font-mono px-3 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded-lg">
@@ -728,6 +729,9 @@ import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ROLE_LABEL } from '../composables/overviewConstants'
 import BraveryPanel from './BraveryPanel.vue'
+import { useConfirm } from '../composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
@@ -892,7 +896,12 @@ async function onJoinRoomBet(rb: any) {
 }
 
 async function onStartRoomBet(rb: any) {
-  if (!confirm(`Iniciar pool con ${rb.participants?.length || 0} miembros? Tras esto cada uno juega 1 ranked solo.`)) return
+  const ok = await confirm({
+    title: 'Iniciar pool',
+    message: `Empieza con ${rb.participants?.length || 0} miembros. Tras esto cada uno juega 1 ranked solo.`,
+    confirmText: '▶ Start',
+  })
+  if (!ok) return
   try {
     await auth.startRoomBet(currentRoom.value.code, rb.id)
     await loadRoomBets()
@@ -902,7 +911,14 @@ async function onStartRoomBet(rb: any) {
 }
 
 async function onCancelRoomBet(rb: any) {
-  if (!confirm(`Cancelar pool? Refund ${rb.stake} TC a cada participante.`)) return
+  const ok = await confirm({
+    title: 'Cancelar pool',
+    message: `Refund de ${rb.stake} TC a cada participante.`,
+    confirmText: 'Cancelar pool',
+    cancelText: 'Volver',
+    variant: 'warning',
+  })
+  if (!ok) return
   try {
     await auth.cancelRoomBet(currentRoom.value.code, rb.id)
     await loadRoomBets()
@@ -979,7 +995,14 @@ async function onAcceptChallenge(c: any) {
 }
 
 async function onCancelChallenge(c: any) {
-  if (!confirm(`¿Cancelar challenge ${c.share_code}? Refund ${c.amount} TC.`)) return
+  const ok = await confirm({
+    title: 'Cancelar challenge',
+    message: `${c.share_code} · refund ${c.amount} TC.`,
+    confirmText: 'Cancelar',
+    cancelText: 'Volver',
+    variant: 'warning',
+  })
+  if (!ok) return
   try {
     await auth.cancelChallenge(c.share_code)
     await loadChallenges()
@@ -1102,7 +1125,13 @@ async function onJoinRoom() {
 
 async function onLeaveCurrent() {
   if (!currentRoom.value) return
-  if (!confirm(`¿Salir de "${currentRoom.value.name || currentRoom.value.code}"?`)) return
+  const ok = await confirm({
+    title: 'Salir de la sala',
+    message: `¿Salir de "${currentRoom.value.name || currentRoom.value.code}"?`,
+    confirmText: '🚪 Salir',
+    variant: 'warning',
+  })
+  if (!ok) return
   leavingRoom.value = true
   try {
     await auth.leaveRoom(currentRoom.value.code)
@@ -1116,7 +1145,14 @@ async function onLeaveCurrent() {
 
 async function onDeleteCurrent() {
   if (!currentRoom.value) return
-  if (!confirm(`⚠ Borrar "${currentRoom.value.name || currentRoom.value.code}" para todos? Esta acción no se puede deshacer.`)) return
+  const ok = await confirm({
+    title: '⚠ Borrar sala',
+    message: `Vas a borrar "${currentRoom.value.name || currentRoom.value.code}" para todos los miembros. Esta acción no se puede deshacer.`,
+    confirmText: 'Borrar definitivamente',
+    cancelText: 'Volver',
+    variant: 'danger',
+  })
+  if (!ok) return
   deletingRoom.value = true
   try {
     const ok = await auth.deleteRoom(currentRoom.value.code)

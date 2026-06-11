@@ -139,6 +139,9 @@
 <script setup lang="ts">
 import { ref, computed, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useConfirm } from '../composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -284,7 +287,13 @@ async function copyLink(b: Bet) {
 }
 
 async function onCancel(b: Bet) {
-  if (!confirm(t('bets.confirm_cancel', { code: b.share_code, amount: b.amount }))) return
+  const ok = await confirm({
+    message: t('bets.confirm_cancel', { code: b.share_code, amount: b.amount }),
+    confirmText: t('common.cancel'),
+    cancelText: t('common.back') || 'Volver',
+    variant: 'warning',
+  })
+  if (!ok) return
   cancelling.value = b.share_code
   try {
     await auth.cancelBet(b.share_code)

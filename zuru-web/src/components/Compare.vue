@@ -16,8 +16,10 @@
             <p class="text-blue-400 text-xs font-mono font-bold tracking-widest mb-3">JUGADOR 1</p>
             <div class="flex gap-3">
               <input v-model="form.gameName1" type="text" placeholder="GameName"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="flex-1 px-4 py-3 bg-white/5 border border-blue-500/30 rounded-lg text-white placeholder-white/20 focus:outline-none focus:border-blue-400 transition font-mono" />
               <input v-model="form.tagLine1" type="text" placeholder="EUW"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="w-28 px-4 py-3 bg-white/5 border border-blue-500/30 rounded-lg text-white placeholder-white/20 focus:outline-none focus:border-blue-400 transition font-mono" />
             </div>
           </div>
@@ -34,8 +36,10 @@
             <p class="text-red-400 text-xs font-mono font-bold tracking-widest mb-3">JUGADOR 2</p>
             <div class="flex gap-3">
               <input v-model="form.gameName2" type="text" placeholder="GameName"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="flex-1 px-4 py-3 bg-white/5 border border-red-500/30 rounded-lg text-white placeholder-white/20 focus:outline-none focus:border-red-400 transition font-mono" />
               <input v-model="form.tagLine2" type="text" placeholder="EUW"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="w-28 px-4 py-3 bg-white/5 border border-red-500/30 rounded-lg text-white placeholder-white/20 focus:outline-none focus:border-red-400 transition font-mono" />
             </div>
           </div>

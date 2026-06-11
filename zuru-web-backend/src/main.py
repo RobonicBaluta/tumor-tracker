@@ -990,17 +990,18 @@ def get_el_peor(game_name, tag_line):
         match_ids = matches_res.json()
         worst_players = []
 
-        # 3. Procesar cada partida
-        for match_id in match_ids:
-            match_url = f"{MATCH_DETAILS_URL}/{match_id}"
-            match_res = riot_get(match_url)
-
+        # 3. Fetch en paralelo (8 workers) + procesar en orden
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            _responses = list(_ex.map(
+                lambda mid: riot_get(f"{MATCH_DETAILS_URL}/{mid}"),
+                match_ids,
+            ))
+        for match_res in _responses:
             if match_res.status_code != 200:
                 continue
-
             data = match_res.json()
             participants = data["info"]["participants"]
-
             worst_player = get_worst_player_in_match(participants, puuid)
             if worst_player:
                 worst_players.append(worst_player)
@@ -1086,11 +1087,18 @@ def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
         match_ids = matches_res.json()
         matches_overview = []
 
-        # 4. Procesar cada partida
-        for match_id in match_ids:
-            match_url = f"{MATCH_DETAILS_URL}/{match_id}"
-            match_res = riot_get(match_url)
+        # 4. Fetch de Match v5 en paralelo (8 workers). Antes era secuencial: 20 calls × ~200ms
+        # cold cache = 4s sólo en network. riot_get tiene su propio rate limiter + cache,
+        # thread-safe. El procesamiento de cada respuesta se hace en serie porque es CPU-bound rápido.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            _match_responses = list(_ex.map(
+                lambda mid: riot_get(f"{MATCH_DETAILS_URL}/{mid}"),
+                match_ids,
+            ))
 
+        # 5. Procesar cada partida (respeta el orden original de match_ids)
+        for match_id, match_res in zip(match_ids, _match_responses):
             if match_res.status_code != 200:
                 continue
 
