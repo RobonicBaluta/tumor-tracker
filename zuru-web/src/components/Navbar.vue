@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, ref, onMounted, onUnmounted, onBeforeUnmount } from 'vue';
-import MyBetsModal from './MyBetsModal.vue';
-import SocialModal from './SocialModal.vue';
-import UserModal from './UserModal.vue';
+import { computed, inject, ref, onMounted, onUnmounted, onBeforeUnmount, defineAsyncComponent } from 'vue';
+// Modales lazy: la mayoría de visitas no los abre. Saca ~15KB gzip del bundle inicial.
+const MyBetsModal = defineAsyncComponent(() => import('./MyBetsModal.vue'));
+const SocialModal = defineAsyncComponent(() => import('./SocialModal.vue'));
+const UserModal = defineAsyncComponent(() => import('./UserModal.vue'));
 
 const props = defineProps<{
   currentPage: string;
@@ -113,7 +114,7 @@ const claimDaily = async () => {
 
 <template>
   <nav :class="[navBgColor, 'backdrop-blur-md border-b border-white/20 sticky top-0 z-50 shadow-lg']">
-    <div class="max-w-6xl mx-auto px-6 py-3 flex justify-center items-center gap-4">
+    <div class="max-w-6xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
       <button @click="emit('navigate', 'overview')" :class="[
         'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
         'hover:-translate-y-1 active:translate-y-0',
@@ -275,9 +276,12 @@ const claimDaily = async () => {
       </div>
     </Transition>
 
-    <MyBetsModal :show="showMyBets" @close="showMyBets = false" />
-    <SocialModal :show="showSocial" :initial-tab="socialInitialTab" @close="showSocial = false" />
-    <UserModal :show="showUserModal" :initial-tab="userModalTab" @close="showUserModal = false" />
+    <!-- Async-loaded: sólo se descargan al primer click del botón correspondiente.
+         v-if (no v-show) garantiza que defineAsyncComponent no fuerce el fetch al mount.
+         Al cerrar se desmontan; al reabrir el chunk ya está cacheado, abre instantáneo. -->
+    <MyBetsModal v-if="showMyBets" :show="true" @close="showMyBets = false" />
+    <SocialModal v-if="showSocial" :show="true" :initial-tab="socialInitialTab" @close="showSocial = false" />
+    <UserModal v-if="showUserModal" :show="true" :initial-tab="userModalTab" @close="showUserModal = false" />
   </nav>
 </template>
 

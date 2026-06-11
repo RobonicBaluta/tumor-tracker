@@ -2,7 +2,11 @@
 import { ref, computed, provide, onMounted, defineAsyncComponent } from 'vue';
 import Navbar from './components/Navbar.vue';
 import OnboardingTour from './components/OnboardingTour.vue';
+import ConfirmDialog from './components/ConfirmDialog.vue';
 import { useAuth } from './composables/useAuth';
+import { useConfirm } from './composables/useConfirm';
+
+const { state: confirmState, accept: confirmAccept, cancel: confirmCancel } = useConfirm();
 
 // Lazy imports — el bundle inicial solo trae Navbar.
 // Cada componente pesado se carga bajo demanda al navegar.
@@ -66,5 +70,16 @@ provide('THEMES', THEMES)
     <Compare v-else-if="currentPage === 'compare'" />
 
     <OnboardingTour />
+
+    <!-- Confirm dialog global: cualquier componente puede dispararlo con useConfirm() -->
+    <ConfirmDialog
+      :show="confirmState.show"
+      :title="confirmState.title"
+      :message="confirmState.message"
+      :confirm-text="confirmState.confirmText"
+      :cancel-text="confirmState.cancelText"
+      :variant="confirmState.variant"
+      @confirm="confirmAccept"
+      @cancel="confirmCancel" />
   </div>
 </template>

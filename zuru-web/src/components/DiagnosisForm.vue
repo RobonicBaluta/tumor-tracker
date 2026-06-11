@@ -64,6 +64,7 @@ const handleSubmit = () => {
 
             <form @submit.prevent="handleSubmit" class="flex justify-center gap-3">
                 <input v-model="nombreInvocador" type="text" placeholder="Introduce nombre"
+                    autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                     class="px-4 py-3 rounded-md bg-gray-200 focus:bg-white outline-none focus:ring-2 focus:ring-[#58d69b] transition" />
 
                 <button type="submit"

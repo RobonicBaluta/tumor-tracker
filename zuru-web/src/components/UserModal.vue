@@ -121,9 +121,11 @@
                   <p class="text-white/30 text-[10px] font-mono mb-2">{{ $t('user.link_riot_help') }}</p>
                   <div class="flex gap-1.5 items-center">
                     <input v-model="linkGameName" :placeholder="$t('user.game_name')"
+                      autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                       class="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
                     <span class="text-white/30 text-sm font-mono">#</span>
                     <input v-model="linkTagLine" :placeholder="$t('user.tag_line')" maxlength="5"
+                      autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                       class="w-16 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
                     <button @click="onLinkRiot" :disabled="linking || !linkGameName.trim() || !linkTagLine.trim()"
                       class="text-[10px] font-mono px-2.5 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-bold rounded transition">
@@ -150,6 +152,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useConfirm } from '../composables/useConfirm'
+
+const { confirm } = useConfirm()
 import { setLocale, type LocaleKey } from '../i18n'
 import ToggleRow from './ToggleRow.vue'
 
@@ -204,7 +209,14 @@ async function onLinkRiot() {
 }
 
 async function onUnlinkRiot() {
-  if (!confirm(t('user.confirm_unlink'))) return
+  const ok = await confirm({
+    title: 'Desvincular Riot ID',
+    message: t('user.confirm_unlink'),
+    confirmText: 'Desvincular',
+    cancelText: 'Volver',
+    variant: 'warning',
+  })
+  if (!ok) return
   unlinking.value = true
   try {
     await auth.unlinkRiot()

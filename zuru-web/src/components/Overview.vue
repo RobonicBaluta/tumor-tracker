@@ -53,11 +53,13 @@
             <div>
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Nombre del Invocador</label>
               <input v-model="formData.gameName" type="text" placeholder="GameName"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-[#c89b3c] transition" required />
             </div>
             <div>
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Tag</label>
               <input v-model="formData.tagLine" type="text" placeholder="EUW"
+                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
                 class="w-32 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-[#c89b3c] transition" required />
             </div>
             <button type="submit" :disabled="loading"
@@ -224,7 +226,7 @@
             <span class="text-red-400 text-[11px] font-mono font-bold tracking-wider">RACHA NEGATIVA · {{ losingStreak }} DERROTAS</span>
           </div>
         </div>
-        <div class="grid grid-cols-9 gap-3 text-center">
+        <div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3 text-center">
           <div>
             <p class="text-white text-xl font-bold">{{ personalStats.total_matches }}</p>
             <p class="text-white/40 text-[10px] font-mono">PARTIDAS</p>
@@ -323,8 +325,8 @@
         </button>
       </div>
 
-      <!-- Main content: match list + top tumor -->
-      <div class="flex gap-6 items-start">
+      <!-- Main content: match list + top tumor — stack en móvil, flex desktop -->
+      <div class="flex flex-col lg:flex-row gap-6 lg:items-start">
 
       <!-- Match list -->
       <div class="space-y-4 flex-1 min-w-0">
@@ -503,8 +505,9 @@
         </div>
       </div>
 
-      <!-- Sidebar -->
-      <div v-if="topTumores.length || leaderboard.length" class="w-72 shrink-0 sticky top-6 animate-fade space-y-3">
+      <!-- Sidebar: full-width en móvil bajo el listado; sticky cuadrado en desktop -->
+      <div v-if="topTumores.length || leaderboard.length"
+        class="w-full lg:w-72 lg:shrink-0 lg:sticky lg:top-6 animate-fade space-y-3">
 
         <!-- Tab switcher -->
         <div class="flex rounded-xl overflow-hidden border border-white/10 bg-black/30">
