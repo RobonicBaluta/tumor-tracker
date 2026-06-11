@@ -98,6 +98,14 @@ function formatGameLength(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+function notifTimeAgo(epoch: number): string {
+  const sec = Math.floor(Date.now() / 1000 - epoch)
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`
+  return `${Math.floor(sec / 86400)}d`
+}
+
 async function markAllRead() {
   if (!notifications.value.length) return
   const ids = notifications.value.map(n => n.id)
@@ -294,7 +302,10 @@ const claimDaily = async () => {
                 class="w-full text-left px-4 py-3 hover:bg-white/5 transition flex items-start gap-3">
                 <span class="text-lg shrink-0">{{ n.icon || '·' }}</span>
                 <div class="flex-1 min-w-0">
-                  <p class="text-white text-xs font-mono font-bold truncate">{{ n.title }}</p>
+                  <div class="flex items-baseline justify-between gap-2">
+                    <p class="text-white text-xs font-mono font-bold truncate">{{ n.title }}</p>
+                    <p v-if="n.created_at" class="text-white/30 text-[9px] font-mono shrink-0">{{ notifTimeAgo(n.created_at) }}</p>
+                  </div>
                   <p v-if="n.body" class="text-white/40 text-[10px] font-mono truncate">{{ n.body }}</p>
                 </div>
               </button>

@@ -75,6 +75,58 @@
             </div>
           </div>
 
+          <!-- HISTORY -->
+          <div v-else-if="active === 'history'" class="space-y-3">
+            <div v-if="txLoading" class="text-white/40 text-sm font-mono text-center py-8">
+              {{ $t('common.loading') }}
+            </div>
+            <div v-else-if="!txHistory.length" class="text-white/40 text-sm font-mono text-center py-8">
+              No hay movimientos todavía. Cuando apuestes o reclames daily, verás aquí el historial.
+            </div>
+            <div v-else>
+              <!-- Sumario rápido -->
+              <div class="grid grid-cols-3 gap-2 mb-3">
+                <div class="bg-green-900/20 border border-green-500/30 rounded-lg p-2 text-center">
+                  <p class="text-green-300 text-[9px] font-mono tracking-widest">ENTRADAS</p>
+                  <p class="text-green-400 text-base font-mono font-bold">+{{ txHistory.filter(t => t.delta > 0).reduce((a, t) => a + t.delta, 0) }}</p>
+                </div>
+                <div class="bg-red-900/20 border border-red-500/30 rounded-lg p-2 text-center">
+                  <p class="text-red-300 text-[9px] font-mono tracking-widest">SALIDAS</p>
+                  <p class="text-red-400 text-base font-mono font-bold">{{ txHistory.filter(t => t.delta < 0).reduce((a, t) => a + t.delta, 0) }}</p>
+                </div>
+                <div class="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-2 text-center">
+                  <p class="text-yellow-300 text-[9px] font-mono tracking-widest">NETO ÚLT.</p>
+                  <p class="text-yellow-400 text-base font-mono font-bold"
+                    :class="txHistory.reduce((a, t) => a + t.delta, 0) >= 0 ? 'text-green-400' : 'text-red-400'">
+                    {{ txHistory.reduce((a, t) => a + t.delta, 0) >= 0 ? '+' : '' }}{{ txHistory.reduce((a, t) => a + t.delta, 0) }}
+                  </p>
+                </div>
+              </div>
+
+              <p class="text-white/30 text-[9px] font-mono tracking-widest mb-2">ÚLTIMAS 20 TRANSACCIONES</p>
+              <div class="space-y-1 max-h-[50vh] overflow-y-auto pr-1">
+                <div v-for="(tx, i) in txHistory" :key="i"
+                  class="flex items-center gap-2 bg-black/30 border border-white/10 rounded-lg px-3 py-2">
+                  <span class="text-lg shrink-0">{{ txCategoryFromReason(tx.reason).icon }}</span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-white text-xs font-mono font-bold truncate"
+                      :class="txCategoryFromReason(tx.reason).color">
+                      {{ txCategoryFromReason(tx.reason).label }}
+                    </p>
+                    <p class="text-white/40 text-[10px] font-mono truncate">{{ tx.reason }}</p>
+                  </div>
+                  <div class="text-right shrink-0">
+                    <p class="font-mono text-sm font-bold"
+                      :class="tx.delta > 0 ? 'text-green-400' : 'text-red-400'">
+                      {{ tx.delta > 0 ? '+' : '' }}{{ tx.delta }}
+                    </p>
+                    <p class="text-white/30 text-[9px] font-mono">{{ timeAgo(tx.at) }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- SETTINGS -->
           <div v-else-if="active === 'settings'" class="space-y-4">
             <div v-if="!settings" class="text-white/40 text-sm font-mono text-center py-8">
@@ -196,15 +248,18 @@ function changeLocale(l: LocaleKey) {
   setLocale(l)
 }
 
-type TabKey = 'achievements' | 'settings'
+type TabKey = 'achievements' | 'history' | 'settings'
 const tabs = computed<{ key: TabKey; label: string }[]>(() => [
   { key: 'achievements', label: `🏅 ${t('user.achievements')}` },
+  { key: 'history', label: `📜 Historial` },
   { key: 'settings', label: `⚙ ${t('user.settings')}` },
 ])
 const active = ref<TabKey>('achievements')
 
 const achievements = ref<any[]>([])
 const settings = ref<Record<string, boolean> | null>(null)
+const txHistory = ref<Array<{ delta: number; reason: string; at: number }>>([])
+const txLoading = ref(false)
 
 // Riot ID link/unlink form
 const linkGameName = ref('')
@@ -280,7 +335,45 @@ async function loadActive() {
     achievements.value = await auth.fetchAchievements()
   } else if (active.value === 'settings') {
     settings.value = await auth.fetchSettings()
+  } else if (active.value === 'history') {
+    txLoading.value = true
+    try {
+      const bal = await auth.refreshBalance?.()
+      txHistory.value = bal?.recent_transactions ?? []
+    } finally {
+      txLoading.value = false
+    }
   }
+}
+
+function txCategoryFromReason(reason: string): { icon: string; label: string; color: string } {
+  const r = reason.toLowerCase()
+  if (r.startsWith('welcome')) return { icon: '🎉', label: 'Bienvenida', color: 'text-yellow-300' }
+  if (r.startsWith('loyalty')) return { icon: '🎁', label: 'Loyalty', color: 'text-yellow-300' }
+  if (r.startsWith('daily')) return { icon: '📅', label: 'Daily', color: 'text-cyan-300' }
+  if (r.startsWith('bet escrow')) return { icon: '🔒', label: 'Escrow', color: 'text-white/40' }
+  if (r.startsWith('bet won') || r.startsWith('house bet won') || r.startsWith('stat bet won')) return { icon: '✅', label: 'Apuesta ganada', color: 'text-green-400' }
+  if (r.startsWith('bet refund') || r.includes('push refund')) return { icon: '↩', label: 'Refund', color: 'text-cyan-300' }
+  if (r.startsWith('bet cancelled') || r.startsWith('challenge cancel') || r.startsWith('challenge refund')) return { icon: '✕', label: 'Cancelado', color: 'text-white/50' }
+  if (r.startsWith('challenge escrow')) return { icon: '🔒', label: 'Challenge escrow', color: 'text-white/40' }
+  if (r.startsWith('challenge won')) return { icon: '⚔', label: 'Challenge ganado', color: 'text-purple-300' }
+  if (r.startsWith('bravery escrow')) return { icon: '🔒', label: 'Bravery escrow', color: 'text-white/40' }
+  if (r.startsWith('bravery payout')) return { icon: '🎲', label: 'Bravery payout', color: 'text-purple-300' }
+  if (r.startsWith('bravery refund')) return { icon: '↩', label: 'Bravery refund', color: 'text-cyan-300' }
+  if (r.startsWith('achievement')) return { icon: '🏅', label: 'Achievement', color: 'text-yellow-300' }
+  return { icon: '·', label: reason, color: 'text-white/40' }
+}
+
+function timeAgo(epoch: number): string {
+  const sec = Math.floor(Date.now() / 1000 - epoch)
+  if (sec < 60) return `hace ${sec}s`
+  if (sec < 3600) return `hace ${Math.floor(sec / 60)}min`
+  if (sec < 86400) return `hace ${Math.floor(sec / 3600)}h`
+  const d = Math.floor(sec / 86400)
+  if (d < 30) return `hace ${d}d`
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `hace ${mo}mo`
+  return `hace ${Math.floor(d / 365)}y`
 }
 
 async function updateSetting(key: string, value: boolean) {
