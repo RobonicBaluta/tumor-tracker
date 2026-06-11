@@ -96,6 +96,11 @@ def _init_sqlite(conn):
             created_at REAL NOT NULL
         )
     """)
+    # Índices críticos: resolve_bets_for_match y los list_*_bets hacen full scan sin ellos
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_match_status ON bets(match_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_creator_status ON bets(creator_user_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_taker_status ON bets(taker_user_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_status_created ON bets(status, created_at)")
     # Notificaciones por usuario (servidor → cliente, polled).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
@@ -296,11 +301,16 @@ def _init_sqlite(conn):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_user_status ON bravery_locks(user_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_room ON bravery_locks(room_code, status)")
-    # Migración: reroll_used (1 reroll por lock)
+    # Migración: reroll_used (1 reroll por lock) + tier (capturado al lockear)
     bl_cols = {r[1] for r in conn.execute("PRAGMA table_info(bravery_locks)").fetchall()}
     if "reroll_used" not in bl_cols:
         try:
             conn.execute("ALTER TABLE bravery_locks ADD COLUMN reroll_used INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+    if "tier" not in bl_cols:
+        try:
+            conn.execute("ALTER TABLE bravery_locks ADD COLUMN tier TEXT")
         except Exception:
             pass
 
@@ -351,6 +361,11 @@ def _init_pg(conn):
             created_at DOUBLE PRECISION NOT NULL
         )
     """)
+    # Índices críticos para resolve y list queries (full scan sin ellos)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_match_status ON bets(match_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_creator_status ON bets(creator_user_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_taker_status ON bets(taker_user_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_status_created ON bets(status, created_at)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
             id SERIAL PRIMARY KEY,
@@ -533,6 +548,10 @@ def _init_pg(conn):
         cur.execute("ALTER TABLE bravery_locks ADD COLUMN IF NOT EXISTS reroll_used INTEGER NOT NULL DEFAULT 0")
     except Exception:
         pass
+    try:
+        cur.execute("ALTER TABLE bravery_locks ADD COLUMN IF NOT EXISTS tier TEXT")
+    except Exception:
+        pass
     cur.close()
 
 
@@ -673,17 +692,40 @@ def get_recent_transactions(user_id, limit=20):
     return [{"delta": r[0], "reason": r[1], "at": r[2]} for r in rows]
 
 
+# Intervalo entre claims. Cambiado de 20h a 24h para evitar inflación silenciosa
+# (con 20h, 36 claims/mes en lugar de 30 = +600 TC/user/mes).
+DAILY_REWARD_AMOUNT = 100
+DAILY_REWARD_INTERVAL_SECONDS = 24 * 3600
+
+
 def can_claim_daily(user_id):
-    """True si el user no ha reclamado el daily en las últimas 20h."""
+    """True si el user no ha reclamado el daily en las últimas DAILY_REWARD_INTERVAL_SECONDS."""
     cur = _exec("SELECT last_claim_at FROM daily_rewards WHERE user_id=?", (user_id,))
     row = cur.fetchone()
     if not row:
         return True
-    return time.time() - (row[0] or 0) >= 20 * 3600
+    return time.time() - (row[0] or 0) >= DAILY_REWARD_INTERVAL_SECONDS
 
 
-def claim_daily(user_id, amount=100):
+def daily_status(user_id):
+    """Estado completo del daily: amount, can_claim, next_claim_at (epoch s).
+    Usado por el frontend para mostrar countdown sin polling extra."""
+    cur = _exec("SELECT last_claim_at FROM daily_rewards WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    last = float(row[0] or 0) if row else 0.0
+    next_claim_at = last + DAILY_REWARD_INTERVAL_SECONDS if last else 0.0
+    return {
+        "amount": DAILY_REWARD_AMOUNT,
+        "can_claim": (time.time() - last) >= DAILY_REWARD_INTERVAL_SECONDS,
+        "next_claim_at": next_claim_at,
+        "last_claim_at": last,
+    }
+
+
+def claim_daily(user_id, amount=None):
     """Reclama el daily reward. Devuelve nuevo balance o None si ya reclamó."""
+    if amount is None:
+        amount = DAILY_REWARD_AMOUNT
     if not can_claim_daily(user_id):
         return None
     now = time.time()
@@ -2157,7 +2199,7 @@ _BRAVERY_COLS = (
     "id, user_id, puuid, room_code, champion_id, champion_name, lane, "
     "items_json, dimensions, style_mult, stake, status, match_id_resolved, "
     "tumor_score, payout, compliance_json, created_at, resolved_at, expires_at, "
-    "reroll_used"
+    "reroll_used, tier"
 )
 
 
@@ -2177,13 +2219,16 @@ def _row_to_bravery(row):
         "compliance": _json.loads(row[15]) if row[15] else None,
         "created_at": row[16], "resolved_at": row[17], "expires_at": row[18],
         "reroll_used": bool(row[19]) if len(row) > 19 and row[19] is not None else False,
+        "tier": row[20] if len(row) > 20 else None,
     }
 
 
 def create_bravery_lock(user_id, puuid, champion_id, champion_name,
                         lane, items, dimensions, style_mult, stake,
-                        room_code=None):
-    """Crea un bravery lock pending. Escrowa el stake. Devuelve dict o None."""
+                        room_code=None, tier=None):
+    """Crea un bravery lock pending. Escrowa el stake. Devuelve dict o None.
+    tier: tier del user al momento del lock — se usa al resolver para que el
+    tumor score se mida contra los thresholds correctos (no UNRANKED fijo)."""
     import json as _json
     if stake <= 0:
         return None
@@ -2194,15 +2239,16 @@ def create_bravery_lock(user_id, puuid, champion_id, champion_name,
         return None
     now = time.time()
     items_json = _json.dumps(items) if items else None
+    tier_norm = (tier or "").upper() or None
     lid = _exec_returning(
         """INSERT INTO bravery_locks (
             user_id, puuid, room_code, champion_id, champion_name,
             lane, items_json, dimensions, style_mult, stake,
-            status, created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+            status, created_at, expires_at, tier
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
         (user_id, puuid, room_code, int(champion_id), champion_name,
          lane, items_json, int(dimensions), float(style_mult), int(stake),
-         now, now + BRAVERY_TTL_SECONDS),
+         now, now + BRAVERY_TTL_SECONDS, tier_norm),
     )
     return get_bravery_lock_by_id(lid)
 

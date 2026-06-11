@@ -6,7 +6,6 @@ load_dotenv(dotenv_path=".env")
 
 # Obtener API key desde variable de entorno
 API_KEY = os.getenv("RIOT_API_TOKEN")
-print(f"API_KEY: {API_KEY}")  # Debug: Verificar que se cargó la API key correctamente
 
 if not API_KEY:
     raise ValueError("No se encontró la variable de entorno RIOT_API_TOKEN")

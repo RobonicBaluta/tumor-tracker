@@ -15,6 +15,12 @@ const user = ref<{
   riot_id: string | null
   currency: number
   can_claim_daily?: boolean
+  daily?: {
+    amount: number
+    can_claim: boolean
+    next_claim_at: number
+    last_claim_at: number
+  }
 } | null>(null)
 
 const isLoggedIn = computed(() => !!user.value)
