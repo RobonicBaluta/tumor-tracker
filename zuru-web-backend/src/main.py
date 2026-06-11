@@ -561,6 +561,80 @@ def predictions_all():
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
+def predictions_aggregate_stats(viewer_puuid=None):
+    """Stats agregadas sin cargar la tabla completa. Devuelve:
+      total (resolved con predicted_winner), correct, pending, current_streak,
+      max_streak, recent (10 más recientes).
+    Si viewer_puuid: filtra por user; si no: globales.
+
+    Más eficiente que predictions_all() cuando la tabla crece — antes hacía
+    full scan + list comprehension en Python para producir 4 contadores.
+    """
+    db = _pred_db()
+    where = " WHERE viewer_puuid = ?" if viewer_puuid else ""
+    params = (viewer_puuid,) if viewer_puuid else ()
+
+    # Counts en SQL en lugar de full scan + comprehension
+    cur = db.execute(
+        "SELECT "
+        " SUM(CASE WHEN resolved=1 AND predicted_winner IS NOT NULL THEN 1 ELSE 0 END) AS total, "
+        " SUM(CASE WHEN resolved=1 AND predicted_winner IS NOT NULL AND correct=1 THEN 1 ELSE 0 END) AS correct, "
+        " SUM(CASE WHEN resolved=0 THEN 1 ELSE 0 END) AS pending "
+        "FROM predictions" + where,
+        params,
+    )
+    row = cur.fetchone() or (0, 0, 0)
+    total = int(row[0] or 0)
+    correct = int(row[1] or 0)
+    pending = int(row[2] or 0)
+
+    # Recientes ordenados por created_at desc; LIMIT 10
+    cur = db.execute(
+        f"""SELECT * FROM predictions
+            WHERE resolved=1 AND predicted_winner IS NOT NULL{(' AND viewer_puuid = ?' if viewer_puuid else '')}
+            ORDER BY created_at DESC LIMIT 10""",
+        params,
+    )
+    cols = [c[0] for c in cur.description]
+    recent = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # Streaks: necesito orden por resolved_at desc (o created_at) sólo para el viewer
+    current_streak = 0
+    max_streak = 0
+    cur = db.execute(
+        f"""SELECT correct FROM predictions
+            WHERE resolved=1 AND predicted_winner IS NOT NULL{(' AND viewer_puuid = ?' if viewer_puuid else '')}
+            ORDER BY COALESCE(resolved_at, created_at) DESC
+            LIMIT 200""",
+        params,
+    )
+    rows = [r[0] for r in cur.fetchall()]
+    # current_streak: aciertos consecutivos al principio (más recientes)
+    for c in rows:
+        if c == 1:
+            current_streak += 1
+        else:
+            break
+    # max_streak: ventana deslizante por el slice
+    cur_run = 0
+    for c in rows:
+        if c == 1:
+            cur_run += 1
+            if cur_run > max_streak:
+                max_streak = cur_run
+        else:
+            cur_run = 0
+
+    return {
+        "total": total,
+        "correct": correct,
+        "pending": pending,
+        "current_streak": current_streak,
+        "max_streak": max_streak,
+        "recent": recent,
+    }
+
+
 def predictions_mark_resolved(match_id, viewer_puuid, actual_winner, predicted_winner):
     db = _pred_db()
     correct = 1 if predicted_winner and predicted_winner == actual_winner else (0 if predicted_winner else None)
@@ -3015,8 +3089,31 @@ def achievements_mine():
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
+
+    # Si tiene riot_puuid, verificar streak_5 desde predictions.db (cross-db,
+    # users_db no lo puede hacer por su cuenta) y unlock si llega a 5.
+    if user.get("riot_puuid"):
+        try:
+            streak = predictions_aggregate_stats(user["riot_puuid"])["current_streak"]
+            if streak >= 5:
+                _users.unlock_achievement(user["id"], "streak_5")
+        except Exception:
+            pass
+
     _users.evaluate_achievements(user["id"])
-    return jsonify(_users.list_achievements(user["id"]))
+    achievements = _users.list_achievements(user["id"])
+
+    # Augmentar streak_5 con progress live (current_streak / 5)
+    if user.get("riot_puuid"):
+        try:
+            cs = predictions_aggregate_stats(user["riot_puuid"])["current_streak"]
+            for a in achievements:
+                if a["badge"] == "streak_5" and not a["unlocked"]:
+                    a["progress"] = {"current": min(cs, 5), "target": 5}
+        except Exception:
+            pass
+
+    return jsonify(achievements)
 
 
 # ============================================================================
@@ -4952,19 +5049,21 @@ def prediction_stats_endpoint():
         except Exception:
             pass
 
-    preds = predictions_all()
-    resolved = [p for p in preds if p.get("resolved") and p.get("predicted_winner")]
-    total = len(resolved)
-    correct = sum(1 for p in resolved if p.get("correct"))
-    pending = sum(1 for p in preds if not p.get("resolved"))
+    # viewer_puuid opcional → stats per-user (incluye current_streak/max_streak)
+    viewer_puuid = (request.args.get("viewer_puuid") or "").strip() or None
+    stats = predictions_aggregate_stats(viewer_puuid=viewer_puuid)
+    total = stats["total"]
+    correct = stats["correct"]
     pct = round(correct / total * 100) if total else 0
-
     return jsonify({
         "total": total,
         "correct": correct,
         "accuracy": pct,
-        "pending": pending,
-        "recent": sorted(resolved, key=lambda x: x.get("created_at", 0), reverse=True)[:10],
+        "pending": stats["pending"],
+        "current_streak": stats["current_streak"],
+        "max_streak": stats["max_streak"],
+        "recent": stats["recent"],
+        "scope": "user" if viewer_puuid else "global",
     })
 
 
