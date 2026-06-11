@@ -487,10 +487,40 @@ async function unlinkRiot() {
   return user.value
 }
 
+// Error de auth mostrado al user (se setea desde handleAuthRedirect).
+// Null si no hay error pendiente. UI puede watch() para mostrar toast.
+const authError = ref<string | null>(null)
+
+function _humanizeAuthError(code: string, params: URLSearchParams): string {
+  switch (code) {
+    case 'rate_limited':
+      return 'Demasiados intentos de login. Espera unos minutos.'
+    case 'discord_too_new': {
+      const days = params.get('min_days') || '3'
+      return `Tu cuenta de Discord es muy nueva (mínimo ${days} días). Anti-spam.`
+    }
+    case 'no_code':
+    case 'token_exchange_failed':
+    case 'user_fetch_failed':
+      return 'No se pudo completar el login con Discord. Vuelve a intentarlo.'
+    default:
+      return `Error de auth: ${code}`
+  }
+}
+
 // Auto-detecta el ?token= en la URL al volver del callback de Discord
 function handleAuthRedirect() {
   const url = new URL(window.location.href)
   const t = url.searchParams.get('token')
+  const errCode = url.searchParams.get('auth_error')
+  if (errCode) {
+    authError.value = _humanizeAuthError(errCode, url.searchParams)
+    url.searchParams.delete('auth_error')
+    url.searchParams.delete('min_days')
+    window.history.replaceState({}, '', url.toString())
+    // Auto-clear tras 8s
+    setTimeout(() => { authError.value = null }, 8000)
+  }
   if (t) {
     saveToken(t)
     url.searchParams.delete('token')
@@ -506,6 +536,7 @@ export function useAuth() {
     token,
     user,
     isLoggedIn,
+    authError,
     loginWithDiscord,
     logout,
     fetchMe,

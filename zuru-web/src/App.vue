@@ -71,6 +71,19 @@ provide('THEMES', THEMES)
 
     <OnboardingTour />
 
+    <!-- Toast global de error de auth (rate-limited, discord_too_new, etc.) -->
+    <Transition name="modal">
+      <div v-if="auth.authError.value"
+        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[110] max-w-sm w-[calc(100%-2rem)]
+               bg-red-950/90 backdrop-blur-md border-2 border-red-500/60 rounded-xl shadow-2xl
+               px-4 py-3 flex items-start gap-3">
+        <span class="text-xl shrink-0">🚫</span>
+        <p class="flex-1 text-red-200 text-sm font-mono leading-snug">{{ auth.authError.value }}</p>
+        <button @click="auth.authError.value = null"
+          class="text-red-300/60 hover:text-red-200 text-lg leading-none">✕</button>
+      </div>
+    </Transition>
+
     <!-- Confirm dialog global: cualquier componente puede dispararlo con useConfirm() -->
     <ConfirmDialog
       :show="confirmState.show"

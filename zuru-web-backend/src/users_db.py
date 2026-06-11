@@ -692,10 +692,8 @@ def get_recent_transactions(user_id, limit=20):
     return [{"delta": r[0], "reason": r[1], "at": r[2]} for r in rows]
 
 
-# Intervalo entre claims. Cambiado de 20h a 24h para evitar inflación silenciosa
-# (con 20h, 36 claims/mes en lugar de 30 = +600 TC/user/mes).
-DAILY_REWARD_AMOUNT = 100
-DAILY_REWARD_INTERVAL_SECONDS = 24 * 3600
+# Centralizados en econ_config (DAILY_REWARD_*).
+from econ_config import DAILY_REWARD_AMOUNT, DAILY_REWARD_INTERVAL_SECONDS  # noqa: E402
 
 
 def can_claim_daily(user_id):
@@ -867,7 +865,7 @@ def cancel_bet(creator_user_id, bet_id):
     return bet
 
 
-REFUND_WINDOW_SECONDS = 60  # Item #1: bets puestas en el último minuto se refunden
+from econ_config import REFUND_WINDOW_SECONDS  # centralizado
 
 
 def _refund_bet(bet, reason):
@@ -2038,6 +2036,43 @@ def unlock_achievement(user_id, badge):
     return True
 
 
+def _achievement_progress(user_id):
+    """Cuenta el progreso actual del user para los achievements con target.
+    Útil para que la UI muestre "7/10" en lugar de un check binario."""
+    progress = {}
+    try:
+        # Bets ganadas (mismo SELECT que evaluate_achievements)
+        cur = _exec(
+            """SELECT COUNT(*) FROM bets
+               WHERE status='resolved' AND winner_side IS NOT NULL
+               AND (
+                    (creator_user_id=? AND creator_side=winner_side)
+                    OR (taker_user_id=? AND creator_side<>winner_side)
+               )""",
+            (user_id, user_id),
+        )
+        won = cur.fetchone()[0] or 0
+        progress["ten_bets_won"] = {"current": min(won, 10), "target": 10}
+        progress["fifty_bets_won"] = {"current": min(won, 50), "target": 50}
+
+        # Friends
+        cur = _exec(
+            "SELECT COUNT(*) FROM friendships WHERE status='accepted' AND (requester_id=? OR target_id=?)",
+            (user_id, user_id),
+        )
+        friends = cur.fetchone()[0] or 0
+        progress["social"] = {"current": min(friends, 3), "target": 3}
+
+        # Currency
+        user = get_user_by_id(user_id)
+        if user:
+            curr = user.get("currency", 0)
+            progress["richie_rich"] = {"current": min(curr, 1000), "target": 1000}
+    except Exception:
+        pass
+    return progress
+
+
 def list_achievements(user_id):
     cur = _exec(
         "SELECT badge, unlocked_at FROM user_achievements WHERE user_id=?",
@@ -2045,6 +2080,7 @@ def list_achievements(user_id):
     )
     rows = cur.fetchall()
     unlocked = {r[0]: r[1] for r in rows}
+    progress = _achievement_progress(user_id)
     out = []
     for badge, info in ACHIEVEMENT_DEFS.items():
         out.append({
@@ -2054,6 +2090,7 @@ def list_achievements(user_id):
             "desc": info["desc"],
             "unlocked": badge in unlocked,
             "unlocked_at": unlocked.get(badge),
+            "progress": progress.get(badge),  # {current, target} | None si no aplica
         })
     return out
 
@@ -2203,8 +2240,7 @@ def get_users_brief(user_ids):
 # ---------------------------------------------------------------------------
 
 VALID_BRAVERY_LANES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
-BRAVERY_TTL_SECONDS = 3 * 60 * 60   # 3h para jugar la partida bravery
-BRAVERY_REFUND_AFTER = 6 * 60 * 60  # tras 6h sin partida, refund automático
+from econ_config import BRAVERY_TTL_SECONDS, BRAVERY_REFUND_AFTER  # noqa: E402
 
 _BRAVERY_COLS = (
     "id, user_id, puuid, room_code, champion_id, champion_name, lane, "

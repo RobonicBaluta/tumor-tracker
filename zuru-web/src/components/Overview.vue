@@ -248,10 +248,19 @@
       <div v-if="personalStats" class="bg-black/30 rounded-xl border border-white/10 p-5 mb-6 animate-fade">
         <div class="flex items-center justify-between mb-4">
           <p class="text-white/30 text-[10px] font-mono tracking-widest">TUS ESTADÍSTICAS</p>
-          <div v-if="losingStreak >= 3"
-            class="flex items-center gap-1.5 bg-red-900/40 border border-red-500/50 px-3 py-1 rounded-full animate-pulse">
-            <span class="text-sm">🔥</span>
-            <span class="text-red-400 text-[11px] font-mono font-bold tracking-wider">RACHA NEGATIVA · {{ losingStreak }} DERROTAS</span>
+          <!-- Streak pill: muestra winning streak (≥2) o losing streak (≥3) -->
+          <div v-if="winningStreak >= 2"
+            class="flex items-center gap-1.5 bg-green-900/40 border border-green-500/50 px-3 py-1 rounded-full"
+            :class="winningStreak >= 4 ? 'animate-pulse shadow-lg shadow-green-900/40' : ''"
+            :title="`Llevas ${winningStreak} victorias seguidas`">
+            <span class="text-sm">{{ winningStreak >= 5 ? '🔥' : winningStreak >= 3 ? '⚡' : '✨' }}</span>
+            <span class="text-green-400 text-[11px] font-mono font-bold tracking-wider">RACHA · {{ winningStreak }} {{ winningStreak === 1 ? 'VICTORIA' : 'VICTORIAS' }}</span>
+          </div>
+          <div v-else-if="losingStreak >= 3"
+            class="flex items-center gap-1.5 bg-red-900/40 border border-red-500/50 px-3 py-1 rounded-full animate-pulse"
+            :title="`Llevas ${losingStreak} derrotas — quizá pausa y vuelve mañana`">
+            <span class="text-sm">💀</span>
+            <span class="text-red-400 text-[11px] font-mono font-bold tracking-wider">TILT · {{ losingStreak }} DERROTAS</span>
           </div>
         </div>
         <div class="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3 text-center">
@@ -2318,6 +2327,15 @@ const losingStreak = computed(() => {
   let streak = 0
   for (const m of validMatches.value) {
     if (!m.win) streak++
+    else break
+  }
+  return streak
+})
+
+const winningStreak = computed(() => {
+  let streak = 0
+  for (const m of validMatches.value) {
+    if (m.win) streak++
     else break
   }
   return streak
