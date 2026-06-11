@@ -31,11 +31,71 @@ const notifications = ref<any[]>([])
 const showNotifPanel = ref(false)
 let notifPollerId: ReturnType<typeof setInterval> | null = null
 
+// Friends LIVE state
+interface FriendsLiveResponse {
+  friends: Array<{
+    user_id: number; username: string; avatar: string | null;
+    discord_id: string; riot_id: string;
+    champion_name: string | null; champion_id: number | null;
+    queue_id: number; queue_name: string;
+    game_start_time: number; game_length: number; in_game: boolean;
+  }>
+  checked: number
+  cached: boolean
+  next_refresh_at: number
+}
+const friendsLiveData = ref<FriendsLiveResponse | null>(null)
+const showFriendsLive = ref(false)
+const friendsLiveLoading = ref(false)
+let friendsLivePollerId: ReturnType<typeof setInterval> | null = null
+
+const friendsLiveCount = computed(() => friendsLiveData.value?.friends?.length ?? 0)
+
 const unreadCount = computed(() => notifications.value.length)
 
 async function pollNotifs() {
   if (!auth?.isLoggedIn.value) return
   notifications.value = await auth.fetchNotifications()
+}
+
+async function pollFriendsLive() {
+  if (!auth?.isLoggedIn.value) return
+  friendsLiveLoading.value = true
+  try {
+    const data = await auth.fetchFriendsLive()
+    if (data) friendsLiveData.value = data
+  } finally {
+    friendsLiveLoading.value = false
+  }
+}
+
+function onToggleFriendsLive() {
+  showFriendsLive.value = !showFriendsLive.value
+  // Si nunca se ha cargado o el cache caducó, refresh al abrir
+  if (showFriendsLive.value) {
+    const stale = !friendsLiveData.value ||
+      (friendsLiveData.value?.next_refresh_at ?? 0) < (Date.now() / 1000)
+    if (stale) pollFriendsLive()
+  }
+}
+
+function onRefreshFriendsLive() {
+  pollFriendsLive()
+}
+
+function onOpenLiveFriend(f: any) {
+  // Abrir el Overview de ese amigo via hash route
+  if (f.riot_id) {
+    const safe = encodeURIComponent(f.riot_id)
+    window.location.hash = `#/u/${safe}`
+  }
+}
+
+function formatGameLength(seconds: number): string {
+  if (!seconds || seconds < 0) return ''
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 async function markAllRead() {
@@ -58,10 +118,14 @@ onMounted(() => {
   if (auth?.isLoggedIn.value) {
     pollNotifs()
     notifPollerId = setInterval(pollNotifs, 30000) // cada 30s
+    // Friends LIVE: lazy primer pull tras 5s (no bloquea load), poll cada 90s
+    setTimeout(pollFriendsLive, 5000)
+    friendsLivePollerId = setInterval(pollFriendsLive, 90000)
   }
 })
 onUnmounted(() => {
   if (notifPollerId) clearInterval(notifPollerId)
+  if (friendsLivePollerId) clearInterval(friendsLivePollerId)
 })
 
 const navBgColor = computed(() => {
@@ -142,6 +206,68 @@ const claimDaily = async () => {
         title="Hot Bets · Leaderboards · Amigos · Salas">
         🌐
       </button>
+
+      <!-- Friends LIVE: amigos en partida ahora -->
+      <div v-if="auth && auth.isLoggedIn.value" class="relative">
+        <button @click="onToggleFriendsLive"
+          class="relative px-3 py-2 text-sm rounded-lg border transition flex items-center gap-1"
+          :class="friendsLiveCount > 0
+            ? 'border-red-500/60 text-red-300 bg-red-950/40 hover:bg-red-900/40 animate-pulse'
+            : 'border-white/15 text-white/50 hover:text-white/80 hover:border-white/30'"
+          :title="friendsLiveCount > 0 ? `${friendsLiveCount} ${friendsLiveCount === 1 ? 'amigo' : 'amigos'} en partida` : 'Sin amigos en partida'">
+          <span class="text-base">🟢</span>
+          <span v-if="friendsLiveCount > 0" class="text-[10px] font-mono font-bold">{{ friendsLiveCount }}</span>
+        </button>
+        <Transition name="dropdown">
+          <div v-if="showFriendsLive"
+            class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
+            <div class="flex items-center justify-between px-4 py-2 border-b border-white/10">
+              <p class="text-white/70 text-xs font-mono font-bold">🟢 Amigos en partida</p>
+              <button v-if="friendsLiveData" @click="onRefreshFriendsLive" :disabled="friendsLiveLoading"
+                class="text-[10px] font-mono text-white/40 hover:text-white/70 disabled:opacity-40">
+                {{ friendsLiveLoading ? '...' : '↻' }}
+              </button>
+            </div>
+            <div v-if="friendsLiveLoading && !friendsLiveData"
+              class="px-4 py-8 text-center">
+              <p class="text-white/30 text-xs font-mono">Buscando partidas...</p>
+            </div>
+            <div v-else-if="!friendsLiveCount" class="px-4 py-8 text-center">
+              <p class="text-white/30 text-xs font-mono">Ningún amigo en partida ahora</p>
+              <p v-if="friendsLiveData?.checked" class="text-white/20 text-[10px] font-mono mt-1">
+                ({{ friendsLiveData.checked }} amigos chequeados)
+              </p>
+            </div>
+            <div v-else class="overflow-y-auto divide-y divide-white/5">
+              <button v-for="f in friendsLiveData?.friends || []" :key="f.user_id"
+                @click="onOpenLiveFriend(f); showFriendsLive = false"
+                class="w-full text-left px-4 py-3 hover:bg-white/5 transition flex items-center gap-3">
+                <img v-if="f.avatar"
+                  :src="`https://cdn.discordapp.com/avatars/${f.discord_id}/${f.avatar}.png?size=64`"
+                  class="w-9 h-9 rounded-full shrink-0" />
+                <div v-else class="w-9 h-9 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {{ f.username?.[0]?.toUpperCase() || '?' }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-white text-xs font-mono font-bold truncate">{{ f.username }}</p>
+                  <p class="text-white/50 text-[10px] font-mono truncate">
+                    <span v-if="f.champion_name" class="text-red-300">{{ f.champion_name }}</span>
+                    <span v-if="f.queue_name" class="text-white/30"> · {{ f.queue_name }}</span>
+                  </p>
+                </div>
+                <span class="text-[9px] font-mono text-white/40 shrink-0">
+                  {{ formatGameLength(f.game_length) }}
+                </span>
+              </button>
+            </div>
+            <div v-if="friendsLiveData?.next_refresh_at" class="px-4 py-1.5 border-t border-white/5 bg-black/30">
+              <p class="text-white/30 text-[9px] font-mono text-center">
+                cache 60s · próximo refresh manual
+              </p>
+            </div>
+          </div>
+        </Transition>
+      </div>
 
       <!-- Notifications bell -->
       <div v-if="auth && auth.isLoggedIn.value" class="relative">
