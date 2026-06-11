@@ -72,6 +72,18 @@ DAILY_REWARD_INTERVAL_SECONDS = 24 * 3600  # antes era 20h → +600 TC/mes/user 
 
 
 # ---------------------------------------------------------------------------
+# Welcome bonus + loyalty
+# ---------------------------------------------------------------------------
+
+# Antes era 100 instant. Reducido a 50 + 50 al 3er claim diario para evitar
+# que la creación masiva de cuentas (sybil) mintee 100 TC por cada nueva.
+# Los users legítimos lo recuperan tras 3 días de uso normal.
+WELCOME_BONUS_AMOUNT = 50
+LOYALTY_BONUS_AMOUNT = 50
+LOYALTY_BONUS_AT_CLAIMS = 3   # se entrega en la 3ª daily claim
+
+
+# ---------------------------------------------------------------------------
 # Anti-sybil
 # ---------------------------------------------------------------------------
 

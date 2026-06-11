@@ -3236,6 +3236,26 @@ def friends_live():
         results = list(_ex.map(_check_friend_in_game, friends))
 
     in_game = [r for r in results if r]
+    # Detectar transiciones not-in-game → in-game para notificar al user.
+    # Sólo si había un cache previo (evita spam en el primer load).
+    try:
+        if cached:
+            prev_ids = {p.get("user_id") for p in (cached.get("in_game") or [])}
+            newly_in_game = [f for f in in_game if f.get("user_id") not in prev_ids]
+            for f in newly_in_game:
+                try:
+                    body_parts = [x for x in (f.get("champion_name"), f.get("queue_name")) if x]
+                    _users.push_notification(
+                        user_id=user["id"], notif_type="friend_live",
+                        title=f"🟢 {f.get('username','?')} está en partida",
+                        body=" · ".join(body_parts) if body_parts else None,
+                        link="#/social", icon="🟢",
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     with _FRIENDS_LIVE_LOCK:
         _FRIENDS_LIVE_CACHE[user["id"]] = {
             "ts": now,

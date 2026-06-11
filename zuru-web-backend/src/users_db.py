@@ -602,12 +602,11 @@ def upsert_user_from_discord(discord_id, username, avatar_hash):
         """INSERT INTO users (discord_id, discord_username, discord_avatar,
             currency, created_at, last_login)
             VALUES (?, ?, ?, ?, ?, ?)""",
-        (discord_id, username, avatar_hash, 100, now, now),  # 100 TC welcome bonus
+        (discord_id, username, avatar_hash, WELCOME_BONUS_AMOUNT, now, now),
     )
-    # Welcome transaction
     _exec(
         "INSERT INTO currency_transactions (user_id, delta, reason, created_at) VALUES (?, ?, ?, ?)",
-        (new_id, 100, "welcome bonus", now),
+        (new_id, WELCOME_BONUS_AMOUNT, "welcome bonus", now),
     )
     return get_user_by_discord(discord_id)
 
@@ -693,7 +692,10 @@ def get_recent_transactions(user_id, limit=20):
 
 
 # Centralizados en econ_config (DAILY_REWARD_*).
-from econ_config import DAILY_REWARD_AMOUNT, DAILY_REWARD_INTERVAL_SECONDS  # noqa: E402
+from econ_config import (  # noqa: E402
+    DAILY_REWARD_AMOUNT, DAILY_REWARD_INTERVAL_SECONDS,
+    WELCOME_BONUS_AMOUNT, LOYALTY_BONUS_AMOUNT, LOYALTY_BONUS_AT_CLAIMS,
+)
 
 
 def can_claim_daily(user_id):
@@ -721,18 +723,44 @@ def daily_status(user_id):
 
 
 def claim_daily(user_id, amount=None):
-    """Reclama el daily reward. Devuelve nuevo balance o None si ya reclamó."""
+    """Reclama el daily reward. Devuelve nuevo balance o None si ya reclamó.
+    Si el user llega a su LOYALTY_BONUS_AT_CLAIMS-ésima daily claim, recibe
+    el LOYALTY_BONUS_AMOUNT extra como recompensa por sticky retention
+    (compensa el welcome bonus reducido para anti-sybil)."""
     if amount is None:
         amount = DAILY_REWARD_AMOUNT
     if not can_claim_daily(user_id):
         return None
     now = time.time()
     cur = _exec("SELECT user_id FROM daily_rewards WHERE user_id=?", (user_id,))
-    if cur.fetchone():
+    is_existing = cur.fetchone() is not None
+    if is_existing:
         _exec("UPDATE daily_rewards SET last_claim_at=? WHERE user_id=?", (now, user_id))
     else:
         _exec("INSERT INTO daily_rewards (user_id, last_claim_at) VALUES (?, ?)", (user_id, now))
-    return add_currency(user_id, amount, "daily reward")
+    new_balance = add_currency(user_id, amount, "daily reward")
+    # Loyalty bonus en la Nth claim. Contamos cuántos "daily reward" tiene
+    # ya el user en currency_transactions (post-insert).
+    try:
+        cur = _exec(
+            "SELECT COUNT(*) FROM currency_transactions WHERE user_id=? AND reason=?",
+            (user_id, "daily reward"),
+        )
+        claim_count = (cur.fetchone() or [0])[0] or 0
+        if claim_count == LOYALTY_BONUS_AT_CLAIMS:
+            new_balance = add_currency(user_id, LOYALTY_BONUS_AMOUNT, "loyalty bonus (3rd daily)")
+            try:
+                push_notification(
+                    user_id=user_id, notif_type="loyalty_bonus",
+                    title=f"🎁 +{LOYALTY_BONUS_AMOUNT} TC loyalty bonus",
+                    body=f"Por tu {LOYALTY_BONUS_AT_CLAIMS}er daily reward, ¡gracias por volver!",
+                    link="#/profile", icon="🎁",
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return new_balance
 
 
 # ---------------------------------------------------------------------------
