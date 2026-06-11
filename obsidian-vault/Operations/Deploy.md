@@ -13,6 +13,23 @@ personal  https://github.com/RobonicBaluta/tumor-tracker.git
 
 **Vercel y Render escuchan a `personal/main`**, no a origin. Si pusheas sólo a origin no deploya.
 
+## ⚠ Single-worker constraint (in-memory state)
+
+Render free tier corre **gunicorn -w 1** (1 worker). Si escalamos a `-w 2+`:
+
+Los siguientes estados se duplicarían por worker, rompiendo las garantías:
+
+| Variable | Archivo | Consecuencia con 2+ workers |
+|----------|---------|------------------------------|
+| `_LOGIN_RATE` | main.py | Rate-limit Discord login efectivamente x2 |
+| `_ACTION_RATE` | main.py | Rate-limit bets/challenges create efectivamente x2 |
+| `_FRIENDS_LIVE_CACHE` | main.py | Doble fetch a Spectator + posible notif spam |
+| `_PREDSTATS_LAST_SWEEP` | main.py | Sweep cada 30s **por worker**, no global |
+| `_FRIENDS_LIVE_USER_LOCKS` | main.py | Sólo serializa per-user dentro del MISMO worker |
+| `bravery_engine._CACHE` | bravery_engine.py | DDragon se piden 2× al startup |
+
+**Migración a multi-worker requiere**: portar esos a Redis (ya tenemos `redis_client.py`). Usar `INCR + EXPIRE` para los rate limits, `SETEX` para los caches con TTL.
+
 ## Script `deploy.sh`
 
 Workflow estándar:
