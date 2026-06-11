@@ -1211,6 +1211,17 @@
       </div>
     </Transition>
 
+    <!-- Card export error toast -->
+    <Transition name="modal">
+      <div v-if="exportError" class="fixed bottom-6 right-6 z-[60] max-w-sm">
+        <div class="bg-red-950/90 border-2 border-red-500/60 rounded-xl shadow-2xl backdrop-blur px-4 py-3 flex items-start gap-3">
+          <span class="text-xl shrink-0">🖼</span>
+          <p class="flex-1 text-red-200 text-sm font-mono leading-snug">{{ exportError }}</p>
+          <button @click="exportError = ''" class="text-red-300/60 hover:text-red-200 text-lg leading-none">✕</button>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Excuse toast -->
     <Transition name="excuse">
       <div v-if="excuseText" class="fixed top-6 right-6 z-[60] max-w-sm"
@@ -2039,19 +2050,25 @@ function _fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return truncated + '…'
 }
 
+const exportError = ref('')
 const exportStatsImage = async () => {
   if (!summoner.value || !personalStats.value) return
   exportingImage.value = true
+  exportError.value = ''
   try {
     // Lazy-import qrcode-generator (no entra al bundle inicial)
     const qrFactory = (await import('qrcode-generator')).default
 
     const W = 1080
     const H = 1350
+    // HiDPI: scale por devicePixelRatio para que en pantallas retina y al
+    // subir a redes que reescalan no se vea pixelado.
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
     const canvas = document.createElement('canvas')
-    canvas.width = W
-    canvas.height = H
+    canvas.width = W * dpr
+    canvas.height = H * dpr
     const ctx = canvas.getContext('2d')!
+    ctx.scale(dpr, dpr)
 
     // ============ FONDO ============
     const bgGrad = ctx.createLinearGradient(0, 0, 0, H)
@@ -2260,12 +2277,47 @@ const exportStatsImage = async () => {
     ctx.font = 'italic 11px monospace'
     ctx.fillText('Made with ☢ + suffering', qrX + qrSize + 30, qrY + 180)
 
-    const link = document.createElement('a')
-    link.download = `tumor-tracker-${profileSlug}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
-  } catch (e) {
+    // Descarga + share. Web Share API con archivos cuando esté disponible
+    // (iOS PWA, Android Chrome) — fallback al anchor.download tradicional.
+    const filename = `tumor-tracker-${profileSlug}.png`
+    const blob: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob falló')), 'image/png')
+    })
+    const file = new File([blob], filename, { type: 'image/png' })
+    const nav = navigator as Navigator & {
+      canShare?: (data: { files?: File[] }) => boolean
+      share?: (data: { files?: File[]; title?: string; text?: string }) => Promise<void>
+    }
+    if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({
+          files: [file],
+          title: 'Tumor Tracker · ' + summoner.value,
+          text: `☢ Mi diagnóstico en Tumor Tracker`,
+        })
+      } catch (shareErr: any) {
+        // User canceló o share falló — caemos al download tradicional
+        if (shareErr?.name !== 'AbortError') {
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.download = filename
+          link.href = url
+          link.click()
+          setTimeout(() => URL.revokeObjectURL(url), 1000)
+        }
+      }
+    } else {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.download = filename
+      link.href = url
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  } catch (e: any) {
     console.error(e)
+    exportError.value = e?.message || 'No se pudo generar la card. Reintenta en un momento.'
+    setTimeout(() => { exportError.value = '' }, 5000)
   } finally {
     exportingImage.value = false
   }
