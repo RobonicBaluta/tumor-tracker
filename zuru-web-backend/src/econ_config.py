@@ -94,6 +94,13 @@ MIN_DISCORD_ACCOUNT_AGE_SECONDS = 3 * 24 * 3600
 # Snowflake epoch de Discord (constante de la API, no de nuestra app)
 DISCORD_EPOCH_MS = 1420070400000
 
+# Rate limit por user_id en endpoints de creación (bets/create, challenges/create)
+# para evitar scripts que spamean operaciones de TC.
+BETS_CREATE_RATE_PER_MINUTE = 10
+BETS_CREATE_RATE_PER_HOUR = 60
+CHALLENGES_CREATE_RATE_PER_MINUTE = 5
+CHALLENGES_CREATE_RATE_PER_HOUR = 30
+
 
 # ---------------------------------------------------------------------------
 # Bravery

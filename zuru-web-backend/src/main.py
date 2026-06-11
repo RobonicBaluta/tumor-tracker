@@ -160,6 +160,28 @@ if _cors_origins == "*":
 else:
     CORS(app, origins=[o.strip() for o in _cors_origins.split(",") if o.strip()])
 
+
+# Security headers defensivos para respuestas JSON.
+# CSP no se aplica porque las respuestas son JSON, no HTML — el frontend
+# (Vercel) tiene su propia CSP por meta tag.
+@app.after_request
+def _add_security_headers(response):
+    # Anti-clickjacking
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    # MIME sniffing off
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Referrer mínimo
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    # Cross-origin: limita scripts cross-window
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    # HSTS sólo si la request fue HTTPS (Render forces https en prod)
+    if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
 # Healthcheck para Render.
 @app.route("/healthz")
 def healthz():
@@ -2832,7 +2854,34 @@ _LOGIN_RATE = {}  # ip -> list[ts] de logins recientes
 from econ_config import (
     LOGIN_RATE_MAX_PER_MINUTE, LOGIN_RATE_MAX_PER_HOUR,
     MIN_DISCORD_ACCOUNT_AGE_SECONDS, DISCORD_EPOCH_MS,
+    BETS_CREATE_RATE_PER_MINUTE, BETS_CREATE_RATE_PER_HOUR,
+    CHALLENGES_CREATE_RATE_PER_MINUTE, CHALLENGES_CREATE_RATE_PER_HOUR,
 )
+
+# Buckets genéricos por user_id para create endpoints
+_ACTION_RATE_LOCK = threading.Lock()
+_ACTION_RATE = {}  # (action, user_id) -> [ts, ts, ...]
+
+
+def _check_action_rate(action, user_id, per_minute, per_hour):
+    """Token bucket por user_id+action. True si puede proceder."""
+    if not user_id:
+        return True
+    now = time.time()
+    key = (action, user_id)
+    with _ACTION_RATE_LOCK:
+        bucket = _ACTION_RATE.get(key, [])
+        bucket = [t for t in bucket if (now - t) < 3600]
+        last_minute = [t for t in bucket if (now - t) < 60]
+        if len(last_minute) >= per_minute:
+            _ACTION_RATE[key] = bucket
+            return False
+        if len(bucket) >= per_hour:
+            _ACTION_RATE[key] = bucket
+            return False
+        bucket.append(now)
+        _ACTION_RATE[key] = bucket
+    return True
 
 
 def _discord_account_age_seconds(discord_id):
@@ -3790,6 +3839,9 @@ def bets_create():
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
+    if not _check_action_rate("bets_create", user["id"],
+                              BETS_CREATE_RATE_PER_MINUTE, BETS_CREATE_RATE_PER_HOUR):
+        return jsonify({"error": "Demasiadas apuestas seguidas. Espera unos segundos."}), 429
     data = request.get_json() or {}
     match_id = data.get("match_id")
     game_id = data.get("game_id")
@@ -4125,6 +4177,9 @@ def challenges_create():
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
+    if not _check_action_rate("challenges_create", user["id"],
+                              CHALLENGES_CREATE_RATE_PER_MINUTE, CHALLENGES_CREATE_RATE_PER_HOUR):
+        return jsonify({"error": "Demasiados challenges seguidos. Espera unos segundos."}), 429
     if not user.get("riot_puuid"):
         return jsonify({"error": "Vincula tu Riot ID antes de crear challenges"}), 400
     data = request.get_json() or {}
