@@ -1982,98 +1982,286 @@ const shareProfile = async () => {
 }
 
 const exportingImage = ref(false)
+
+// Pinta una matriz QR sobre el canvas. modules es la salida de qrcode-generator
+// (.getModuleCount / .isDark). x,y = esquina sup-izq; size = lado total en px.
+// fg/bg = colores hex. quietZone = módulos de margen blanco (recomendado 4).
+function _paintQR(
+  ctx: CanvasRenderingContext2D,
+  qr: { getModuleCount(): number; isDark(r: number, c: number): boolean },
+  x: number, y: number, size: number,
+  fg = '#000', bg = '#fff', quietZone = 4,
+) {
+  const moduleCount = qr.getModuleCount()
+  const total = moduleCount + quietZone * 2
+  const cell = size / total
+  // Fondo blanco completo (incluye quiet zone)
+  ctx.fillStyle = bg
+  ctx.fillRect(x, y, size, size)
+  // Módulos dark
+  ctx.fillStyle = fg
+  for (let r = 0; r < moduleCount; r++) {
+    for (let c = 0; c < moduleCount; c++) {
+      if (qr.isDark(r, c)) {
+        const px = x + (c + quietZone) * cell
+        const py = y + (r + quietZone) * cell
+        ctx.fillRect(Math.floor(px), Math.floor(py), Math.ceil(cell) + 1, Math.ceil(cell) + 1)
+      }
+    }
+  }
+}
+
+// Texto narrativo según el tumor avg
+function _tumorLabel(t: number): string {
+  if (t < 20) return 'CRACKED'
+  if (t < 40) return 'LIMPIO'
+  if (t < 55) return 'NORMAL'
+  if (t < 65) return 'SUS'
+  if (t < 80) return 'INFLAMADO'
+  return 'TUMOR MALIGNO'
+}
+function _tumorColor(t: number): string {
+  if (t < 20) return '#22c55e'      // green-500
+  if (t < 40) return '#84cc16'      // lime-500
+  if (t < 55) return '#eab308'      // yellow-500
+  if (t < 65) return '#f97316'      // orange-500
+  if (t < 80) return '#ef4444'      // red-500
+  return '#b91c1c'                  // red-700
+}
+
+// Texto wrapping helper para no salirse del card
+function _fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let truncated = text
+  while (truncated.length > 1 && ctx.measureText(truncated + '…').width > maxWidth) {
+    truncated = truncated.slice(0, -1)
+  }
+  return truncated + '…'
+}
+
 const exportStatsImage = async () => {
   if (!summoner.value || !personalStats.value) return
   exportingImage.value = true
   try {
+    // Lazy-import qrcode-generator (no entra al bundle inicial)
+    const qrFactory = (await import('qrcode-generator')).default
+
+    const W = 1080
+    const H = 1350
     const canvas = document.createElement('canvas')
-    canvas.width = 800
-    canvas.height = 1000
+    canvas.width = W
+    canvas.height = H
     const ctx = canvas.getContext('2d')!
 
-    // Fondo gradient
-    const gradient = ctx.createLinearGradient(0, 0, 0, 1000)
-    gradient.addColorStop(0, '#0d1b2a')
-    gradient.addColorStop(1, '#1b2838')
-    ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, 800, 1000)
+    // ============ FONDO ============
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, H)
+    bgGrad.addColorStop(0, '#0d1b2a')
+    bgGrad.addColorStop(0.5, '#13243a')
+    bgGrad.addColorStop(1, '#1b2838')
+    ctx.fillStyle = bgGrad
+    ctx.fillRect(0, 0, W, H)
 
-    // Header dorado
-    ctx.fillStyle = '#c89b3c'
-    ctx.fillRect(0, 0, 800, 80)
-    ctx.fillStyle = '#000'
-    ctx.font = 'bold 36px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText('☢ TUMOR TRACKER', 400, 52)
+    // Ruido sutil de líneas horizontales (efecto cyberpunk)
+    ctx.strokeStyle = 'rgba(200, 155, 60, 0.04)'
+    ctx.lineWidth = 1
+    for (let yy = 0; yy < H; yy += 4) {
+      ctx.beginPath()
+      ctx.moveTo(0, yy)
+      ctx.lineTo(W, yy)
+      ctx.stroke()
+    }
 
-    // Summoner
-    ctx.fillStyle = '#fff'
-    ctx.font = 'bold 32px monospace'
-    ctx.fillText(summoner.value, 400, 140)
-    ctx.fillStyle = (tier.value && tier.value !== 'UNRANKED') ? '#c89b3c' : '#888'
+    // ============ HEADER BRAND ============
+    const headerGrad = ctx.createLinearGradient(0, 0, W, 100)
+    headerGrad.addColorStop(0, '#c89b3c')
+    headerGrad.addColorStop(1, '#e0b84e')
+    ctx.fillStyle = headerGrad
+    ctx.fillRect(0, 0, W, 100)
+    ctx.fillStyle = '#0d1b2a'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.font = 'bold 48px monospace'
+    ctx.fillText('☢ TUMOR TRACKER', 50, 50)
     ctx.font = '20px monospace'
-    ctx.fillText(`${tier.value || 'UNRANKED'} ${division.value || ''}`, 400, 175)
+    ctx.fillStyle = 'rgba(13, 27, 42, 0.6)'
+    ctx.textAlign = 'right'
+    ctx.fillText('· DIAGNÓSTICO COMPLETO', W - 50, 52)
 
-    // Stats grid
-    const ps = personalStats.value
-    const stats = [
-      { label: 'PARTIDAS', value: String(ps.total_matches) },
-      { label: 'WIN RATE', value: `${ps.win_rate}%`, color: ps.win_rate >= 50 ? '#4ade80' : '#f87171' },
-      { label: 'KDA MEDIO', value: ps.avg_kda.toFixed(2) },
-      { label: 'TIMES WORST', value: String(ps.times_worst) },
-    ]
-    let y = 250
-    for (let i = 0; i < stats.length; i++) {
-      const row = Math.floor(i / 2)
-      const col = i % 2
-      const x = col === 0 ? 100 : 500
-      const yy = y + row * 130
-      // Card
-      ctx.fillStyle = 'rgba(0,0,0,0.4)'
-      ctx.fillRect(x, yy, 200, 100)
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)'
-      ctx.strokeRect(x, yy, 200, 100)
-      // Value
-      ctx.fillStyle = stats[i].color || '#c89b3c'
-      ctx.font = 'bold 36px monospace'
-      ctx.textAlign = 'center'
-      ctx.fillText(stats[i].value, x + 100, yy + 50)
-      // Label
-      ctx.fillStyle = '#888'
-      ctx.font = '12px monospace'
-      ctx.fillText(stats[i].label, x + 100, yy + 80)
-    }
+    // ============ HEADLINE: SUMMONER + TIER ============
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 56px monospace'
+    const summonerText = _fitText(ctx, summoner.value, W - 100)
+    ctx.fillText(summonerText, 50, 180)
 
-    // Top 3 tumores (si hay)
-    if (topTumores.value && topTumores.value.length) {
-      ctx.fillStyle = '#dc2626'
-      ctx.font = 'bold 16px monospace'
-      ctx.textAlign = 'left'
-      ctx.fillText('☢ TOP TUMORES', 80, 580)
-      let ty = 615
-      for (let i = 0; i < Math.min(3, topTumores.value.length); i++) {
-        const t = topTumores.value[i]
-        ctx.fillStyle = ['#c89b3c', '#a8a8a8', '#cd7f32'][i] || '#666'
-        ctx.font = 'bold 18px monospace'
-        ctx.fillText(`#${i + 1}`, 80, ty)
-        ctx.fillStyle = '#fff'
-        ctx.font = '16px monospace'
-        ctx.fillText(t.nombre, 130, ty)
-        ctx.fillStyle = '#888'
-        ctx.font = '14px monospace'
-        ctx.fillText(`${t.campeon} · ${t.apariciones}x · KDA ${t.avg_kda.toFixed(2)}`, 130, ty + 22)
-        ty += 60
+    const tierStr = (tier.value && tier.value !== 'UNRANKED')
+      ? `${tier.value} ${division.value || ''}`.trim()
+      : 'UNRANKED'
+    ctx.fillStyle = (tier.value && tier.value !== 'UNRANKED') ? '#c89b3c' : '#6b7280'
+    ctx.font = 'bold 28px monospace'
+    ctx.fillText(tierStr, 50, 230)
+
+    // Línea divisoria dorada
+    ctx.strokeStyle = 'rgba(200, 155, 60, 0.4)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(50, 270)
+    ctx.lineTo(W - 50, 270)
+    ctx.stroke()
+
+    // ============ HERO STAT: TUMOR AVG ============
+    const ps = personalStats.value as any
+    // Aproximar tumor avg desde recientes; fallback a personalStats.avg_kda > N proxy
+    let tumorAvg: number | null = null
+    try {
+      const recent = (filteredMatches.value || []).slice(0, 20)
+      const scores = recent
+        .map((m: any) => m.worst?.tumor_score)
+        .filter((v: any) => typeof v === 'number')
+      if (scores.length) {
+        tumorAvg = Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length)
       }
+    } catch { /* nada */ }
+
+    const heroY = 290
+    const heroH = 230
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)'
+    ctx.fillRect(50, heroY, W - 100, heroH)
+    ctx.strokeStyle = 'rgba(200, 155, 60, 0.2)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(50, heroY, W - 100, heroH)
+
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#6b7280'
+    ctx.font = '18px monospace'
+    ctx.fillText('TUMOR PROMEDIO · ÚLTIMAS 20', W / 2, heroY + 30)
+
+    if (tumorAvg !== null) {
+      ctx.fillStyle = _tumorColor(tumorAvg)
+      ctx.font = 'bold 140px monospace'
+      ctx.fillText(String(tumorAvg), W / 2, heroY + 130)
+      ctx.fillStyle = _tumorColor(tumorAvg)
+      ctx.font = 'bold 32px monospace'
+      ctx.fillText(`☢ ${_tumorLabel(tumorAvg)}`, W / 2, heroY + 190)
+    } else {
+      ctx.fillStyle = '#6b7280'
+      ctx.font = 'bold 80px monospace'
+      ctx.fillText('—', W / 2, heroY + 140)
+      ctx.font = '18px monospace'
+      ctx.fillText('(sin datos suficientes)', W / 2, heroY + 190)
     }
 
-    // Footer
-    ctx.fillStyle = '#888'
+    // ============ STATS SECUNDARIAS GRID 2×2 ============
+    const winRate = ps.win_rate ?? 0
+    const stats = [
+      { label: 'PARTIDAS', value: String(ps.total_matches ?? 0), color: '#ffffff' },
+      { label: 'WIN RATE', value: `${winRate}%`, color: winRate >= 55 ? '#22c55e' : winRate >= 45 ? '#eab308' : '#ef4444' },
+      { label: 'KDA MEDIO', value: (ps.avg_kda ?? 0).toFixed(2), color: (ps.avg_kda ?? 0) >= 3 ? '#22c55e' : (ps.avg_kda ?? 0) >= 2 ? '#eab308' : '#ef4444' },
+      { label: 'VECES TUMOR', value: String(ps.times_worst ?? 0), color: (ps.times_worst ?? 0) <= 1 ? '#22c55e' : '#ef4444' },
+    ]
+    const gridY = 550
+    const gridH = 260
+    const cellW = (W - 100 - 30) / 2
+    const cellH = (gridH - 30) / 2
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2
+      const row = Math.floor(i / 2)
+      const x = 50 + col * (cellW + 30)
+      const y = gridY + row * (cellH + 30)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)'
+      ctx.fillRect(x, y, cellW, cellH)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)'
+      ctx.strokeRect(x, y, cellW, cellH)
+      ctx.fillStyle = stats[i].color
+      ctx.font = 'bold 64px monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText(stats[i].value, x + cellW / 2, y + cellH / 2 + 10)
+      ctx.fillStyle = '#6b7280'
+      ctx.font = '14px monospace'
+      ctx.fillText(stats[i].label, x + cellW / 2, y + cellH - 18)
+    }
+
+    // ============ TOP 3 TUMORES (PODIO) ============
+    const podioY = 860
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#ef4444'
+    ctx.font = 'bold 24px monospace'
+    ctx.fillText('☢ TOP TUMORES', 50, podioY)
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(50, podioY + 14)
+    ctx.lineTo(W - 50, podioY + 14)
+    ctx.stroke()
+
+    const podioColors = ['#c89b3c', '#cbd5e1', '#cd7f32']
+    const podioBgs = ['rgba(200,155,60,0.08)', 'rgba(203,213,225,0.06)', 'rgba(205,127,50,0.06)']
+    const top = (topTumores.value || []).slice(0, 3)
+    let ty = podioY + 40
+    for (let i = 0; i < 3; i++) {
+      const t = top[i]
+      ctx.fillStyle = podioBgs[i]
+      ctx.fillRect(50, ty, W - 100, 75)
+      ctx.strokeStyle = podioColors[i] + '50'
+      ctx.strokeRect(50, ty, W - 100, 75)
+      // medalla
+      ctx.fillStyle = podioColors[i]
+      ctx.font = 'bold 38px monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText(`#${i + 1}`, 95, ty + 50)
+
+      if (t) {
+        ctx.textAlign = 'left'
+        ctx.fillStyle = '#ffffff'
+        ctx.font = 'bold 22px monospace'
+        const name = _fitText(ctx, t.nombre || '?', 600)
+        ctx.fillText(name, 160, ty + 35)
+        ctx.fillStyle = '#9ca3af'
+        ctx.font = '16px monospace'
+        const sub = `${t.campeon || '?'}  ·  ${t.apariciones || 1}× detectado  ·  KDA ${(t.avg_kda ?? 0).toFixed(2)}`
+        ctx.fillText(_fitText(ctx, sub, 600), 160, ty + 60)
+      } else {
+        ctx.textAlign = 'left'
+        ctx.fillStyle = '#6b7280'
+        ctx.font = 'italic 18px monospace'
+        ctx.fillText('— slot vacío —', 160, ty + 45)
+      }
+      ty += 85
+    }
+
+    // ============ FOOTER: QR + URL ============
+    const profileSlug = summoner.value.replace('#', '-')
+    const profileUrlStr = `${window.location.origin}${window.location.pathname}#/u/${encodeURIComponent(profileSlug)}`
+
+    const qr = qrFactory(0, 'M')  // typeNumber 0 = autosize, M = 15% ECC (suficiente)
+    qr.addData(profileUrlStr)
+    qr.make()
+
+    const qrSize = 200
+    const qrX = 50
+    const qrY = H - qrSize - 50
+    _paintQR(ctx, qr, qrX, qrY, qrSize, '#0d1b2a', '#ffffff', 4)
+
+    // Texto al lado del QR
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#c89b3c'
+    ctx.font = 'bold 22px monospace'
+    ctx.fillText('ESCANÉAME', qrX + qrSize + 30, qrY + 40)
+    ctx.fillStyle = '#9ca3af'
+    ctx.font = '16px monospace'
+    ctx.fillText('perfil completo en vivo', qrX + qrSize + 30, qrY + 68)
+    ctx.fillStyle = '#6b7280'
+    ctx.font = '14px monospace'
+    ctx.fillText('☢ tumor-tracker', qrX + qrSize + 30, qrY + 120)
+    ctx.fillStyle = '#6b7280'
     ctx.font = '12px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText('tumor-tracker.vercel.app', 400, 970)
+    ctx.fillText('Generado · ' + new Date().toLocaleDateString(), qrX + qrSize + 30, qrY + 150)
+    ctx.fillStyle = 'rgba(200, 155, 60, 0.4)'
+    ctx.font = 'italic 11px monospace'
+    ctx.fillText('Made with ☢ + suffering', qrX + qrSize + 30, qrY + 180)
 
     const link = document.createElement('a')
-    link.download = `tumor-tracker-${summoner.value.replace('#', '-')}.png`
+    link.download = `tumor-tracker-${profileSlug}.png`
     link.href = canvas.toDataURL('image/png')
     link.click()
   } catch (e) {
