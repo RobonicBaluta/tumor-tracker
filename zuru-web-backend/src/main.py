@@ -2858,9 +2858,29 @@ from econ_config import (
     CHALLENGES_CREATE_RATE_PER_MINUTE, CHALLENGES_CREATE_RATE_PER_HOUR,
 )
 
-# Buckets genéricos por user_id para create endpoints
+# Buckets genéricos por user_id para create endpoints.
+# IMPORTANTE: in-memory por proceso. Si en el futuro corremos gunicorn -w 2,
+# cada worker tendría su propia ventana → rate-limit efectivo se duplica.
+# Hoy Render free corre 1 worker, OK; documentado en obsidian-vault/Operations.
 _ACTION_RATE_LOCK = threading.Lock()
 _ACTION_RATE = {}  # (action, user_id) -> [ts, ts, ...]
+_ACTION_RATE_LAST_GC = {"ts": 0.0}
+ACTION_RATE_GC_INTERVAL = 600.0  # cada 10 min limpia entries viejos
+
+
+def _maybe_gc_action_rate(now):
+    """Limpia entries con todos timestamps > 1h. Evita crecimiento ilimitado
+    del dict si lots of users hacen una acción y nunca vuelven."""
+    if (now - _ACTION_RATE_LAST_GC["ts"]) < ACTION_RATE_GC_INTERVAL:
+        return
+    _ACTION_RATE_LAST_GC["ts"] = now
+    cutoff = now - 3600
+    stale_keys = []
+    for k, ts_list in _ACTION_RATE.items():
+        if not ts_list or max(ts_list) < cutoff:
+            stale_keys.append(k)
+    for k in stale_keys:
+        _ACTION_RATE.pop(k, None)
 
 
 def _check_action_rate(action, user_id, per_minute, per_hour):
@@ -2870,6 +2890,7 @@ def _check_action_rate(action, user_id, per_minute, per_hour):
     now = time.time()
     key = (action, user_id)
     with _ACTION_RATE_LOCK:
+        _maybe_gc_action_rate(now)
         bucket = _ACTION_RATE.get(key, [])
         bucket = [t for t in bucket if (now - t) < 3600]
         last_minute = [t for t in bucket if (now - t) < 60]
@@ -2895,18 +2916,32 @@ def _discord_account_age_seconds(discord_id):
         return None
 
 
+_LOGIN_RATE_LAST_GC = {"ts": 0.0}
+
+
+def _maybe_gc_login_rate(now):
+    if (now - _LOGIN_RATE_LAST_GC["ts"]) < ACTION_RATE_GC_INTERVAL:
+        return
+    _LOGIN_RATE_LAST_GC["ts"] = now
+    cutoff = now - 3600
+    stale = [ip for ip, ts_list in _LOGIN_RATE.items()
+             if not ts_list or max(ts_list) < cutoff]
+    for ip in stale:
+        _LOGIN_RATE.pop(ip, None)
+
+
 def _check_login_rate(ip):
     """True si la IP puede intentar otro login; False si está rate-limited."""
     if not ip:
         return True
     now = time.time()
     with _LOGIN_RATE_LOCK:
+        _maybe_gc_login_rate(now)
         bucket = _LOGIN_RATE.get(ip, [])
-        # Limpieza: descarta timestamps > 1h
         bucket = [t for t in bucket if (now - t) < 3600]
         last_minute = [t for t in bucket if (now - t) < 60]
         if len(last_minute) >= LOGIN_RATE_MAX_PER_MINUTE:
-            _LOGIN_RATE[ip] = bucket  # persiste la limpieza
+            _LOGIN_RATE[ip] = bucket
             return False
         if len(bucket) >= LOGIN_RATE_MAX_PER_HOUR:
             _LOGIN_RATE[ip] = bucket
@@ -3350,18 +3385,52 @@ def _check_friend_in_game(friend):
         return None
 
 
+# Lock per-user para serializar fetches concurrentes del mismo user.
+# Sin esto, dos requests simultáneos del mismo user pueden:
+#  - Hacer 2× las llamadas a Spectator (waste Riot rate)
+#  - Spamear notifs friend_live por la misma transición
+_FRIENDS_LIVE_USER_LOCKS = {}
+
+
+def _get_user_friends_live_lock(uid):
+    with _FRIENDS_LIVE_LOCK:
+        lock = _FRIENDS_LIVE_USER_LOCKS.get(uid)
+        if not lock:
+            lock = threading.Lock()
+            _FRIENDS_LIVE_USER_LOCKS[uid] = lock
+        return lock
+
+
 @app.route('/friends/live', methods=['GET'])
 def friends_live():
     """Devuelve la lista de amigos del user actual que están en partida AHORA.
     Cache TTL: 60s por user_id para no quemar Riot rate con Spectator.
-    Limita a FRIENDS_LIVE_MAX_CHECK por refresh."""
+    Limita a FRIENDS_LIVE_MAX_CHECK por refresh.
+
+    Serialización: per-user lock para evitar fetch dupe y notif spam cuando
+    el frontend abre/cierra el dropdown muy rápido."""
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
 
-    now = time.time()
-    with _FRIENDS_LIVE_LOCK:
-        cached = _FRIENDS_LIVE_CACHE.get(user["id"])
+    user_lock = _get_user_friends_live_lock(user["id"])
+    # Try-acquire con timeout breve: si otro request del mismo user está
+    # fetchando, devolvemos lo que haya en cache en vez de bloquear.
+    if not user_lock.acquire(timeout=0.05):
+        with _FRIENDS_LIVE_LOCK:
+            cached = _FRIENDS_LIVE_CACHE.get(user["id"]) or {"ts": 0, "in_game": [], "checked": 0}
+        return jsonify({
+            "friends": cached.get("in_game", []),
+            "checked": cached.get("checked", 0),
+            "cached": True,
+            "in_flight": True,
+            "next_refresh_at": cached.get("ts", time.time()) + FRIENDS_LIVE_CACHE_TTL,
+        })
+
+    try:
+        now = time.time()
+        with _FRIENDS_LIVE_LOCK:
+            cached = _FRIENDS_LIVE_CACHE.get(user["id"])
         if cached and (now - cached["ts"]) < FRIENDS_LIVE_CACHE_TTL:
             return jsonify({
                 "friends": cached["in_game"],
@@ -3370,50 +3439,52 @@ def friends_live():
                 "next_refresh_at": cached["ts"] + FRIENDS_LIVE_CACHE_TTL,
             })
 
-    friends = _users.list_accepted_friends_with_riot(user["id"], limit=FRIENDS_LIVE_MAX_CHECK)
-    if not friends:
+        friends = _users.list_accepted_friends_with_riot(user["id"], limit=FRIENDS_LIVE_MAX_CHECK)
+        if not friends:
+            with _FRIENDS_LIVE_LOCK:
+                _FRIENDS_LIVE_CACHE[user["id"]] = {"ts": now, "in_game": [], "checked": 0}
+            return jsonify({"friends": [], "checked": 0, "cached": False,
+                            "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL})
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(8, len(friends))) as _ex:
+            results = list(_ex.map(_check_friend_in_game, friends))
+
+        in_game = [r for r in results if r]
+        # Detectar transiciones not-in-game → in-game para notificar al user.
+        # Sólo si había un cache previo (evita spam en el primer load).
+        try:
+            if cached:
+                prev_ids = {p.get("user_id") for p in (cached.get("in_game") or [])}
+                newly_in_game = [f for f in in_game if f.get("user_id") not in prev_ids]
+                for f in newly_in_game:
+                    try:
+                        body_parts = [x for x in (f.get("champion_name"), f.get("queue_name")) if x]
+                        _users.push_notification(
+                            user_id=user["id"], notif_type="friend_live",
+                            title=f"🟢 {f.get('username','?')} está en partida",
+                            body=" · ".join(body_parts) if body_parts else None,
+                            link="#/social", icon="🟢",
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         with _FRIENDS_LIVE_LOCK:
-            _FRIENDS_LIVE_CACHE[user["id"]] = {"ts": now, "in_game": [], "checked": 0}
-        return jsonify({"friends": [], "checked": 0, "cached": False,
-                        "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL})
-
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=min(8, len(friends))) as _ex:
-        results = list(_ex.map(_check_friend_in_game, friends))
-
-    in_game = [r for r in results if r]
-    # Detectar transiciones not-in-game → in-game para notificar al user.
-    # Sólo si había un cache previo (evita spam en el primer load).
-    try:
-        if cached:
-            prev_ids = {p.get("user_id") for p in (cached.get("in_game") or [])}
-            newly_in_game = [f for f in in_game if f.get("user_id") not in prev_ids]
-            for f in newly_in_game:
-                try:
-                    body_parts = [x for x in (f.get("champion_name"), f.get("queue_name")) if x]
-                    _users.push_notification(
-                        user_id=user["id"], notif_type="friend_live",
-                        title=f"🟢 {f.get('username','?')} está en partida",
-                        body=" · ".join(body_parts) if body_parts else None,
-                        link="#/social", icon="🟢",
-                    )
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
-    with _FRIENDS_LIVE_LOCK:
-        _FRIENDS_LIVE_CACHE[user["id"]] = {
-            "ts": now,
-            "in_game": in_game,
+            _FRIENDS_LIVE_CACHE[user["id"]] = {
+                "ts": now,
+                "in_game": in_game,
+                "checked": len(friends),
+            }
+        return jsonify({
+            "friends": in_game,
             "checked": len(friends),
-        }
-    return jsonify({
-        "friends": in_game,
-        "checked": len(friends),
-        "cached": False,
-        "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL,
-    })
+            "cached": False,
+            "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL,
+        })
+    finally:
+        user_lock.release()
 
 
 @app.route('/friends/add', methods=['POST'])
@@ -5663,9 +5734,19 @@ def _resolve_one_bravery(lock):
         return {"status": "skipped", "reason": "participant_not_found"}
 
     # Compute tumor. El tier se captura al hacer lock (mejor approx que UNRANKED).
+    # Fallback: si tier era None al lockear (Riot estaba caída), re-attemptamos
+    # ahora — antes de defaultear a UNRANKED, que sub-rata payouts en Diamond+.
     queue_id = info.get("queueId")
     game_duration = info.get("gameDuration") or 0
-    tier_for_scoring = lock.get("tier") or "UNRANKED"
+    tier_for_scoring = lock.get("tier")
+    if not tier_for_scoring:
+        try:
+            tier_now, _ = get_player_rank(lock["puuid"])
+            if tier_now:
+                tier_for_scoring = tier_now
+        except Exception:
+            pass
+    tier_for_scoring = tier_for_scoring or "UNRANKED"
     role = me.get("teamPosition") or me.get("individualPosition") or ""
     try:
         result = _engine_match_score_from_participant(me, game_duration, tier=tier_for_scoring, role=role)

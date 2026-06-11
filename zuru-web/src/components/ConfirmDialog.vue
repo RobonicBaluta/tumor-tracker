@@ -18,7 +18,7 @@
           <div class="flex gap-2 justify-end">
             <button @click="onCancel"
               class="text-xs font-mono px-3 py-2 border border-white/20 text-white/70 hover:text-white hover:bg-white/10 rounded transition">
-              {{ cancelText }}
+              {{ cancelText || $t('common.cancel') }}
             </button>
             <button @click="onConfirm"
               class="text-xs font-mono font-bold px-4 py-2 rounded transition"
@@ -26,7 +26,7 @@
                 background: accentColor,
                 color: variant === 'danger' ? '#fff' : '#0d1b2a',
               }">
-              {{ confirmText }}
+              {{ confirmText || $t('common.confirm') }}
             </button>
           </div>
         </div>
@@ -38,6 +38,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+// Defaults vacíos: el template los suple con $t('common.confirm'/'cancel')
+// para que respeten el idioma activo al render-time.
 const props = withDefaults(defineProps<{
   show: boolean
   title?: string
@@ -46,8 +48,6 @@ const props = withDefaults(defineProps<{
   cancelText?: string
   variant?: 'default' | 'danger' | 'warning'
 }>(), {
-  confirmText: 'Confirmar',
-  cancelText: 'Cancelar',
   variant: 'default',
 })
 
