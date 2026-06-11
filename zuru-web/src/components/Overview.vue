@@ -815,10 +815,21 @@
               <p class="text-white font-mono font-bold">Partida en directo · Predicción de tumor</p>
               <div v-if="predictionStats && predictionStats.total > 0"
                 class="flex items-center gap-1.5 bg-[#c89b3c]/10 border border-[#c89b3c]/30 px-2.5 py-1 rounded-lg">
-                <span class="text-[9px] font-mono text-white/50 tracking-widest">ACIERTO GLOBAL</span>
+                <span class="text-[9px] font-mono text-white/50 tracking-widest">
+                  {{ predictionStats.scope === 'user' ? 'TU ACIERTO' : 'ACIERTO GLOBAL' }}
+                </span>
                 <span :class="predictionStats.accuracy >= 60 ? 'text-green-400' : predictionStats.accuracy >= 50 ? 'text-yellow-400' : 'text-red-400'"
                   class="text-xs font-mono font-bold">{{ predictionStats.accuracy }}%</span>
                 <span class="text-white/30 text-[9px] font-mono">({{ predictionStats.correct }}/{{ predictionStats.total }})</span>
+              </div>
+              <!-- Streak de aciertos consecutivos -->
+              <div v-if="predictionStats && predictionStats.scope === 'user' && (predictionStats.current_streak ?? 0) >= 2"
+                class="flex items-center gap-1.5 bg-green-900/30 border border-green-500/50 px-2.5 py-1 rounded-lg"
+                :class="(predictionStats.current_streak ?? 0) >= 5 ? 'animate-pulse shadow-lg shadow-green-900/40' : ''"
+                :title="`Racha actual de aciertos: ${predictionStats.current_streak}. Máxima: ${predictionStats.max_streak || 0}`">
+                <span class="text-sm">{{ (predictionStats.current_streak ?? 0) >= 5 ? '🔥' : (predictionStats.current_streak ?? 0) >= 3 ? '⚡' : '✨' }}</span>
+                <span class="text-green-400 text-xs font-mono font-bold">{{ predictionStats.current_streak }}</span>
+                <span class="text-white/30 text-[9px] font-mono">aciertos</span>
               </div>
             </div>
             <button @click="closeLiveGame" class="text-white/40 hover:text-white text-xl transition">✕</button>
@@ -2831,7 +2842,15 @@ const toggleBlacklist = async (champion: string) => {
 }
 
 const liveGame = ref<LiveGame | null>(null)
-const predictionStats = ref<{ total: number, correct: number, accuracy: number, pending: number } | null>(null)
+const predictionStats = ref<{
+  total: number
+  correct: number
+  accuracy: number
+  pending: number
+  current_streak?: number
+  max_streak?: number
+  scope?: 'user' | 'global'
+} | null>(null)
 
 // Death heatmap (analytics) — usa Match v5 timeline para agregar posiciones
 // de muerte del usuario.
@@ -2988,7 +3007,12 @@ watch(() => liveGame.value?.match_id, () => {
 
 const fetchPredictionStats = async () => {
   try {
-    const res = await fetch(`${API_BASE}/predictionStats`)
+    // Si tenemos puuid del summoner cargado, pedir stats per-user (con streak)
+    const puuid = (summoner.value as any)?.puuid
+    const url = puuid
+      ? `${API_BASE}/predictionStats?viewer_puuid=${encodeURIComponent(puuid)}`
+      : `${API_BASE}/predictionStats`
+    const res = await fetch(url)
     if (res.ok) predictionStats.value = await res.json()
   } catch {}
 }
