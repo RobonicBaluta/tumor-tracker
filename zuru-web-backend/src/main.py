@@ -3161,6 +3161,95 @@ def friends_list():
     return jsonify(_users.list_friends(user["id"]))
 
 
+# Cache de friends-live por user_id. Cada entry: {ts, friends, in_game}
+_FRIENDS_LIVE_CACHE = {}
+_FRIENDS_LIVE_LOCK = threading.Lock()
+FRIENDS_LIVE_CACHE_TTL = 60  # segundos — Spectator es caro, no spammear
+FRIENDS_LIVE_MAX_CHECK = 8   # máximo de amigos a checar por refresh
+
+
+def _check_friend_in_game(friend):
+    """Llama Spectator v5 para un amigo. Devuelve dict si está en game, None si no.
+    Cacheable individualmente — riot_get tiene cache pero spectator no se cachea
+    (cambia segundo a segundo), así que esta función limita la carga."""
+    try:
+        puuid = friend.get("riot_puuid")
+        if not puuid:
+            return None
+        platform_host = detect_platform(puuid)
+        if not platform_host:
+            return None
+        spec_res = riot_get(f"{spectator_url(platform_host)}/{puuid}")
+        if spec_res.status_code != 200:
+            return None
+        game = spec_res.json()
+        # Encontrar al amigo en participants para datos del champion
+        me = next(
+            (p for p in (game.get("participants") or []) if p.get("puuid") == puuid),
+            None,
+        )
+        champ_id = me.get("championId") if me else None
+        return {
+            **friend,
+            "in_game": True,
+            "game_id": game.get("gameId"),
+            "queue_id": game.get("gameQueueConfigId"),
+            "queue_name": queue_name(game.get("gameQueueConfigId", 0)),
+            "champion_id": champ_id,
+            "champion_name": champ_id_to_name(champ_id) if champ_id else None,
+            "game_start_time": game.get("gameStartTime", 0),
+            "game_length": game.get("gameLength", 0),
+        }
+    except Exception:
+        return None
+
+
+@app.route('/friends/live', methods=['GET'])
+def friends_live():
+    """Devuelve la lista de amigos del user actual que están en partida AHORA.
+    Cache TTL: 60s por user_id para no quemar Riot rate con Spectator.
+    Limita a FRIENDS_LIVE_MAX_CHECK por refresh."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+
+    now = time.time()
+    with _FRIENDS_LIVE_LOCK:
+        cached = _FRIENDS_LIVE_CACHE.get(user["id"])
+        if cached and (now - cached["ts"]) < FRIENDS_LIVE_CACHE_TTL:
+            return jsonify({
+                "friends": cached["in_game"],
+                "checked": cached["checked"],
+                "cached": True,
+                "next_refresh_at": cached["ts"] + FRIENDS_LIVE_CACHE_TTL,
+            })
+
+    friends = _users.list_accepted_friends_with_riot(user["id"], limit=FRIENDS_LIVE_MAX_CHECK)
+    if not friends:
+        with _FRIENDS_LIVE_LOCK:
+            _FRIENDS_LIVE_CACHE[user["id"]] = {"ts": now, "in_game": [], "checked": 0}
+        return jsonify({"friends": [], "checked": 0, "cached": False,
+                        "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL})
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8, len(friends))) as _ex:
+        results = list(_ex.map(_check_friend_in_game, friends))
+
+    in_game = [r for r in results if r]
+    with _FRIENDS_LIVE_LOCK:
+        _FRIENDS_LIVE_CACHE[user["id"]] = {
+            "ts": now,
+            "in_game": in_game,
+            "checked": len(friends),
+        }
+    return jsonify({
+        "friends": in_game,
+        "checked": len(friends),
+        "cached": False,
+        "next_refresh_at": now + FRIENDS_LIVE_CACHE_TTL,
+    })
+
+
 @app.route('/friends/add', methods=['POST'])
 def friends_add():
     user = _current_user()
@@ -3228,6 +3317,10 @@ def rooms_create():
     if user.get("riot_id"):
         _users.add_room_member(room["id"], user["riot_id"])
         room = _users.get_room_by_id(room["id"])
+    try:
+        _users.evaluate_achievements(user["id"])  # first_room
+    except Exception:
+        pass
     return jsonify(room)
 
 
@@ -5270,6 +5363,10 @@ def bravery_lock():
     )
     if not lock:
         return jsonify({"error": "No se pudo crear el lock"}), 500
+    try:
+        _users.evaluate_achievements(user["id"])  # first_bravery + bravery_triple si N dims=3
+    except Exception:
+        pass
     return jsonify(lock)
 
 
@@ -5411,6 +5508,10 @@ def _resolve_one_bravery(lock):
         compliance=compliance,
         payout=payout,
     )
+    try:
+        _users.evaluate_achievements(lock["user_id"])  # bravery_winner si payout > stake
+    except Exception:
+        pass
     # Notificación
     try:
         if payout >= lock["stake"]:

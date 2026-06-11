@@ -1382,6 +1382,11 @@ def _resolve_challenge(ch):
         )
     except Exception:
         pass
+    # first_challenge_won + streak_winner si aplica
+    try:
+        evaluate_achievements(winner)
+    except Exception:
+        pass
 
 
 def get_challenge_by_id(cid):
@@ -1483,6 +1488,11 @@ def resolve_bestofn_challenge(cid, winner_user_id, reason="majority"):
                 body=f"{ch['share_code']} · {reason}",
                 link="#/challenges", icon="❌",
             )
+    except Exception:
+        pass
+    # first_challenge_won + streak_winner si format='streak'
+    try:
+        evaluate_achievements(winner_user_id)
     except Exception:
         pass
     return get_challenge_by_id(cid)
@@ -1861,6 +1871,49 @@ def list_friends(user_id):
     return out
 
 
+def list_accepted_friends_with_riot(user_id, limit=16):
+    """Devuelve amigos aceptados con riot_puuid + riot_id (para /friends/live).
+    Limitado a `limit` para no quemar Riot rate al checar in-game status."""
+    cur = _exec(
+        """SELECT u.id, u.discord_username, u.discord_avatar, u.discord_id,
+                  u.riot_puuid, u.riot_id
+           FROM friendships f
+           JOIN users u ON u.id = CASE
+                WHEN f.requester_id=? THEN f.target_id ELSE f.requester_id
+           END
+           WHERE f.status='accepted'
+             AND (f.requester_id=? OR f.target_id=?)
+             AND u.riot_puuid IS NOT NULL
+             AND u.riot_puuid != ''
+           ORDER BY f.accepted_at DESC NULLS LAST
+           LIMIT ?""" if USE_PG else
+        """SELECT u.id, u.discord_username, u.discord_avatar, u.discord_id,
+                  u.riot_puuid, u.riot_id
+           FROM friendships f
+           JOIN users u ON u.id = CASE
+                WHEN f.requester_id=? THEN f.target_id ELSE f.requester_id
+           END
+           WHERE f.status='accepted'
+             AND (f.requester_id=? OR f.target_id=?)
+             AND u.riot_puuid IS NOT NULL
+             AND u.riot_puuid != ''
+           ORDER BY f.accepted_at DESC
+           LIMIT ?""",
+        (user_id, user_id, user_id, int(limit)),
+    )
+    return [
+        {
+            "user_id": r[0],
+            "username": r[1],
+            "avatar": r[2],
+            "discord_id": r[3],
+            "riot_puuid": r[4],
+            "riot_id": r[5],
+        }
+        for r in cur.fetchall()
+    ]
+
+
 def find_user_by_riot_id(riot_id):
     cur = _exec("SELECT id FROM users WHERE riot_id=?", (riot_id,))
     row = cur.fetchone()
@@ -2005,6 +2058,15 @@ ACHIEVEMENT_DEFS = {
     "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos"},
     "all_in":           {"icon": "🎰", "name": "All In", "desc": "Apuesta todo tu balance en una sola"},
     "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Recuperar de 0 a 500 TC"},
+    # --- Bravery ---
+    "first_bravery":    {"icon": "🎲", "name": "Bravo de Iniciación", "desc": "Lockea tu primer Bravery"},
+    "bravery_winner":   {"icon": "⚡", "name": "Bravo Triunfal", "desc": "Gana TC en un Bravery"},
+    "bravery_triple":   {"icon": "🎭", "name": "Triple Riesgo", "desc": "Lockea un Bravery con champ + lane + items"},
+    # --- Challenges 1v1 ---
+    "first_challenge_won": {"icon": "⚔", "name": "Duelista", "desc": "Gana tu primer challenge 1v1"},
+    "streak_winner":    {"icon": "🌟", "name": "Win Streaker", "desc": "Gana un challenge de Win Streak"},
+    # --- Rooms ---
+    "first_room":       {"icon": "🏠", "name": "Anfitrión", "desc": "Crea tu primera sala"},
 }
 
 
@@ -2136,6 +2198,37 @@ def evaluate_achievements(user_id):
     )
     if (cur.fetchone()[0] or 0) >= 3:
         unlock_achievement(user_id, "social")
+
+    # Bravery: si tiene algún lock pending o resuelto, primer Bravery desbloqueado
+    cur = _exec(
+        "SELECT id, dimensions, status, payout, stake FROM bravery_locks WHERE user_id=? ORDER BY created_at ASC",
+        (user_id,),
+    )
+    bravery_rows = cur.fetchall()
+    if bravery_rows:
+        unlock_achievement(user_id, "first_bravery")
+        # Bravo Triunfal: payout > stake en alguna
+        if any((r[3] or 0) > (r[4] or 0) for r in bravery_rows):
+            unlock_achievement(user_id, "bravery_winner")
+        # Triple Riesgo: lockeo con 3 dimensiones
+        if any((r[1] or 0) >= 3 for r in bravery_rows):
+            unlock_achievement(user_id, "bravery_triple")
+
+    # Challenges 1v1 ganados
+    cur = _exec(
+        "SELECT format FROM challenges WHERE status='resolved' AND winner_user_id=?",
+        (user_id,),
+    )
+    won_challenges = cur.fetchall()
+    if won_challenges:
+        unlock_achievement(user_id, "first_challenge_won")
+        if any(r[0] == "streak" for r in won_challenges):
+            unlock_achievement(user_id, "streak_winner")
+
+    # Rooms: ¿es owner de alguna?
+    cur = _exec("SELECT 1 FROM rooms WHERE owner_user_id=? LIMIT 1", (user_id,))
+    if cur.fetchone():
+        unlock_achievement(user_id, "first_room")
 
 
 # ---------------------------------------------------------------------------

@@ -197,6 +197,31 @@ async function fetchOpenBets() {
   return await res.json()
 }
 
+async function fetchFriendsLive() {
+  if (!token.value) return null
+  const res = await authedFetch('/friends/live')
+  if (!res.ok) return null
+  return await res.json() as {
+    friends: Array<{
+      user_id: number
+      username: string
+      avatar: string | null
+      discord_id: string
+      riot_id: string
+      champion_name: string | null
+      champion_id: number | null
+      queue_id: number
+      queue_name: string
+      game_start_time: number
+      game_length: number
+      in_game: boolean
+    }>
+    checked: number
+    cached: boolean
+    next_refresh_at: number
+  }
+}
+
 async function fetchLeaderboard(kind: 'currency' | 'bets' | 'accuracy') {
   const res = await fetch(`${API_BASE}/leaderboards/${kind}`)
   if (!res.ok) return []
@@ -554,6 +579,7 @@ export function useAuth() {
     fetchMyBets,
     resolveMyPendingBets,
     fetchOpenBets,
+    fetchFriendsLive,
     fetchLeaderboard,
     fetchClusters,
     fetchDeathHeatmap,

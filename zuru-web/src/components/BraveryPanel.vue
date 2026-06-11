@@ -3,12 +3,10 @@
     <!-- Header explicativo -->
     <div class="bg-gradient-to-br from-purple-900/20 via-black/40 to-pink-900/20 border border-purple-500/30 rounded-xl p-3">
       <p class="text-purple-300 text-[10px] font-mono tracking-widest mb-1">
-        🎲 BRAVERY MODE {{ roomCode ? '· SALA' : '· SOLO' }}
+        🎲 {{ $t('bravery.title').toUpperCase() }} MODE · {{ roomCode ? $t('bravery.mode_room').toUpperCase() : $t('bravery.mode_solo').toUpperCase() }}
       </p>
       <p class="text-white/70 text-[11px] font-mono leading-relaxed">
-        {{ roomCode
-          ? 'Coordina con tu sala: lockea tu setup random y juega juntos. Lane disponible para coordinar comp.'
-          : 'Sortea tu próxima partida ranked. Más restricciones = más castigo al multiplier, pero más estilo.' }}
+        {{ roomCode ? $t('bravery.intro_room') : $t('bravery.intro_solo') }}
       </p>
       <!-- Tabla de penalty por dimensión -->
       <div class="flex gap-2 mt-2 text-[9px] font-mono">
