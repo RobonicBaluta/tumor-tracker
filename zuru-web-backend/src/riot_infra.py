@@ -54,6 +54,18 @@ def _get_conn():
             )
             """
         )
+        # Cache genérica con TTL por entry para league/mastery/account.
+        # Estos endpoints cambian raramente pero se piden 20× en /liveGame sin cache.
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS url_cache (
+                url        TEXT PRIMARY KEY,
+                json       TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )
+            """
+        )
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_url_cache_exp ON url_cache(expires_at)")
     return _conn
 
 
@@ -93,8 +105,81 @@ def cache_put_match(match_id, data):
 
 def cache_stats():
     with _db_lock:
-        cur = _get_conn().execute("SELECT COUNT(*) FROM match_cache")
-        return {"cached_matches": cur.fetchone()[0], "redis_enabled": _redis_enabled()}
+        c = _get_conn()
+        matches = c.execute("SELECT COUNT(*) FROM match_cache").fetchone()[0]
+        urls = c.execute("SELECT COUNT(*) FROM url_cache WHERE expires_at > ?",
+                         (int(time.time()),)).fetchone()[0]
+        return {
+            "cached_matches": matches,
+            "cached_urls": urls,
+            "redis_enabled": _redis_enabled(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Generic URL cache con TTL por endpoint
+# ---------------------------------------------------------------------------
+
+# Pattern → TTL (segundos). Primer match gana.
+# Cuidado al modificar: TTL muy largos enmascaran cambios reales (ej. tier que sube).
+_URL_TTLS = [
+    # League entries (tier+division). Cambia tras una partida ranked terminada.
+    # 4h es buen balance: si juegas seguido y subes, la próxima sesión lo refleja.
+    ("/lol/league/v4/entries/by-puuid/", 4 * 3600),
+    ("/lol/league/v4/entries/by-summoner/", 4 * 3600),
+    # Champion mastery — cambia tras cada partida con ese champ. 12h.
+    ("/lol/champion-mastery/v4/champion-masteries/", 12 * 3600),
+    # Account info — Riot ID cambia raramente. 7 días.
+    ("/riot/account/v1/accounts/", 7 * 24 * 3600),
+]
+
+
+def _ttl_for_url(url):
+    """Devuelve TTL en segundos si la URL matchea un endpoint cacheable, None si no."""
+    for prefix, ttl in _URL_TTLS:
+        if prefix in url:
+            return ttl
+    return None
+
+
+def _url_cache_get(url):
+    """Lee del cache si está y no ha expirado."""
+    now = int(time.time())
+    # L1: Redis
+    hit = _redis_get_json(f"riotcache:{url}")
+    if hit is not None:
+        return hit
+    # L2: SQLite
+    with _db_lock:
+        cur = _get_conn().execute(
+            "SELECT json, expires_at FROM url_cache WHERE url=?", (url,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        if row[1] <= now:
+            # Expirado: limpia y devuelve miss
+            try:
+                _get_conn().execute("DELETE FROM url_cache WHERE url=?", (url,))
+            except Exception:
+                pass
+            return None
+        try:
+            data = json.loads(row[0])
+        except Exception:
+            return None
+    _redis_set_json(f"riotcache:{url}", data, ttl=row[1] - now)
+    return data
+
+
+def _url_cache_put(url, data, ttl):
+    expires_at = int(time.time()) + int(ttl)
+    with _db_lock:
+        _get_conn().execute(
+            "INSERT OR REPLACE INTO url_cache (url, json, expires_at) VALUES (?, ?, ?)",
+            (url, json.dumps(data), expires_at),
+        )
+    _redis_set_json(f"riotcache:{url}", data, ttl=int(ttl))
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +256,13 @@ def riot_get(url, headers, max_retries=4, cache_matches=True):
             if hit is not None:
                 return _CachedResponse(hit)
 
+    # Cache genérica con TTL para league/mastery/account
+    url_ttl = _ttl_for_url(url) if cache_matches else None
+    if url_ttl is not None:
+        hit = _url_cache_get(url)
+        if hit is not None:
+            return _CachedResponse(hit)
+
     for attempt in range(max_retries + 1):
         _throttle()
         res = requests.get(url, headers=headers)
@@ -178,11 +270,17 @@ def riot_get(url, headers, max_retries=4, cache_matches=True):
             wait = int(res.headers.get("Retry-After", "10"))
             time.sleep(min(wait, 60))
             continue
-        if res.status_code == 200 and cached_match_id is not None:
-            try:
-                cache_put_match(cached_match_id, res.json())
-            except Exception:
-                pass
+        if res.status_code == 200:
+            if cached_match_id is not None:
+                try:
+                    cache_put_match(cached_match_id, res.json())
+                except Exception:
+                    pass
+            elif url_ttl is not None:
+                try:
+                    _url_cache_put(url, res.json(), url_ttl)
+                except Exception:
+                    pass
         return res
     return res
 

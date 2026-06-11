@@ -48,7 +48,27 @@
           <p class="text-white/50 text-base">Revisa el historial de tus peores compañeros</p>
         </div>
 
+        <!-- Discord onboarding: prominente cuando no estás logueado.
+             Riot ID solo escanea; Discord desbloquea apuestas + Bravery + challenges. -->
+        <div v-if="!auth?.isLoggedIn?.value" class="bg-gradient-to-br from-[#5865F2]/15 via-black/30 to-purple-900/15 border border-[#5865F2]/30 rounded-2xl p-5 mb-4 animate-fade">
+          <p class="text-[#a5b4fc] text-[10px] font-mono tracking-widest mb-1">PASO 1 · OPCIONAL</p>
+          <p class="text-white font-mono font-bold text-sm mb-2">Login con Discord para desbloquear:</p>
+          <ul class="text-white/60 text-[11px] font-mono space-y-0.5 mb-3 list-none">
+            <li>☢ Apuestas TC contra otros users o vs sistema</li>
+            <li>🎲 Bravery mode (champ + items aleatorios)</li>
+            <li>⚔ Retos 1v1 (Tumor Race, Streak, BO3)</li>
+            <li>🏠 Salas grupales + pools compartidos</li>
+          </ul>
+          <button @click="auth?.loginWithDiscord?.()"
+            class="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-mono font-bold text-sm py-2.5 rounded-lg transition flex items-center justify-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 71 55" fill="currentColor"><path d="M60.1 4.9C55.5 2.8 50.5 1.3 45.4 0.4c-0.1 0-0.2 0-0.2 0.1c-0.6 1.1-1.3 2.6-1.8 3.7c-5.5-0.8-10.9-0.8-16.3 0c-0.5-1.1-1.2-2.6-1.8-3.7c-0.1-0.1-0.2-0.1-0.2-0.1c-5.1 0.9-10.1 2.4-14.7 4.5c-0.1 0-0.1 0.1-0.1 0.1C0.9 19.2-1.5 33 0.7 46.7c0 0.1 0.1 0.1 0.1 0.2c5.9 4.3 11.7 7 17.4 8.7c0.1 0 0.2 0 0.2-0.1c1.4-1.9 2.6-3.9 3.6-6c0.1-0.1 0-0.2-0.1-0.3c-2-0.7-3.9-1.6-5.7-2.6c-0.1-0.1-0.1-0.3 0-0.3c0.4-0.3 0.8-0.6 1.2-0.9c0.1 0 0.2-0.1 0.2 0c11.9 5.4 24.7 5.4 36.5 0c0.1 0 0.2 0 0.2 0c0.4 0.3 0.8 0.6 1.2 0.9c0.1 0.1 0.1 0.3 0 0.3c-1.8 1.1-3.7 1.9-5.7 2.6c-0.1 0-0.1 0.2-0.1 0.3c1.1 2.1 2.3 4.1 3.6 6c0.1 0.1 0.2 0.1 0.3 0.1c5.7-1.8 11.5-4.4 17.4-8.7c0.1 0 0.1-0.1 0.1-0.2c2.6-15.8-1.1-29.5-9.9-41.7C60.2 5 60.2 4.9 60.1 4.9zM23.7 38.3c-3.5 0-6.4-3.2-6.4-7.2c0-4 2.8-7.2 6.4-7.2c3.6 0 6.4 3.3 6.4 7.2C30.1 35.1 27.3 38.3 23.7 38.3zM47.4 38.3c-3.5 0-6.4-3.2-6.4-7.2c0-4 2.8-7.2 6.4-7.2c3.6 0 6.4 3.3 6.4 7.2C53.8 35.1 51 38.3 47.4 38.3z"/></svg>
+            Login con Discord
+          </button>
+          <p class="text-white/30 text-[9px] font-mono mt-2 text-center italic">o sigue abajo para sólo escanear sin login</p>
+        </div>
+
         <div class="bg-black/30 backdrop-blur-md p-8 rounded-2xl shadow-2xl animate-fade">
+          <p v-if="!auth?.isLoggedIn?.value" class="text-[#c89b3c]/60 text-[10px] font-mono tracking-widest mb-3">PASO 2 · ESCANEAR</p>
           <form @submit.prevent="login" class="space-y-5">
             <div>
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Nombre del Invocador</label>
@@ -149,54 +169,62 @@
           </button>
           <!-- Refrescar -->
           <button @click="refresh" :disabled="loading"
-            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
             :title="loading ? 'Cargando...' : 'Refrescar'">
             <span :class="loading ? 'animate-spin inline-block' : ''">↻</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Refrescar</span>
           </button>
           <!-- Guardar / Guardada -->
           <button @click="toggleSaveAccount"
             :class="isSaved ? 'bg-[#c89b3c]/20 border-[#c89b3c]/50 text-[#c89b3c] hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40'"
-            class="w-9 h-9 text-sm border rounded-lg transition font-mono flex items-center justify-center"
+            class="h-9 px-2.5 text-sm border rounded-lg transition font-mono flex items-center gap-1.5"
             :title="isSaved ? 'Quitar de guardadas' : 'Guardar cuenta'">
-            {{ isSaved ? '⭐' : '☆' }}
+            <span>{{ isSaved ? '⭐' : '☆' }}</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ isSaved ? 'Guardado' : 'Guardar' }}</span>
           </button>
           <!-- Analíticas -->
           <button @click="openAnalytics" :disabled="analyticsLoading"
-            class="w-9 h-9 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-purple-300 hover:text-purple-200 bg-purple-950/30 border border-purple-500/40 hover:border-purple-500/70 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
             :title="analyticsLoading ? 'Analizando...' : 'Analíticas'">
-            📊
+            <span>📊</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Stats</span>
           </button>
           <!-- Excusa -->
           <button @click="rollExcuse"
-            class="w-9 h-9 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Generar excusa">
-            🎲
+            <span>🎲</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Excusa</span>
           </button>
           <!-- Compartir -->
           <button @click="shareProfile"
-            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center gap-1.5"
             :title="shareCopied ? '¡Copiado!' : 'Copiar URL del perfil'">
-            {{ shareCopied ? '✓' : '🔗' }}
+            <span>{{ shareCopied ? '✓' : '🔗' }}</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ shareCopied ? 'Copiado' : 'Compartir' }}</span>
           </button>
           <!-- Card -->
           <button @click="exportStatsImage" :disabled="exportingImage"
-            class="w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
             :title="exportingImage ? 'Generando...' : 'Descargar card PNG'">
-            🖼
+            <span>🖼</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
           </button>
           <!-- Notif -->
           <button @click="showNotifications = !showNotifications"
-            class="relative w-9 h-9 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center justify-center"
+            class="relative h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Notificaciones">
-            🔔
+            <span>🔔</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Notif</span>
             <span v-if="unreadNotifCount > 0"
               class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{{ unreadNotifCount }}</span>
           </button>
           <!-- Logout -->
           <button @click="logout"
-            class="w-9 h-9 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono flex items-center justify-center"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Cerrar sesión">
-            ⎋
+            <span>⎋</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Salir</span>
           </button>
         </div>
       </div>
@@ -895,8 +923,19 @@
               </p>
             </div>
 
-            <!-- Resolve prediction (comprobar resultado) -->
-            <div class="flex items-center justify-center gap-3 mb-4">
+            <!-- CTA principal: Apostar (sólo si la queue lo permite) -->
+            <div v-if="liveGame && liveGame.match_id && isLiveQueueBettable" class="mb-3">
+              <button @click="openCreateBet"
+                class="w-full bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-400 hover:to-yellow-500 text-black font-mono font-black text-base px-5 py-3 rounded-xl transition transform hover:scale-[1.02] active:scale-100 shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2"
+                title="Apuesta TC contra otro user o vs sistema sobre el resultado">
+                <span class="text-xl">☢</span>
+                <span class="tracking-wider">APOSTAR · TC</span>
+                <span class="text-xs opacity-70 ml-1">→</span>
+              </button>
+            </div>
+
+            <!-- Acciones secundarias -->
+            <div class="flex items-center justify-center gap-3 mb-4 flex-wrap">
               <button @click="resolveLivePrediction" :disabled="resolving"
                 class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40 rounded transition disabled:opacity-30">
                 {{ resolving ? 'Comprobando...' : '✅ Comprobar resultado' }}
@@ -906,12 +945,7 @@
                 title="Recalcula priors saltando la caché de 6h">
                 ↻ Forzar refresh
               </button>
-              <button v-if="liveGame && liveGame.match_id && isLiveQueueBettable" @click="openCreateBet"
-                class="text-xs font-mono px-3 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/20 hover:border-yellow-400/70 rounded transition"
-                title="Apuesta TC contra otro user sobre el resultado">
-                ☢ Apostar
-              </button>
-              <span v-else-if="liveGame && liveGame.match_id"
+              <span v-if="liveGame && liveGame.match_id && !isLiveQueueBettable"
                 class="text-[11px] font-mono px-2 py-1.5 text-white/30 italic"
                 title="Apuestas solo en SoloQ y Flex">
                 🚫 sin apuestas (no ranked)

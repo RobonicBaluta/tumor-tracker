@@ -983,17 +983,28 @@ def resolve_bets_for_match(match_id, winner_side, game_end_ts=None):
     return [resolve_bet(r[0], winner_side, game_end_ts=game_end_ts) for r in rows]
 
 
-def resolve_stat_bet(bet_id, actual_value):
+def resolve_stat_bet(bet_id, actual_value, game_end_ts=None):
     """Resuelve una stat bet matched. actual_value es la stat real del target_puuid.
 
     Compara actual vs threshold según el creator_side ('over'/'under').
     Empate (actual == threshold) → push (refund a ambos).
+
+    game_end_ts (epoch s, opcional): si la bet se creó dentro de los últimos
+    REFUND_WINDOW_SECONDS antes del fin de partida, se refunda (mismo gate
+    anti-insider que match bets). Sin esto, un user podía apostar
+    `tumor_score < 60` con >90% certeza a los 28 min de partida.
     """
     bet = get_bet_by_id(bet_id)
     if not bet or bet["status"] != "matched" or bet["bet_kind"] != "stat":
         return None
     if bet["threshold"] is None or actual_value is None:
         return None
+
+    # Refund window anti-insider (mismo umbral que match bets)
+    if game_end_ts is not None:
+        if (game_end_ts - (bet["created_at"] or 0)) < REFUND_WINDOW_SECONDS:
+            _refund_bet(bet, "late_bet")
+            return get_bet_by_id(bet_id)
 
     # Determinar ganador
     creator_won = None
