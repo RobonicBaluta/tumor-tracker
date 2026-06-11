@@ -943,14 +943,14 @@
               </p>
             </div>
 
-            <!-- CTA principal: Apostar (sólo si la queue lo permite) -->
+            <!-- CTA principal: Apostar — sobrio, mismo color que el header dorado -->
             <div v-if="liveGame && liveGame.match_id && isLiveQueueBettable" class="mb-3">
               <button @click="openCreateBet"
-                class="w-full bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-400 hover:to-yellow-500 text-black font-mono font-black text-base px-5 py-3 rounded-xl transition transform hover:scale-[1.02] active:scale-100 shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2"
-                title="Apuesta TC contra otro user o vs sistema sobre el resultado">
-                <span class="text-xl">☢</span>
-                <span class="tracking-wider">APOSTAR · TC</span>
-                <span class="text-xs opacity-70 ml-1">→</span>
+                class="w-full bg-[#c89b3c]/15 hover:bg-[#c89b3c]/25 border border-[#c89b3c]/50 hover:border-[#c89b3c] text-[#c89b3c] hover:text-[#e0b84e] font-mono font-bold text-sm px-5 py-2.5 rounded-lg transition flex items-center justify-center gap-2"
+                title="Apuesta TC sobre el resultado de esta partida">
+                <span class="text-base">☢</span>
+                <span class="tracking-widest">APOSTAR</span>
+                <span class="text-[10px] text-[#c89b3c]/60 font-normal hidden sm:inline">· P2P o vs sistema</span>
               </button>
             </div>
 
