@@ -3729,9 +3729,12 @@ def bets_resolve_mine():
                     val = _extract_player_stat(mres.json(), b.get("target_puuid"), b.get("stat_type"))
                     if val is None:
                         continue
-                    res = _users.resolve_stat_bet(b["id"], val)
-                    if res and res.get("status") == "resolved":
-                        resolved_count += 1
+                    res = _users.resolve_stat_bet(b["id"], val, game_end_ts=game_end_ts)
+                    if res:
+                        if res.get("status") == "refunded":
+                            refunded_count += 1
+                        elif res.get("status") == "resolved":
+                            resolved_count += 1
             except Exception:
                 pass
 
@@ -4689,7 +4692,7 @@ def _resolve_pending_predictions(limit=None):
                 actual_val = _extract_player_stat(mres.json(), tp, stype)
                 if actual_val is None:
                     continue
-                _users.resolve_stat_bet(sb["id"], actual_val)
+                _users.resolve_stat_bet(sb["id"], actual_val, game_end_ts=game_end_ts)
         except Exception:
             pass
 
@@ -4744,7 +4747,7 @@ def _auto_resolve_orphan_bets(max_matches=20):
                 actual_val = _extract_player_stat(mres.json(), tp, stype)
                 if actual_val is None:
                     continue
-                _users.resolve_stat_bet(sb["id"], actual_val)
+                _users.resolve_stat_bet(sb["id"], actual_val, game_end_ts=game_end_ts)
         except Exception:
             pass
 
@@ -4857,7 +4860,7 @@ def resolve_prediction_endpoint():
                 actual_val = _extract_player_stat(mres.json(), tp, stype)
                 if actual_val is None:
                     continue
-                _users.resolve_stat_bet(sb["id"], actual_val)
+                _users.resolve_stat_bet(sb["id"], actual_val, game_end_ts=game_end_ts)
     except Exception:
         pass
 
