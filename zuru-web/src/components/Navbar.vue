@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, onMounted, onUnmounted } from 'vue';
+import { computed, inject, ref, onMounted, onUnmounted, onBeforeUnmount } from 'vue';
 import MyBetsModal from './MyBetsModal.vue';
 import SocialModal from './SocialModal.vue';
 import UserModal from './UserModal.vue';
@@ -78,6 +78,26 @@ const avatarUrl = computed(() => {
   const u = auth?.user.value
   if (!u || !u.avatar) return null
   return `https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=64`
+})
+
+// Tick global cada 60s para refrescar el countdown del daily reward
+const nowTs = ref(Date.now() / 1000)
+let _tickInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  _tickInterval = setInterval(() => { nowTs.value = Date.now() / 1000 }, 60_000)
+})
+onBeforeUnmount(() => { if (_tickInterval) clearInterval(_tickInterval) })
+
+const dailyAmount = computed(() => auth?.user.value?.daily?.amount ?? 100)
+const dailyCountdown = computed(() => {
+  const next = auth?.user.value?.daily?.next_claim_at
+  if (!next) return ''
+  const secs = Math.max(0, Math.floor(next - nowTs.value))
+  if (secs <= 0) return '✓'
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  if (h >= 1) return `${h}h ${m}m`
+  return `${m}m`
 })
 
 const claimDaily = async () => {
@@ -165,9 +185,16 @@ const claimDaily = async () => {
         </div>
         <button v-if="auth.user.value" @click="claimDaily"
           :disabled="claimingDaily || !auth.user.value.can_claim_daily"
-          class="text-xs font-mono px-2.5 py-1.5 border border-yellow-500/40 text-yellow-300 hover:bg-yellow-900/30 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
-          :title="auth.user.value.can_claim_daily ? $t('daily.claim_tooltip') : $t('daily.claimed_tooltip')">
-          🎁
+          class="text-xs font-mono px-2.5 py-1.5 rounded-lg transition flex items-center gap-1.5 disabled:cursor-not-allowed"
+          :class="auth.user.value.can_claim_daily
+            ? 'border border-yellow-500/60 text-yellow-300 bg-yellow-900/20 hover:bg-yellow-900/40 animate-pulse'
+            : 'border border-white/15 text-white/40'"
+          :title="auth.user.value.can_claim_daily
+            ? `+${dailyAmount} TC disponible`
+            : `Próximo daily en ${dailyCountdown}`">
+          <span class="text-base leading-none">🎁</span>
+          <span v-if="auth.user.value.can_claim_daily" class="font-bold">+{{ dailyAmount }}</span>
+          <span v-else class="text-[10px]">{{ dailyCountdown }}</span>
         </button>
       </div>
 

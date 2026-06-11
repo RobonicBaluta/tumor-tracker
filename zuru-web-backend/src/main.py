@@ -2821,7 +2821,9 @@ def auth_me():
     user = _current_user()
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
-    user["can_claim_daily"] = _users.can_claim_daily(user["id"])
+    daily = _users.daily_status(user["id"])
+    user["can_claim_daily"] = daily["can_claim"]
+    user["daily"] = daily   # {amount, can_claim, next_claim_at, last_claim_at}
     return jsonify(user)
 
 
@@ -2864,9 +2866,11 @@ def currency_balance():
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
     txs = _users.get_recent_transactions(user["id"], limit=20)
+    daily = _users.daily_status(user["id"])
     return jsonify({
         "currency": user["currency"],
-        "can_claim_daily": _users.can_claim_daily(user["id"]),
+        "can_claim_daily": daily["can_claim"],
+        "daily": daily,
         "recent_transactions": txs,
     })
 
@@ -2876,10 +2880,11 @@ def currency_daily():
     user = _current_user()
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
-    new_balance = _users.claim_daily(user["id"], amount=100)
+    awarded = _users.DAILY_REWARD_AMOUNT
+    new_balance = _users.claim_daily(user["id"])
     if new_balance is None:
-        return jsonify({"error": "Ya has reclamado el daily reward hoy"}), 429
-    return jsonify({"currency": new_balance, "awarded": 100})
+        return jsonify({"error": "Aún no puedes reclamar el daily reward"}), 429
+    return jsonify({"currency": new_balance, "awarded": awarded, "daily": _users.daily_status(user["id"])})
 
 
 # ============================================================================
@@ -3355,7 +3360,8 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
         return 2.0
 
 
-UNDERDOG_BONUS = 1.30  # +30% extra cuando apuestas contra la predicción
+UNDERDOG_BONUS = 1.15  # bonus contra la predicción; sólo aplica con confidence alta
+UNDERDOG_BONUS_MIN_CONFIDENCE = 25  # por debajo de este conf el "underdog" es ruido, no aplicar bonus
 
 # Ventana de apuestas en una partida live.
 # Una SoloQ típica dura ~28-32 min; cerramos a los 25 min de gametime para evitar
@@ -3430,8 +3436,10 @@ def _compute_house_multiplier(match_id, side):
     Modelo de odds:
       - Probabilidad del side derivada de la confidence de la predicción 5v5.
       - Multiplier base = 0.95 / prob(side)  (5% de house edge).
-      - Si apuestas CONTRA el lado predicho como ganador, bonus extra (1.3x).
-        Esto premia el ir contra la corriente: si aciertas, payout muy gordo.
+      - Si apuestas CONTRA el lado predicho como ganador Y la prediction tiene
+        confidence ≥ UNDERDOG_BONUS_MIN_CONFIDENCE, bonus extra (UNDERDOG_BONUS).
+        Si la confidence es baja, el "underdog" no es un underdog real (es ~50/50),
+        así que el bonus daría EV+ injustificado al lado contrario.
       - Cap final: [1.05, 6.5].
 
     Si no hay snapshot (raro), devuelve 2.0 (fair odds).
@@ -3446,7 +3454,9 @@ def _compute_house_multiplier(match_id, side):
         is_against = (side != pred["winner"])
         prob_side = prob_winner if not is_against else (1 - prob_winner)
         mult = 0.95 / max(0.08, prob_side)
-        if is_against:
+        # Underdog bonus sólo si la predicción es razonablemente confiada.
+        # Con conf < 25 la prediction es ~50/50; aplicar bonus = regalar EV+.
+        if is_against and pred["confidence"] >= UNDERDOG_BONUS_MIN_CONFIDENCE:
             mult *= UNDERDOG_BONUS
         # Decay temporal: cuanto más avanzada la partida cuando apuestas,
         # peor payout (cada vez sabes "más" del resultado).
@@ -3472,7 +3482,12 @@ def bets_preview_multiplier():
     closed = elapsed is not None and elapsed >= BET_CLOSE_AT_ELAPSED
     mult = _compute_house_multiplier(match_id, side)
     pred = _get_match_prediction(match_id)
-    is_underdog = bool(pred and side != pred["winner"])
+    # Sólo es "underdog real" si va contra una predicción razonablemente confiada
+    is_underdog = bool(
+        pred
+        and side != pred["winner"]
+        and pred["confidence"] >= UNDERDOG_BONUS_MIN_CONFIDENCE
+    )
     return jsonify({
         "multiplier": mult,
         "is_underdog": is_underdog,
@@ -3796,20 +3811,23 @@ def _extract_player_stat(match_info, puuid, stat_type):
     if stat_type == "gold":    return float(p.get("goldEarned", 0) or 0)
     if stat_type == "damage":  return float(p.get("totalDamageDealtToChampions", 0) or 0)
     if stat_type == "tumor_score":
-        # Item #5: tumor score del jugador en este match
+        # Tumor score del jugador en este match.
+        # BUG histórico fixed: antes pasaba `gameDuration/60` (minutos) a la
+        # función que espera SEGUNDOS, así que el engine dividía por 60 otra
+        # vez y saturaba cs/min y dmg/min → todas las stat-bets de tumor_score
+        # resolvían con valores corruptos.
         try:
-            duration_min = max(1.0, float(info.get("gameDuration", 0)) / 60.0)
-            stats = {
-                "kills": k, "deaths": d, "assists": a,
-                "totalMinionsKilled": p.get("totalMinionsKilled", 0) or 0,
-                "neutralMinionsKilled": p.get("neutralMinionsKilled", 0) or 0,
-                "goldEarned": p.get("goldEarned", 0) or 0,
-                "totalDamageDealtToChampions": p.get("totalDamageDealtToChampions", 0) or 0,
-                "visionScore": p.get("visionScore", 0) or 0,
-                "win": p.get("win", False),
-                "teamPosition": p.get("teamPosition") or p.get("individualPosition") or "",
-            }
-            return float(_engine_match_score(stats, duration_min))
+            game_duration_s = float(info.get("gameDuration", 0))
+            if game_duration_s < 1:
+                return None
+            tier = (p.get("tier") or "").upper() or "UNRANKED"
+            role = p.get("teamPosition") or p.get("individualPosition") or ""
+            # _engine_match_score_from_participant = compute_match_tumor:
+            # acepta el participant raw + duration en segundos. Devuelve (score, components).
+            result = _engine_match_score_from_participant(p, game_duration_s, tier=tier, role=role)
+            if isinstance(result, tuple):
+                return float(result[0])
+            return float(result)
         except Exception:
             return None
     return None
@@ -4723,17 +4741,35 @@ def _auto_resolve_orphan_bets(max_matches=20):
             pass
 
 
+_PREDSTATS_SWEEP_LOCK = threading.Lock()
+_PREDSTATS_LAST_SWEEP = {"ts": 0.0}
+PREDSTATS_SWEEP_INTERVAL = 30.0  # segundos entre sweeps globales
+
+
 @app.route('/predictionStats', methods=['GET'])
 def prediction_stats_endpoint():
-    """Resuelve predicciones pendientes y devuelve el acierto global.
-    También barre bets matched de matches sin predicción asociada."""
-    _resolve_pending_predictions()
-    try:
-        _auto_resolve_orphan_bets(max_matches=15)
-    except Exception:
-        pass
-    preds = predictions_all()
+    """Devuelve el acierto global de predicciones.
+    Dispara el sweep de auto-resolución de bets matched a lo más cada
+    PREDSTATS_SWEEP_INTERVAL segundos — antes esto se ejecutaba en cada call,
+    así que N tabs abiertas hacían N sweeps en paralelo.
+    """
+    now = time.time()
+    do_sweep = False
+    with _PREDSTATS_SWEEP_LOCK:
+        if (now - _PREDSTATS_LAST_SWEEP["ts"]) >= PREDSTATS_SWEEP_INTERVAL:
+            _PREDSTATS_LAST_SWEEP["ts"] = now
+            do_sweep = True
+    if do_sweep:
+        try:
+            _resolve_pending_predictions()
+        except Exception:
+            pass
+        try:
+            _auto_resolve_orphan_bets(max_matches=15)
+        except Exception:
+            pass
 
+    preds = predictions_all()
     resolved = [p for p in preds if p.get("resolved") and p.get("predicted_winner")]
     total = len(resolved)
     correct = sum(1 for p in resolved if p.get("correct"))
@@ -5141,6 +5177,14 @@ def bravery_lock():
     if items: dims.add("items")
     style_mult = _bravery.style_mult_for_dims(dims)
 
+    # Capturar tier actual del user para que el resolver use thresholds correctos
+    # (antes se hardcodeaba UNRANKED, lo que inflaba payouts en Diamond+).
+    tier_now = None
+    try:
+        tier_now, _div = get_player_rank(user["riot_puuid"])
+    except Exception:
+        tier_now = None
+
     lock = _users.create_bravery_lock(
         user_id=user["id"],
         puuid=user["riot_puuid"],
@@ -5152,6 +5196,7 @@ def bravery_lock():
         style_mult=style_mult,
         stake=stake,
         room_code=room_code,
+        tier=tier_now,
     )
     if not lock:
         return jsonify({"error": "No se pudo crear el lock"}), 500
@@ -5276,12 +5321,14 @@ def _resolve_one_bravery(lock):
     if not me:
         return {"status": "skipped", "reason": "participant_not_found"}
 
-    # Compute tumor
+    # Compute tumor. El tier se captura al hacer lock (mejor approx que UNRANKED).
     queue_id = info.get("queueId")
     game_duration = info.get("gameDuration") or 0
-    tier_guess = lock.get("tier") or "UNRANKED"  # no fiable; usamos UNRANKED por defecto
+    tier_for_scoring = lock.get("tier") or "UNRANKED"
+    role = me.get("teamPosition") or me.get("individualPosition") or ""
     try:
-        tumor_score = _engine_match_score_from_participant(me, game_duration, tier_guess)
+        result = _engine_match_score_from_participant(me, game_duration, tier=tier_for_scoring, role=role)
+        tumor_score = float(result[0] if isinstance(result, tuple) else result)
     except Exception:
         tumor_score = 50.0
 
