@@ -558,13 +558,34 @@ def get_live_snapshot(match_id):
 
 
 def predictions_add(entry):
+    """Inserta o actualiza la row de predicción para (match_id, viewer_puuid).
+
+    BUG histórico: antes era INSERT OR IGNORE, así que la primera predicción
+    calculada quedaba "frozen" en la DB aunque la pantalla del live game
+    mostrase una predicción distinta tras un refresh (típico en partidas
+    borderline 2% conf donde 1 punto en un prior flippea el winner).
+    Resultado: user veía "GANA ROJO" pero al resolver salía "predijo AZUL".
+
+    Ahora actualizamos la row mientras NO esté resuelta — los priors del
+    tumor no leakean info del juego en curso (solo dependen del historial
+    pre-match), así que actualizar entre refreshes mantiene la DB en sync
+    con lo que el user ve sin sesgar la accuracy.
+    """
     db = _pred_db()
     db.execute(
-        """INSERT OR IGNORE INTO predictions
-        (match_id, viewer_puuid, viewer_name, viewer_team,
-         blue_sum, red_sum, blue_score, red_score,
-         predicted_winner, confidence, created_at, resolved)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
+        """INSERT INTO predictions
+            (match_id, viewer_puuid, viewer_name, viewer_team,
+             blue_sum, red_sum, blue_score, red_score,
+             predicted_winner, confidence, created_at, resolved)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,0)
+            ON CONFLICT(match_id, viewer_puuid) DO UPDATE SET
+                blue_sum = excluded.blue_sum,
+                red_sum = excluded.red_sum,
+                blue_score = excluded.blue_score,
+                red_score = excluded.red_score,
+                predicted_winner = excluded.predicted_winner,
+                confidence = excluded.confidence
+            WHERE resolved = 0""",
         (
             entry["match_id"], entry["viewer_puuid"],
             entry.get("viewer_name"), entry.get("viewer_team"),
