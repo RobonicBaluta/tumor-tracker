@@ -418,6 +418,15 @@ async function deleteRoom(code: string) {
   return res.ok
 }
 
+async function toggleRoomBravery(code: string, active?: boolean) {
+  const res = await authedFetch(`/rooms/${code}/bravery/toggle`, {
+    method: 'POST',
+    body: JSON.stringify(active === undefined ? {} : { active }),
+  })
+  if (!res.ok) return null
+  return await res.json()
+}
+
 async function fetchAchievements() {
   if (!token.value) return []
   const res = await authedFetch('/achievements')
@@ -535,6 +544,7 @@ export function useAuth() {
     fetchRoom,
     fetchMyRooms,
     deleteRoom,
+    toggleRoomBravery,
     fetchAchievements,
     fetchSettings,
     saveSettings,
@@ -543,6 +553,7 @@ export function useAuth() {
     braveryRoll,
     braveryLock,
     braveryCancel,
+    braveryReroll,
     braveryMine,
     braveryRoomLocks,
     braveryResolveMine,
@@ -563,7 +574,7 @@ async function braveryData() {
 
 async function braveryRoll(opts: {
   dimensions: string[]
-  lane_filter?: string | null
+  room_code?: string | null
   item_count?: number
 }) {
   const res = await authedFetch('/bravery/roll', {
@@ -597,6 +608,16 @@ async function braveryCancel(lid: number) {
   if (!res.ok) return null
   await refreshBalance()
   return await res.json()
+}
+
+async function braveryReroll(lid: number, itemCount?: number) {
+  const res = await authedFetch(`/bravery/${lid}/reroll`, {
+    method: 'POST',
+    body: JSON.stringify(itemCount ? { item_count: itemCount } : {}),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Error en reroll')
+  return data
 }
 
 async function braveryMine() {
