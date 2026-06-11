@@ -2751,10 +2751,64 @@ def auth_discord_login():
     return redirect(_auth.discord_auth_redirect_url())
 
 
+# --- Anti-sybil: rate-limit y account age para login Discord ---
+# Buckets en memoria por IP (resetean al reiniciar el proceso, suficiente para Render free 1 worker)
+_LOGIN_RATE_LOCK = threading.Lock()
+_LOGIN_RATE = {}  # ip -> list[ts] de logins recientes
+from econ_config import (
+    LOGIN_RATE_MAX_PER_MINUTE, LOGIN_RATE_MAX_PER_HOUR,
+    MIN_DISCORD_ACCOUNT_AGE_SECONDS, DISCORD_EPOCH_MS,
+)
+
+
+def _discord_account_age_seconds(discord_id):
+    """Edad de la cuenta Discord (segundos) derivada del snowflake.
+    Devuelve None si el id no es parseable."""
+    try:
+        snowflake = int(discord_id)
+        created_ms = (snowflake >> 22) + DISCORD_EPOCH_MS
+        return max(0, time.time() - (created_ms / 1000.0))
+    except Exception:
+        return None
+
+
+def _check_login_rate(ip):
+    """True si la IP puede intentar otro login; False si está rate-limited."""
+    if not ip:
+        return True
+    now = time.time()
+    with _LOGIN_RATE_LOCK:
+        bucket = _LOGIN_RATE.get(ip, [])
+        # Limpieza: descarta timestamps > 1h
+        bucket = [t for t in bucket if (now - t) < 3600]
+        last_minute = [t for t in bucket if (now - t) < 60]
+        if len(last_minute) >= LOGIN_RATE_MAX_PER_MINUTE:
+            _LOGIN_RATE[ip] = bucket  # persiste la limpieza
+            return False
+        if len(bucket) >= LOGIN_RATE_MAX_PER_HOUR:
+            _LOGIN_RATE[ip] = bucket
+            return False
+        bucket.append(now)
+        _LOGIN_RATE[ip] = bucket
+    return True
+
+
 @app.route('/auth/discord/callback', methods=['GET'])
 def auth_discord_callback():
     """Callback de Discord. Canjea code → access_token → user info → JWT.
-    Redirige al frontend con ?token=JWT."""
+    Anti-sybil:
+      - Rate-limit por IP: max 3 logins/min, 10/h.
+      - Account age: la cuenta Discord debe tener >= 3 días.
+    Redirige al frontend con ?token=JWT o ?auth_error=<reason>."""
+    # Cliente real cuando hay proxy (Vercel/Render): X-Forwarded-For primero
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote_addr
+        or ""
+    )
+    if not _check_login_rate(client_ip):
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=rate_limited")
+
     code = request.args.get("code")
     if not code:
         return redirect(f"{_auth.FRONTEND_URL}?auth_error=no_code")
@@ -2764,6 +2818,12 @@ def auth_discord_callback():
     user_info = _auth.discord_fetch_user(token_data["access_token"])
     if not user_info or "id" not in user_info:
         return redirect(f"{_auth.FRONTEND_URL}?auth_error=user_fetch_failed")
+
+    # Anti-sybil: cuentas Discord recién creadas (< 3 días) bloqueadas
+    age = _discord_account_age_seconds(user_info["id"])
+    if age is not None and age < MIN_DISCORD_ACCOUNT_AGE_SECONDS:
+        days = int(MIN_DISCORD_ACCOUNT_AGE_SECONDS / 86400)
+        return redirect(f"{_auth.FRONTEND_URL}?auth_error=discord_too_new&min_days={days}")
 
     user = _users.upsert_user_from_discord(
         discord_id=user_info["id"],
@@ -3368,17 +3428,16 @@ def _compute_player_bet_multiplier(target_puuid, match_id):
         return 2.0
 
 
-UNDERDOG_BONUS = 1.15  # bonus contra la predicción; sólo aplica con confidence alta
-UNDERDOG_BONUS_MIN_CONFIDENCE = 25  # por debajo de este conf el "underdog" es ruido, no aplicar bonus
+from econ_config import (
+    UNDERDOG_BONUS, UNDERDOG_BONUS_MIN_CONFIDENCE,
+    HOUSE_MULT_MIN, HOUSE_MULT_MAX,
+)
 
-# Ventana de apuestas en una partida live.
-# Una SoloQ típica dura ~28-32 min; cerramos a los 25 min de gametime para evitar
-# apuestas "con foresight" muy cerca del final.
-BET_CLOSE_AT_ELAPSED = 25 * 60  # 1500s
-# El payout decae linealmente entre min 5 y BET_CLOSE_AT_ELAPSED hasta el floor.
-PAYOUT_DECAY_START   = 5 * 60   # antes de min 5 no hay decay
-PAYOUT_DECAY_END     = 25 * 60  # a 25 min queda el floor
-PAYOUT_DECAY_FLOOR   = 0.55     # multiplier no cae por debajo de 55% del nominal
+# Ventana + decay temporal: ahora centralizado en econ_config.
+from econ_config import (
+    BET_CLOSE_AT_ELAPSED,
+    PAYOUT_DECAY_START, PAYOUT_DECAY_END, PAYOUT_DECAY_FLOOR,
+)
 
 
 def _live_elapsed_seconds(match_id):
@@ -3469,7 +3528,7 @@ def _compute_house_multiplier(match_id, side):
         # Decay temporal: cuanto más avanzada la partida cuando apuestas,
         # peor payout (cada vez sabes "más" del resultado).
         mult *= _payout_decay_factor(_live_elapsed_seconds(match_id))
-        return max(1.05, min(6.5, round(mult, 2)))
+        return max(HOUSE_MULT_MIN, min(HOUSE_MULT_MAX, round(mult, 2)))
     except Exception:
         return 2.0
 

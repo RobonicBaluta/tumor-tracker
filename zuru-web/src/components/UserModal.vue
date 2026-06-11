@@ -25,18 +25,46 @@
         <div class="flex-1 overflow-y-auto p-5">
           <!-- ACHIEVEMENTS -->
           <div v-if="active === 'achievements'">
-            <p class="text-white/40 text-[10px] font-mono tracking-widest mb-3">
-              {{ $t('user.unlocked_count', { count: unlockedCount, total: achievements.length }) }}
-            </p>
-            <div class="grid grid-cols-2 gap-3">
+            <!-- Progreso global con barra -->
+            <div class="mb-4 bg-gradient-to-r from-yellow-900/20 via-black/30 to-black/30 border border-yellow-500/30 rounded-xl p-3">
+              <div class="flex items-center justify-between mb-1.5">
+                <p class="text-yellow-200 text-[10px] font-mono tracking-widest">
+                  🏆 {{ $t('user.unlocked_count', { count: unlockedCount, total: achievements.length }) }}
+                </p>
+                <p class="text-yellow-300 text-xs font-mono font-bold">
+                  {{ Math.round((unlockedCount / achievements.length) * 100) }}%
+                </p>
+              </div>
+              <div class="h-2 bg-black/40 rounded-full overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-yellow-500 to-yellow-300 transition-all"
+                  :style="{ width: `${(unlockedCount / achievements.length) * 100}%` }"></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div v-for="a in achievements" :key="a.badge"
-                :class="a.unlocked ? 'border-yellow-500/40 bg-yellow-900/10' : 'border-white/10 bg-black/20 opacity-50'"
-                class="rounded-xl border p-3 flex items-start gap-3">
-                <span class="text-3xl shrink-0" :class="!a.unlocked ? 'grayscale' : ''">{{ a.icon }}</span>
+                :class="a.unlocked
+                  ? 'border-yellow-500/50 bg-gradient-to-br from-yellow-900/20 to-black/30 shadow-lg shadow-yellow-900/20'
+                  : 'border-white/10 bg-black/20'"
+                class="rounded-xl border p-3 flex items-start gap-3 transition">
+                <span class="text-3xl shrink-0 transition"
+                  :class="a.unlocked ? '' : 'grayscale opacity-40'">{{ a.icon }}</span>
                 <div class="flex-1 min-w-0">
-                  <p class="text-white text-sm font-mono font-bold truncate">{{ a.name }}</p>
-                  <p class="text-white/50 text-[11px] font-mono">{{ a.desc }}</p>
-                  <p v-if="a.unlocked" class="text-yellow-400 text-[10px] font-mono mt-1">
+                  <p class="text-sm font-mono font-bold truncate"
+                    :class="a.unlocked ? 'text-white' : 'text-white/60'">{{ a.name }}</p>
+                  <p class="text-white/40 text-[11px] font-mono">{{ a.desc }}</p>
+                  <!-- Progress bar para progresivos no desbloqueados -->
+                  <div v-if="!a.unlocked && a.progress" class="mt-1.5">
+                    <div class="flex items-center justify-between text-[9px] font-mono mb-0.5">
+                      <span class="text-white/50">{{ a.progress.current }} / {{ a.progress.target }}</span>
+                      <span class="text-cyan-400">{{ Math.round((a.progress.current / a.progress.target) * 100) }}%</span>
+                    </div>
+                    <div class="h-1 bg-black/40 rounded-full overflow-hidden">
+                      <div class="h-full bg-cyan-500 transition-all"
+                        :style="{ width: `${(a.progress.current / a.progress.target) * 100}%` }"></div>
+                    </div>
+                  </div>
+                  <p v-else-if="a.unlocked" class="text-yellow-400 text-[10px] font-mono mt-1">
                     ✓ {{ $t('user.unlocked') }}
                   </p>
                   <p v-else class="text-white/30 text-[10px] font-mono mt-1">

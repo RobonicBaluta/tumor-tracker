@@ -283,7 +283,7 @@ def compute_compliance(lock, participant):
     }
 
 
-SUS_TUMOR_THRESHOLD = 60.0  # nivel "sus" del codebase — break-even para bravery
+from econ_config import SUS_TUMOR_THRESHOLD  # centralizado en econ_config
 
 
 def compute_payout(stake, tumor_score, compliance):
