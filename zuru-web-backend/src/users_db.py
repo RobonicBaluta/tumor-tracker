@@ -133,6 +133,18 @@ def _init_sqlite(conn):
             created_at REAL NOT NULL
         )
     """)
+    # Migración inline: bravery_active si no existe (flag on/off del host)
+    room_cols = {r[1] for r in conn.execute("PRAGMA table_info(rooms)").fetchall()}
+    if "bravery_active" not in room_cols:
+        try:
+            conn.execute("ALTER TABLE rooms ADD COLUMN bravery_active INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+    if "bravery_started_at" not in room_cols:
+        try:
+            conn.execute("ALTER TABLE rooms ADD COLUMN bravery_started_at REAL")
+        except Exception:
+            pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS room_members (
             room_id INTEGER NOT NULL,
@@ -284,6 +296,13 @@ def _init_sqlite(conn):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_user_status ON bravery_locks(user_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bravery_room ON bravery_locks(room_code, status)")
+    # Migración: reroll_used (1 reroll por lock)
+    bl_cols = {r[1] for r in conn.execute("PRAGMA table_info(bravery_locks)").fetchall()}
+    if "reroll_used" not in bl_cols:
+        try:
+            conn.execute("ALTER TABLE bravery_locks ADD COLUMN reroll_used INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
 
 
 def _init_pg(conn):
@@ -366,6 +385,14 @@ def _init_pg(conn):
             created_at DOUBLE PRECISION NOT NULL
         )
     """)
+    for col_def in [
+        "bravery_active INTEGER NOT NULL DEFAULT 0",
+        "bravery_started_at DOUBLE PRECISION",
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE rooms ADD COLUMN IF NOT EXISTS {col_def}")
+        except Exception:
+            pass
     cur.execute("""
         CREATE TABLE IF NOT EXISTS room_members (
             room_id INTEGER NOT NULL REFERENCES rooms(id),
@@ -502,6 +529,10 @@ def _init_pg(conn):
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bravery_user_status ON bravery_locks(user_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bravery_room ON bravery_locks(room_code, status)")
+    try:
+        cur.execute("ALTER TABLE bravery_locks ADD COLUMN IF NOT EXISTS reroll_used INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
     cur.close()
 
 
@@ -1806,20 +1837,17 @@ def create_room(owner_user_id, name=""):
     return get_room_by_id(rid)
 
 
+_ROOM_COLS = "id, code, owner_user_id, name, created_at, bravery_active, bravery_started_at"
+
+
 def get_room_by_id(room_id):
-    cur = _exec(
-        "SELECT id, code, owner_user_id, name, created_at FROM rooms WHERE id=?",
-        (room_id,),
-    )
+    cur = _exec(f"SELECT {_ROOM_COLS} FROM rooms WHERE id=?", (room_id,))
     row = cur.fetchone()
     return _row_to_room(row) if row else None
 
 
 def get_room_by_code(code):
-    cur = _exec(
-        "SELECT id, code, owner_user_id, name, created_at FROM rooms WHERE code=?",
-        (code,),
-    )
+    cur = _exec(f"SELECT {_ROOM_COLS} FROM rooms WHERE code=?", (code,))
     row = cur.fetchone()
     return _row_to_room(row) if row else None
 
@@ -1833,8 +1861,25 @@ def _row_to_room(row):
         "owner_user_id": row[2],
         "name": row[3] or "",
         "created_at": row[4],
+        "bravery_active": bool(row[5]) if len(row) > 5 else False,
+        "bravery_started_at": row[6] if len(row) > 6 else None,
         "members": get_room_members(row[0]),
     }
+
+
+def set_room_bravery(room_id, active):
+    """Toggle del flag bravery_active de una sala. Owner only (validar en endpoint)."""
+    if active:
+        _exec(
+            "UPDATE rooms SET bravery_active=1, bravery_started_at=? WHERE id=?",
+            (time.time(), room_id),
+        )
+    else:
+        _exec(
+            "UPDATE rooms SET bravery_active=0, bravery_started_at=NULL WHERE id=?",
+            (room_id,),
+        )
+    return get_room_by_id(room_id)
 
 
 def get_room_members(room_id):
@@ -1864,13 +1909,13 @@ def list_rooms_for_user(user_id, riot_id):
     if not riot_id:
         # Sólo owner
         cur = _exec(
-            "SELECT id, code, owner_user_id, name, created_at FROM rooms "
+            f"SELECT {_ROOM_COLS} FROM rooms "
             "WHERE owner_user_id=? ORDER BY created_at DESC",
             (user_id,),
         )
     else:
         cur = _exec(
-            """SELECT DISTINCT r.id, r.code, r.owner_user_id, r.name, r.created_at
+            f"""SELECT DISTINCT {', '.join('r.' + c.strip() for c in _ROOM_COLS.split(','))}
                FROM rooms r
                LEFT JOIN room_members m ON m.room_id = r.id
                WHERE r.owner_user_id=? OR m.riot_id=?
@@ -2111,7 +2156,8 @@ BRAVERY_REFUND_AFTER = 6 * 60 * 60  # tras 6h sin partida, refund automático
 _BRAVERY_COLS = (
     "id, user_id, puuid, room_code, champion_id, champion_name, lane, "
     "items_json, dimensions, style_mult, stake, status, match_id_resolved, "
-    "tumor_score, payout, compliance_json, created_at, resolved_at, expires_at"
+    "tumor_score, payout, compliance_json, created_at, resolved_at, expires_at, "
+    "reroll_used"
 )
 
 
@@ -2130,6 +2176,7 @@ def _row_to_bravery(row):
         "payout": row[14],
         "compliance": _json.loads(row[15]) if row[15] else None,
         "created_at": row[16], "resolved_at": row[17], "expires_at": row[18],
+        "reroll_used": bool(row[19]) if len(row) > 19 and row[19] is not None else False,
     }
 
 
@@ -2234,3 +2281,33 @@ def user_has_pending_bravery(user_id):
         (user_id,),
     )
     return cur.fetchone() is not None
+
+
+def claimed_lanes_in_room(room_code, exclude_lock_id=None):
+    """Lanes ya tomadas por locks pending de esa sala. Excluye opcionalmente un lock_id
+    (útil al reroll para que el reroll considere su propia lane como libre)."""
+    if exclude_lock_id is not None:
+        cur = _exec(
+            "SELECT lane FROM bravery_locks WHERE room_code=? AND status='pending' AND id != ? AND lane IS NOT NULL",
+            (room_code, int(exclude_lock_id)),
+        )
+    else:
+        cur = _exec(
+            "SELECT lane FROM bravery_locks WHERE room_code=? AND status='pending' AND lane IS NOT NULL",
+            (room_code,),
+        )
+    return {r[0] for r in cur.fetchall() if r[0]}
+
+
+def update_bravery_lock_roll(lid, champion_id, champion_name, lane, items, style_mult, dimensions):
+    """Actualiza el roll de un lock pending. Marca reroll_used=1. Devuelve dict."""
+    import json as _json
+    items_json = _json.dumps(items) if items else None
+    _exec(
+        """UPDATE bravery_locks SET champion_id=?, champion_name=?, lane=?,
+           items_json=?, style_mult=?, dimensions=?, reroll_used=1
+           WHERE id=? AND status='pending' AND reroll_used=0""",
+        (int(champion_id), champion_name, lane, items_json,
+         float(style_mult), int(dimensions), int(lid)),
+    )
+    return get_bravery_lock_by_id(lid)

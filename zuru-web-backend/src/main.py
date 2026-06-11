@@ -3228,6 +3228,46 @@ def rooms_delete(code):
     return jsonify({"ok": True})
 
 
+@app.route('/rooms/<code>/bravery/toggle', methods=['POST'])
+def rooms_bravery_toggle(code):
+    """Owner only: activa/desactiva el modo Bravery de la sala.
+
+    Cuando bravery_active=True, todos los miembros pueden lockear su setup
+    con dimensiones (champ + lane + items) compartiendo room_code.
+    Cuando =False, el modo Bravery de la sala está cerrado.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    room = _users.get_room_by_code(code)
+    if not room:
+        return jsonify({"error": "Sala no encontrada"}), 404
+    if room["owner_user_id"] != user["id"]:
+        return jsonify({"error": "Sólo el dueño puede activar Bravery"}), 403
+    data = request.get_json(silent=True) or {}
+    target = bool(data.get("active", not room["bravery_active"]))
+    updated = _users.set_room_bravery(room["id"], target)
+    # Notificar a miembros si se activa
+    if target and not room["bravery_active"]:
+        for m in (updated.get("members") or []):
+            try:
+                # Buscamos el user por riot_id
+                cur = _users._exec(
+                    "SELECT id FROM users WHERE riot_id=?", (m["riot_id"],)
+                )
+                row = cur.fetchone()
+                if row and row[0] != user["id"]:
+                    _users.push_notification(
+                        user_id=row[0], notif_type="room_bravery_started",
+                        title=f"🎲 Bravery activo en {room.get('name') or room['code']}",
+                        body="Entra y lockea tu setup",
+                        link="#/social", icon="🎲",
+                    )
+            except Exception:
+                pass
+    return jsonify(updated)
+
+
 # ============================================================================
 # BETS P2P
 # ============================================================================
@@ -5019,22 +5059,29 @@ def bravery_data():
 @app.route('/bravery/roll', methods=['POST'])
 def bravery_roll():
     """Genera un roll de bravery sin lockearlo aún.
-    Body: {dimensions: ['champion','lane'?,'items'?], lane_filter?, item_count?}
-    Devuelve {champion, lane, items, dimensions, style_mult}."""
+    Body: {dimensions: ['champion','lane'?,'items'?], room_code?, item_count?}
+
+    Reglas:
+      - 'lane' SÓLO permitida si room_code está set (en SoloQ no eliges lane,
+        sólo tiene sentido en bravery de sala donde 5 personas coordinan comp).
+    """
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
     data = request.get_json() or {}
-    dims = data.get("dimensions") or ["champion"]
+    dims = list(data.get("dimensions") or ["champion"])
     if "champion" not in dims:
-        dims = ["champion"] + list(dims)
-    lane_filter = data.get("lane_filter")
+        dims = ["champion"] + dims
+    room_code = data.get("room_code")
+    # Gate: lane sólo permitida en bravery de sala
+    if "lane" in dims and not room_code:
+        dims = [d for d in dims if d != "lane"]
     try:
         item_count = int(data.get("item_count", 5))
     except Exception:
         item_count = 5
     item_count = max(3, min(6, item_count))
-    rolled = _bravery.roll(dims, lane_filter=lane_filter, item_count=item_count)
+    rolled = _bravery.roll(dims, item_count=item_count)
     if not rolled:
         return jsonify({"error": "Data Dragon no disponible"}), 503
     return jsonify(rolled)
@@ -5064,22 +5111,35 @@ def bravery_lock():
     if _users.user_has_pending_bravery(user["id"]):
         return jsonify({"error": "Ya tienes un bravery pending. Cancélalo o juega antes de crear otro."}), 400
 
-    lane = data.get("lane")
-    if lane and lane not in _bravery.VALID_LANES:
-        return jsonify({"error": "lane inválida"}), 400
     items = data.get("items")
-    # Validamos items mínimamente: lista de dicts con id+name
     if items is not None:
         if not isinstance(items, list) or not all(
             isinstance(it, dict) and "id" in it and "name" in it for it in items
         ):
             return jsonify({"error": "items debe ser lista de {id, name}"}), 400
 
+    room_code = data.get("room_code") or None
+
+    # En sala: validar bravery_active del owner + claim lane random del pool
+    lane = None
+    if room_code:
+        room = _users.get_room_by_code(room_code)
+        if not room:
+            return jsonify({"error": "Sala no encontrada"}), 404
+        if not room["bravery_active"]:
+            return jsonify({"error": "El host aún no ha activado Bravery en esta sala"}), 400
+        # Claim lane: pool de 5, excluye las ya tomadas por otros locks pending
+        claimed = _users.claimed_lanes_in_room(room_code)
+        available = [l for l in _bravery.VALID_LANES if l not in claimed]
+        if not available:
+            return jsonify({"error": "Sala llena: las 5 lanes están ocupadas"}), 400
+        import random as _rnd
+        lane = _rnd.choice(available)
+
     dims = set(["champion"])
     if lane: dims.add("lane")
     if items: dims.add("items")
     style_mult = _bravery.style_mult_for_dims(dims)
-    room_code = data.get("room_code") or None
 
     lock = _users.create_bravery_lock(
         user_id=user["id"],
@@ -5096,6 +5156,68 @@ def bravery_lock():
     if not lock:
         return jsonify({"error": "No se pudo crear el lock"}), 500
     return jsonify(lock)
+
+
+@app.route('/bravery/<int:lid>/reroll', methods=['POST'])
+def bravery_reroll(lid):
+    """Re-rolea un bravery lock pending (1 vez por lock). Cambia champion,
+    items (si la dim items estaba activa) y lane (si en sala — toma del pool
+    excluyendo las ya tomadas por otros).
+
+    Body opcional: {item_count?: int}
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    lock = _users.get_bravery_lock_by_id(lid)
+    if not lock or lock["user_id"] != user["id"]:
+        return jsonify({"error": "Lock no encontrado"}), 404
+    if lock["status"] != "pending":
+        return jsonify({"error": "Sólo se puede rerollear un lock pending"}), 400
+    if lock["reroll_used"]:
+        return jsonify({"error": "Ya usaste tu reroll en este lock"}), 400
+
+    data = request.get_json(silent=True) or {}
+    try:
+        item_count = int(data.get("item_count", len(lock.get("items") or []) or 5))
+    except Exception:
+        item_count = 5
+    item_count = max(3, min(6, item_count))
+
+    had_items = bool(lock.get("items"))
+    dims_in = ["champion"] + (["items"] if had_items else [])
+    new_roll = _bravery.roll(dims_in, item_count=item_count)
+    if not new_roll:
+        return jsonify({"error": "Data Dragon no disponible"}), 503
+
+    # Si está en sala con lane: claim NUEVA lane del pool (excluye otros pending
+    # excepto el propio lock — su lane "actual" cuenta como disponible para él)
+    new_lane = None
+    if lock["room_code"] and lock["lane"]:
+        claimed = _users.claimed_lanes_in_room(lock["room_code"], exclude_lock_id=lid)
+        available = [l for l in _bravery.VALID_LANES if l not in claimed]
+        if not available:
+            return jsonify({"error": "Sala llena al rerollear, lane no disponible"}), 400
+        import random as _rnd
+        new_lane = _rnd.choice(available)
+
+    dims = set(["champion"])
+    if new_lane: dims.add("lane")
+    if had_items: dims.add("items")
+    new_style_mult = _bravery.style_mult_for_dims(dims)
+
+    updated = _users.update_bravery_lock_roll(
+        lid=lid,
+        champion_id=new_roll["champion"]["id"],
+        champion_name=new_roll["champion"]["name"],
+        lane=new_lane,
+        items=new_roll.get("items"),
+        style_mult=new_style_mult,
+        dimensions=len(dims),
+    )
+    if not updated:
+        return jsonify({"error": "No se pudo rerollear"}), 500
+    return jsonify(updated)
 
 
 @app.route('/bravery/<int:lid>/cancel', methods=['POST'])

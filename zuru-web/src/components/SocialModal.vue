@@ -708,7 +708,11 @@
               <!-- Bravery de la sala -->
               <div class="mt-4 pt-3 border-t border-white/10">
                 <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">🎲 BRAVERY · SALA</p>
-                <BraveryPanel :room-code="currentRoom.code" />
+                <BraveryPanel
+                  :room-code="currentRoom.code"
+                  :room-bravery-active="!!currentRoom.bravery_active"
+                  :is-room-owner="isRoomOwner"
+                  @toggle-room-bravery="onToggleRoomBravery" />
               </div>
             </div>
           </div>
@@ -1131,6 +1135,12 @@ async function onDeleteCurrent() {
 function onBackToList() {
   localStorage.removeItem(LAST_ROOM_KEY)
   currentRoom.value = null
+}
+
+async function onToggleRoomBravery() {
+  if (!currentRoom.value) return
+  const updated = await auth.toggleRoomBravery(currentRoom.value.code)
+  if (updated) currentRoom.value = updated
 }
 
 async function copyRoomLink() {

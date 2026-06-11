@@ -2,15 +2,45 @@
   <div class="space-y-3">
     <!-- Header explicativo -->
     <div class="bg-gradient-to-br from-purple-900/20 via-black/40 to-pink-900/20 border border-purple-500/30 rounded-xl p-3">
-      <p class="text-purple-300 text-[10px] font-mono tracking-widest mb-1">🎲 BRAVERY MODE</p>
-      <p class="text-white/70 text-[11px] font-mono leading-relaxed">
-        Sortea tu próxima partida. Más cosas aleatorizadas = más multiplicador de TC. Cumple el roll y gana según tu tumor.
+      <p class="text-purple-300 text-[10px] font-mono tracking-widest mb-1">
+        🎲 BRAVERY MODE {{ roomCode ? '· SALA' : '· SOLO' }}
       </p>
+      <p class="text-white/70 text-[11px] font-mono leading-relaxed">
+        {{ roomCode
+          ? 'Coordina con tu sala: lockea tu setup random y juega juntos. Lane disponible para coordinar comp.'
+          : 'Sortea tu próxima partida ranked. Más restricciones = más castigo al multiplier, pero más estilo.' }}
+      </p>
+      <!-- Tabla de penalty por dimensión -->
       <div class="flex gap-2 mt-2 text-[9px] font-mono">
-        <span class="px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-200">1 dim · x1.0</span>
-        <span class="px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200">2 dim · x1.3</span>
-        <span class="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200">3 dim · x1.7</span>
+        <span class="px-1.5 py-0.5 rounded bg-green-900/60 text-green-200">champ · ×1.0</span>
+        <span v-if="roomCode" class="px-1.5 py-0.5 rounded bg-yellow-900/60 text-yellow-200">+lane · -10%</span>
+        <span class="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200">+items · -25%</span>
       </div>
+    </div>
+
+    <!-- Banner: estado bravery de la sala -->
+    <div v-if="roomCode && roomBraveryStatus !== null"
+      class="rounded-lg border-2 p-2.5 flex items-center gap-2"
+      :class="roomBraveryStatus ? 'border-purple-500/60 bg-purple-900/15' : 'border-white/15 bg-black/20'">
+      <span class="text-xl shrink-0">{{ roomBraveryStatus ? '🎲' : '⏸' }}</span>
+      <div class="flex-1 min-w-0">
+        <p class="text-[11px] font-mono font-bold"
+          :class="roomBraveryStatus ? 'text-purple-300' : 'text-white/50'">
+          {{ roomBraveryStatus ? 'Bravery activo en la sala' : 'Bravery no iniciado' }}
+        </p>
+        <p class="text-[9px] font-mono text-white/40">
+          {{ roomBraveryStatus
+            ? 'Cada miembro lockea su setup random'
+            : (isRoomOwner ? 'Activa Bravery para que todos lockean' : 'Espera a que el host active') }}
+        </p>
+      </div>
+      <button v-if="isRoomOwner" @click="onToggleRoomBravery" :disabled="togglingBravery"
+        class="text-[10px] font-mono font-bold px-2 py-1 rounded shrink-0 disabled:opacity-40"
+        :class="roomBraveryStatus
+          ? 'bg-red-900/40 text-red-300 hover:bg-red-900/60'
+          : 'bg-purple-700 text-white hover:bg-purple-600'">
+        {{ togglingBravery ? '...' : (roomBraveryStatus ? 'Cerrar' : '🎲 Iniciar') }}
+      </button>
     </div>
 
     <!-- Si ya tiene lock pending, mostrarlo -->
@@ -41,11 +71,20 @@
           class="flex-1 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 text-white font-mono font-bold text-xs px-3 py-1.5 rounded">
           {{ resolving ? '...' : '🔄 Comprobar partida' }}
         </button>
+        <button v-if="!pendingLock.reroll_used"
+          @click="onReroll(pendingLock.id)" :disabled="rerolling"
+          class="text-[10px] font-mono px-2 py-1 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 text-white font-bold rounded">
+          {{ rerolling ? '...' : '🎲 Reroll (1)' }}
+        </button>
         <button @click="onCancel(pendingLock.id)" :disabled="cancelling"
           class="text-[10px] font-mono px-2 py-1 border border-red-500/30 text-red-400 hover:bg-red-900/20 rounded">
           Cancelar
         </button>
       </div>
+      <p v-if="pendingLock.reroll_used"
+        class="text-white/30 text-[9px] font-mono mt-1 italic">
+        ya rerolleaste · setup definitivo
+      </p>
     </div>
 
     <!-- Si no hay login → mensaje claro -->
@@ -69,7 +108,7 @@
     <div v-else class="bg-black/30 border border-white/10 rounded-xl p-3">
       <!-- Tabla de payouts según tumor — explicación -->
       <div class="mb-3 p-2 rounded-lg bg-black/40 border border-purple-500/20">
-        <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">💡 PAYOUT POR TUMOR (×style)</p>
+        <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">💡 PAYOUT POR TUMOR (× tu style)</p>
         <div class="grid grid-cols-5 gap-1 text-center">
           <div class="rounded bg-green-900/40 py-1">
             <p class="text-green-300 text-[9px] font-mono font-bold">≤20</p>
@@ -97,8 +136,8 @@
         </p>
       </div>
       <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">QUÉ ALEATORIZAR</p>
-      <div class="grid grid-cols-3 gap-1.5 mb-3">
-        <button v-for="d in DIMENSIONS" :key="d.key"
+      <div class="grid gap-1.5 mb-3" :class="visibleDimensions.length === 2 ? 'grid-cols-2' : 'grid-cols-3'">
+        <button v-for="d in visibleDimensions" :key="d.key"
           @click="toggleDim(d.key)"
           :disabled="d.key === 'champion'"
           :class="dims.includes(d.key)
@@ -107,27 +146,31 @@
           class="text-[10px] font-mono px-2 py-2 rounded border transition disabled:opacity-100">
           <div class="text-lg">{{ d.emoji }}</div>
           {{ d.label }}
+          <p v-if="d.penalty" class="text-[8px] mt-0.5 opacity-70">−{{ Math.round(d.penalty * 100) }}%</p>
         </button>
       </div>
 
-      <div v-if="dims.includes('lane')" class="mb-2">
-        <label class="text-white/40 text-[9px] font-mono tracking-widest">FILTRO LANE (opcional)</label>
-        <select v-model="laneFilter"
-          class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs mt-1">
-          <option :value="null">— random —</option>
-          <option v-for="l in LANES" :key="l" :value="l">{{ LANE_LABEL[l] }}</option>
-        </select>
-      </div>
+      <!-- Hint sala: lanes disponibles -->
+      <p v-if="roomCode && roomBraveryActive" class="text-cyan-300/70 text-[10px] font-mono mb-2">
+        📍 En sala: lane se asigna random al lockear · {{ lanesRemaining }}/5 disponibles
+      </p>
 
       <div class="grid grid-cols-2 gap-2 mb-2">
-        <button @click="onRoll" :disabled="rolling || !ddragonReady"
+        <button @click="onRoll" :disabled="rolling || !ddragonReady || lockBlocked"
           class="bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:opacity-40 text-white font-mono font-bold text-xs px-3 py-2 rounded">
           {{ rolling ? '🎲...' : '🎲 Aleatorio' }}
         </button>
-        <div class="text-[10px] font-mono text-white/40 self-center text-right">
-          Multi: <span class="text-purple-300 font-bold">x{{ currentStyleMult.toFixed(2) }}</span>
+        <div class="text-[10px] font-mono text-white/50 self-center text-right">
+          Multi:
+          <span class="font-bold"
+            :class="currentStyleMult >= 1.0 ? 'text-green-300' : currentStyleMult >= 0.8 ? 'text-yellow-300' : 'text-red-300'">
+            x{{ currentStyleMult.toFixed(2) }}
+          </span>
         </div>
       </div>
+      <p v-if="lockBlocked" class="text-yellow-400/80 text-[10px] font-mono italic">
+        ⏸ El host aún no ha activado Bravery en esta sala.
+      </p>
 
       <!-- Roll resultado -->
       <div v-if="lastRoll" class="bg-black/40 border border-purple-500/40 rounded-lg p-2 mt-2">
@@ -195,39 +238,66 @@ import { useAuth } from '../composables/useAuth'
 
 const props = defineProps<{
   roomCode?: string | null
+  /** Si la sala tiene bravery_active=true. null/undef si no aplica (single player). */
+  roomBraveryActive?: boolean | null
+  /** Si el viewer es owner de la sala (sólo aplica si roomCode set). */
+  isRoomOwner?: boolean
+}>()
+
+const emit = defineEmits<{
+  /** Owner pidió toggle del flag bravery_active de la sala. El padre llama al endpoint. */
+  toggleRoomBravery: []
 }>()
 
 const auth = useAuth()
 
-const LANES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY']
 const LANE_LABEL: Record<string, string> = {
   TOP: '🛡 Top', JUNGLE: '🌳 Jungle', MIDDLE: '✨ Mid', BOTTOM: '🏹 ADC', UTILITY: '💚 Sup',
 }
+// Penalty al style_mult por dimensión (debe matchear bravery_engine.DIMENSION_PENALTY).
+// Lane NO es elegible: en sala se asigna automáticamente al lockear (pool de 5).
+// En solo no existe (no eliges lane en SoloQ).
 const DIMENSIONS = [
-  { key: 'champion', emoji: '🎭', label: 'Champion' },
-  { key: 'lane', emoji: '📍', label: 'Lane' },
-  { key: 'items', emoji: '⚒', label: 'Items' },
+  { key: 'champion', emoji: '🎭', label: 'Champion', penalty: 0 },
+  { key: 'items',    emoji: '⚒', label: 'Items',    penalty: 0.25 },
 ]
+const LANE_PENALTY = 0.10
 
 const ddragon = ref<{ version: string; champions: any[]; items: any[] } | null>(null)
 const ddragonError = ref('')
 const ddragonReady = computed(() => !!ddragon.value?.version)
 const isLoggedIn = computed(() => !!auth?.user.value)
 
-const dims = ref<string[]>(['champion', 'lane', 'items'])
-const laneFilter = ref<string | null>(null)
+// Default dims: champ obligatorio + items toggle opcional. Lane no es toggle.
+const dims = ref<string[]>(['champion', 'items'])
 const stake = ref(50)
 const lastRoll = ref<any>(null)
 const rolling = ref(false)
 const locking = ref(false)
 const cancelling = ref(false)
 const resolving = ref(false)
+const rerolling = ref(false)
+const togglingBravery = ref(false)
 const error = ref('')
 
 const history = ref<any[]>([])
 const roomLocks = ref<any[]>([])
 
 const myUserId = computed(() => auth?.user.value?.id)
+
+const roomBraveryStatus = computed(() =>
+  props.roomCode ? !!props.roomBraveryActive : null
+)
+const lockBlocked = computed(() =>
+  !!props.roomCode && !props.roomBraveryActive
+)
+// Cuántas lanes quedan libres en la sala (informativo)
+const lanesTaken = computed(() => {
+  if (!props.roomCode) return new Set<string>()
+  return new Set(roomLocks.value.filter(l => l.status === 'pending' && l.lane).map(l => l.lane))
+})
+const lanesRemaining = computed(() => 5 - lanesTaken.value.size)
+const visibleDimensions = DIMENSIONS  // 2 dims max, lane es automática en sala
 const pendingLock = computed(() => history.value.find(h => h.status === 'pending') || null)
 const historyResolved = computed(() => history.value.filter(h => h.status !== 'pending'))
 const otherRoomLocks = computed(() =>
@@ -235,10 +305,15 @@ const otherRoomLocks = computed(() =>
 )
 
 const currentStyleMult = computed(() => {
-  const n = new Set(dims.value).size
-  if (n <= 1) return 1.0
-  if (n === 2) return 1.30
-  return 1.70
+  const s = new Set(dims.value)
+  if (!s.has('champion')) return 1.0
+  let mult = 1.0
+  for (const d of DIMENSIONS) {
+    if (s.has(d.key)) mult -= d.penalty
+  }
+  // En sala se añade lane automáticamente al lockear → preview con su penalty
+  if (props.roomCode) mult -= LANE_PENALTY
+  return Math.max(0.5, Math.round(mult * 1000) / 1000)
 })
 
 function toggleDim(d: string) {
@@ -292,13 +367,23 @@ async function onRoll() {
   try {
     const r = await auth.braveryRoll({
       dimensions: dims.value,
-      lane_filter: laneFilter.value,
+      room_code: props.roomCode || null,
       item_count: 5,
     })
     if (r) lastRoll.value = r
     else error.value = 'No se pudo aleatorizar'
   } finally {
     rolling.value = false
+  }
+}
+
+async function onToggleRoomBravery() {
+  if (togglingBravery.value) return
+  togglingBravery.value = true
+  try {
+    emit('toggleRoomBravery')
+  } finally {
+    togglingBravery.value = false
   }
 }
 
@@ -310,7 +395,7 @@ async function onLock() {
     await auth.braveryLock({
       champion_id: lastRoll.value.champion.id,
       champion_name: lastRoll.value.champion.name,
-      lane: lastRoll.value.lane,
+      lane: null,  // lane se asigna server-side (sala) o queda null (solo)
       items: lastRoll.value.items,
       stake: stake.value,
       room_code: props.roomCode || null,
@@ -333,6 +418,20 @@ async function onCancel(lid: number) {
     await loadRoom()
   } finally {
     cancelling.value = false
+  }
+}
+
+async function onReroll(lid: number) {
+  rerolling.value = true
+  error.value = ''
+  try {
+    await auth.braveryReroll(lid)
+    await loadMine()
+    await loadRoom()
+  } catch (e: any) {
+    error.value = e.message || 'Error en reroll'
+  } finally {
+    rerolling.value = false
   }
 }
 

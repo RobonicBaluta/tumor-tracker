@@ -166,29 +166,48 @@ def warm_cache_async():
 warm_cache_async()
 
 
+# Penalty por dimensión: cuantas más restricciones, menos multiplicador.
+# La idea: bravery con más dims = peor rendimiento garantizado, así que el sistema
+# no compensa al alza. El user elige el handicap a sabiendas.
+# Items penaliza más que lane porque jugar con items random es mucho más jodido.
+DIMENSION_PENALTY = {
+    "lane":  0.10,
+    "items": 0.25,
+}
+STYLE_MULT_FLOOR = 0.50
+
+
 def style_mult_for_dims(dims):
-    """dims = set/list de dimensiones activas; debe contener 'champion'."""
+    """dims = set/list de dimensiones activas; debe contener 'champion'.
+    Cada dim opcional aplica una penalty al multiplier base (1.0).
+
+    champ only        → 1.00
+    champ + lane      → 0.90
+    champ + items     → 0.75
+    champ + lane + items → 0.65
+
+    Mínimo absoluto: STYLE_MULT_FLOOR (0.50).
+    """
     s = set(dims or [])
     if "champion" not in s:
         return 1.0
-    n = len(s & {"champion", "lane", "items"})
-    if n <= 1:
-        return 1.0
-    if n == 2:
-        return 1.30
-    return 1.70
+    mult = 1.0
+    for d, pen in DIMENSION_PENALTY.items():
+        if d in s:
+            mult -= pen
+    return max(STYLE_MULT_FLOOR, round(mult, 3))
 
 
-def roll(dimensions, lane_filter=None, item_count=5, seed=None):
+def roll(dimensions, item_count=5, seed=None):
     """Genera un roll de bravery.
 
     dimensions: lista que debe incluir 'champion'. Puede incluir 'lane' e 'items'.
-    lane_filter: si dimensions incluye 'lane' y lane_filter es una lane válida,
-                 forza esa lane. Si es None, lane se elige al azar.
+      - 'lane' sólo tiene sentido en bravery de sala (5 personas coordinan comp).
+        En single player no eliges lane en SoloQ, así que no se debería usar.
     item_count: número de items aleatorios a sortear (default 5).
 
     Devuelve dict con: champion, lane (None si no es dimensión), items (None si no),
-    dimensions (set como list), style_mult.
+    dimensions (lista ordenada), style_mult (≤ 1.0 con dim penalties).
     """
     data = get_data()
     if not data:
@@ -200,10 +219,7 @@ def roll(dimensions, lane_filter=None, item_count=5, seed=None):
     champion = rng.choice(data["champions"])
     lane = None
     if "lane" in dims:
-        if lane_filter and lane_filter.upper() in VALID_LANES:
-            lane = lane_filter.upper()
-        else:
-            lane = rng.choice(VALID_LANES)
+        lane = rng.choice(VALID_LANES)
     items = None
     if "items" in dims:
         pool = data["items"]
@@ -251,10 +267,13 @@ def compute_compliance(lock, participant):
 
     style_mult = float(lock.get("style_mult") or 1.0)
     effective_mult = style_mult
+    # Penalty por incumplir compliance (sólo aplica si la dim estaba activa):
+    # - lane errada: corta el mult a la mitad (bastante castigo)
+    # - items: el hit_rate escala el mult entre 30% (nada acertado) y 100% (todo)
     if lane_match is False:
-        effective_mult = max(1.0, effective_mult - 0.30)
+        effective_mult *= 0.5
     if items_hit_rate is not None:
-        effective_mult *= (0.5 + 0.5 * items_hit_rate)
+        effective_mult *= (0.3 + 0.7 * items_hit_rate)
 
     return {
         "champion_match": bool(champion_match),
