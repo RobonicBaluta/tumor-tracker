@@ -22,18 +22,47 @@ onMounted(() => {
 });
 provide('auth', auth);
 
-const initialPage = (() => {
-  const h = window.location.hash || ''
-  if (h.startsWith('#/summoner/') || h.startsWith('#/u/')) return 'overview'
+// Páginas top-level con hash routing — #/<page>. 'overview' es el default
+// (hash vacío o cualquier ruta de summoner/u). Otras: compare, tinder, mental,
+// oncologico.
+type PageKey = 'overview' | 'compare' | 'tinder' | 'mental' | 'oncologico'
+const PAGE_HASHES: Record<Exclude<PageKey, 'overview'>, string> = {
+  compare:    '#/compare',
+  tinder:     '#/tinder',
+  mental:     '#/mental',
+  oncologico: '#/oncologico',
+}
+
+function pageFromHash(hash: string): PageKey {
+  if (hash.startsWith('#/summoner/') || hash.startsWith('#/u/')) return 'overview'
+  if (hash === '#/compare')    return 'compare'
+  if (hash === '#/tinder')     return 'tinder'
+  if (hash === '#/mental')     return 'mental'
+  if (hash === '#/oncologico') return 'oncologico'
   return 'overview'  // Top Tumores como default
-})()
-const currentPage = ref(initialPage);
+}
+
+const currentPage = ref<PageKey>(pageFromHash(window.location.hash || ''))
+
+// Escribe el hash sin push (replaceState) cuando el user navega por el navbar.
+// El listener de hashchange abajo sincroniza el state en ambas direcciones.
+function navigateTo(page: PageKey) {
+  const desired = page === 'overview' ? '' : PAGE_HASHES[page]
+  if (page === 'overview') {
+    // Para volver a Top Tumores, limpia el hash (no la URL completa).
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+  } else if (window.location.hash !== desired) {
+    history.replaceState(null, '', desired)
+  }
+  currentPage.value = page
+}
 
 window.addEventListener('hashchange', () => {
-  const h = window.location.hash
-  if (h.startsWith('#/summoner/') || h.startsWith('#/u/')) {
-    currentPage.value = 'overview'
-  }
+  // Cuando el hash cambia (back/forward del navegador o programáticamente),
+  // sincroniza currentPage. Overview maneja su propio sub-routing (slug + queue).
+  currentPage.value = pageFromHash(window.location.hash || '')
 })
 
 const THEMES = {
@@ -61,7 +90,7 @@ provide('THEMES', THEMES)
 
 <template>
   <div class="h-screen flex flex-col">
-    <Navbar :current-page="currentPage" @navigate="currentPage = $event" />
+    <Navbar :current-page="currentPage" @navigate="navigateTo($event as PageKey)" />
 
     <DiagnosisForm v-if="currentPage === 'oncologico'" />
     <Mental v-else-if="currentPage === 'mental'" />

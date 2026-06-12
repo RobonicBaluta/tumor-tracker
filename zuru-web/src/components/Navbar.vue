@@ -187,24 +187,34 @@ const claimDaily = async () => {
 <template>
   <nav :class="[navBgColor, 'backdrop-blur-md border-b border-white/20 sticky top-0 z-50 shadow-lg']">
     <div class="max-w-6xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
-      <button @click="emit('navigate', 'overview')" :class="[
-        'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
-        'hover:-translate-y-1 active:translate-y-0',
-        currentPage === 'overview'
-          ? 'bg-[#c89b3c] text-black shadow-lg shadow-[#c89b3c]/50'
-          : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
-      ]">
+      <!-- Anchor tags en lugar de buttons para que:
+           - El URL del hover se vea en bottom-left del navegador
+           - Right-click / middle-click → "Abrir en nueva pestaña" funcionen
+           - aria-current="page" da accesibilidad de SPA decente
+           @click.prevent: bloqueamos la navegación nativa (que dispararía
+           hashchange + navigate) y emitimos manualmente para no doblar el evento. -->
+      <a href="#/" @click.prevent="emit('navigate', 'overview')"
+        :aria-current="currentPage === 'overview' ? 'page' : undefined"
+        :class="[
+          'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
+          'hover:-translate-y-1 active:translate-y-0 no-underline',
+          currentPage === 'overview'
+            ? 'bg-[#c89b3c] text-black shadow-lg shadow-[#c89b3c]/50'
+            : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
+        ]">
         Top Tumores
-      </button>
-      <button @click="emit('navigate', 'compare')" :class="[
-        'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
-        'hover:-translate-y-1 active:translate-y-0',
-        currentPage === 'compare'
-          ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/50'
-          : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
-      ]">
+      </a>
+      <a href="#/compare" @click.prevent="emit('navigate', 'compare')"
+        :aria-current="currentPage === 'compare' ? 'page' : undefined"
+        :class="[
+          'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
+          'hover:-translate-y-1 active:translate-y-0 no-underline',
+          currentPage === 'compare'
+            ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/50'
+            : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
+        ]">
         Versus ⚔️
-      </button>
+      </a>
 
       <div class="flex-1"></div>
 

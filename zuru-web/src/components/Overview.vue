@@ -2355,12 +2355,34 @@ const exportStatsImage = async () => {
   }
 }
 
+// Queues válidos para meter en el hash. Cualquier otro string se ignora silenciosamente.
+const VALID_HASH_QUEUES = new Set(['soloq', 'flex', '450', '1700', 'all'])
+
+// Construye el hash completo del perfil + queue. Si se omite queue, conserva el actual.
+function buildProfileHash(slug: string, queue?: string): string {
+  const q = queue ?? selectedQueue.value
+  const base = `#/summoner/${encodeURIComponent(slug)}`
+  // 'soloq' es el default — no lo embebemos en el URL para mantenerlo limpio.
+  return q && q !== 'soloq' && VALID_HASH_QUEUES.has(q)
+    ? `${base}/${q}`
+    : base
+}
+
 const parseHashAndLoad = () => {
   const hash = window.location.hash || ''
-  // Accept either #/summoner/{slug} (general search) or #/u/{slug} (public profile)
-  const m = hash.match(/^#\/(?:summoner|u)\/(.+)$/)
+  // Acepta: #/summoner/{slug}[/{queue}] · #/u/{slug}[/{queue}]
+  const m = hash.match(/^#\/(?:summoner|u)\/([^/]+)(?:\/([^/]+))?\/?$/)
   if (!m) return
   const raw = decodeURIComponent(m[1])
+  const queueFromHash = m[2]
+  // Aplicar queue desde el hash si es válido (antes del fetch para que
+  // login() consulte el endpoint con el queue correcto desde la primera petición).
+  if (queueFromHash && VALID_HASH_QUEUES.has(queueFromHash)) {
+    if (selectedQueue.value !== queueFromHash) {
+      // setSelectedQueue actualiza localStorage también
+      setSelectedQueue(queueFromHash)
+    }
+  }
   // Acepta "Name-TAG" o "Name#TAG"
   const sep = raw.includes('#') ? '#' : '-'
   const idx = raw.lastIndexOf(sep)
@@ -2470,8 +2492,14 @@ const scanMessage = ref(SCAN_MESSAGES[0])
 let scanInterval: ReturnType<typeof setInterval> | null = null
 
 // Cuando cambia el queue seleccionado, si ya hay un summoner cargado recargamos.
-watch(selectedQueue, () => {
+// Y reflejamos el queue en el URL para que refresh / share / back preserve el modo.
+watch(selectedQueue, (q) => {
   if (summoner.value) {
+    const slug = summoner.value.replace('#', '-')
+    const desired = buildProfileHash(slug, q)
+    if (window.location.hash !== desired) {
+      history.replaceState(null, '', desired)
+    }
     currentStart.value = 0
     hasMore.value = false
     matches.value = []
@@ -2742,8 +2770,9 @@ const login = async () => {
     fetchBlacklist()
     startGlobalPoller()
     const slug = data.summoner.replace('#', '-')
-    if (!window.location.hash.includes(slug)) {
-      history.replaceState(null, '', `#/summoner/${encodeURIComponent(slug)}`)
+    const desired = buildProfileHash(slug)
+    if (window.location.hash !== desired) {
+      history.replaceState(null, '', desired)
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error desconocido'
