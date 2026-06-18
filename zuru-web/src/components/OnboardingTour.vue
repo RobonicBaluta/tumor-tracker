@@ -2,7 +2,7 @@
   <Transition name="onboarding">
     <div v-if="visible" class="fixed inset-0 z-[200] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6"
       @click.self="next">
-      <div class="bg-[#0d1b2a] border border-yellow-500/40 rounded-2xl shadow-2xl shadow-yellow-900/30 max-w-md w-full p-6 relative">
+      <div class="bg-theme-from border border-accent-40 rounded-2xl shadow-2xl shadow-yellow-900/30 max-w-md w-full p-6 relative">
         <div class="flex items-center justify-between mb-4">
           <p class="text-yellow-300 text-[10px] font-mono tracking-widest">
             PASO {{ step + 1 }}/{{ steps.length }}

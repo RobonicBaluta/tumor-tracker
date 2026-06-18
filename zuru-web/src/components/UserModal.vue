@@ -8,7 +8,7 @@
            pb con safe-area-inset para escapar el home indicator iOS.
            En sm+: modal centrado clásico. -->
       <div
-        class="bg-[#0d1b2a] border border-accent-30 shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col
+        class="bg-theme-from border border-accent-30 shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col
                rounded-t-2xl rounded-b-none sm:rounded-2xl"
         style="padding-bottom: env(safe-area-inset-bottom);">
         <!-- Drag handle visual mobile-only (no interactivo): hint de que esto
