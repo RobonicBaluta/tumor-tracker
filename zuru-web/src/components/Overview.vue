@@ -1596,9 +1596,11 @@
               <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🏆 CHAMPION POOL</p>
               <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
                 <div v-for="c in analyticsData.champion_pool" :key="c.champion"
-                  class="bg-black/30 border border-white/10 rounded-xl p-2 flex items-center gap-2">
+                  @click.stop="openChampStats(c.champion)"
+                  class="bg-black/30 border border-white/10 rounded-xl p-2 flex items-center gap-2 cursor-pointer hover:border-yellow-500/40 transition"
+                  :title="`Ver stats con ${c.champion}`">
                   <img :src="championIconUrl(c.champion, ddragonVersion)" @error="championIconFallback"
-                    class="w-10 h-10 rounded-lg border border-white/20 shrink-0" />
+                    class="w-10 h-10 rounded-lg border border-white/20 shrink-0 transition-transform group-hover:scale-105" />
                   <div class="min-w-0 flex-1">
                     <p class="text-white text-[11px] font-mono truncate">{{ c.champion }}</p>
                     <p class="text-[9px] font-mono">
@@ -1619,7 +1621,9 @@
                   <div class="bg-black/30 border border-green-500/20 rounded-xl divide-y divide-white/5">
                     <div v-for="d in analyticsData.best_teammates" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
                       <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                        class="w-8 h-8 rounded-lg border border-white/20" />
+                        @click.stop="openChampStats(d.top_champion)"
+                        class="w-8 h-8 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
+                        :title="`Ver tus stats con ${d.top_champion}`" />
                       <div class="flex-1 min-w-0">
                         <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
                         <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
@@ -1633,7 +1637,9 @@
                   <div class="bg-black/30 border border-red-500/20 rounded-xl divide-y divide-white/5">
                     <div v-for="d in analyticsData.worst_nemesis" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
                       <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                        class="w-8 h-8 rounded-lg border border-white/20" />
+                        @click.stop="openChampStats(d.top_champion)"
+                        class="w-8 h-8 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
+                        :title="`Ver tus stats con ${d.top_champion}`" />
                       <div class="flex-1 min-w-0">
                         <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
                         <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
@@ -1665,7 +1671,9 @@
                 <div v-for="(d, i) in sortedDuos" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
                   <span class="text-white/30 text-xs font-mono w-6">#{{ i + 1 }}</span>
                   <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                    class="w-10 h-10 rounded-lg border border-white/20" />
+                    @click.stop="openChampStats(d.top_champion)"
+                    class="w-10 h-10 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
+                    :title="`Ver tus stats con ${d.top_champion}`" />
                   <div class="flex-1 min-w-0">
                     <a :href="profileUrl(d.nombre)" target="_blank" rel="noopener" @click.stop
                       class="text-white text-sm font-mono truncate block hover:text-[#c89b3c] hover:underline transition">{{ d.nombre }}</a>
@@ -1818,6 +1826,15 @@
       @logout="logout"
     />
 
+    <!-- Champion stats modal: se abre desde icons en la sección Analytics. -->
+    <ChampionStatsModal
+      :show="champStatsOpen"
+      :champion-name="champStatsName"
+      :ddragon-version="ddragonVersion"
+      :champion-pool="(analyticsData?.champion_pool as any[]) || []"
+      :matches="(matches as any[])"
+      @close="champStatsOpen = false" />
+
   </div>
 </template>
 
@@ -1827,6 +1844,7 @@ import BetModal from './BetModal.vue'
 import BottomNav from './BottomNav.vue'
 import SkeletonCard from './SkeletonCard.vue'
 import TumorScoreCounter from './TumorScoreCounter.vue'
+import ChampionStatsModal from './ChampionStatsModal.vue'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
@@ -2679,6 +2697,16 @@ const sidebarTab = ref<'top5' | 'global'>('top5')
 const filterResult = ref<'all' | 'win' | 'loss'>('all')
 const filterChampion = ref('')
 const filterDays = ref(0)
+
+// Champion stats modal: se abre al click en un champion icon de la sección
+// Analytics. Data 100% client-side (champion_pool + matches ya cargados).
+const champStatsName = ref<string | null>(null)
+const champStatsOpen = ref(false)
+function openChampStats(name?: string | null) {
+  if (!name) return
+  champStatsName.value = name
+  champStatsOpen.value = true
+}
 
 // Match detail modal
 const selectedMatchId = ref<string | null>(null)
