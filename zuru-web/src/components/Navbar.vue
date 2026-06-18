@@ -5,6 +5,7 @@ import { useVisibilityPoller } from '../composables/useVisibilityPoller';
 const MyBetsModal = defineAsyncComponent(() => import('./MyBetsModal.vue'));
 const SocialModal = defineAsyncComponent(() => import('./SocialModal.vue'));
 const UserModal = defineAsyncComponent(() => import('./UserModal.vue'));
+import Avatar from './Avatar.vue';
 
 const props = defineProps<{
   currentPage: string;
@@ -153,12 +154,6 @@ const navBgColor = computed(() => {
   return colors[props.currentPage] || 'bg-[#143a32]';
 });
 
-const avatarUrl = computed(() => {
-  const u = auth?.user.value
-  if (!u || !u.avatar) return null
-  return `https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=64`
-})
-
 // Tick cada 60s para refrescar el countdown del daily reward. Pausable en
 // background — al volver al foreground el composable hace fire-on-visible y
 // el countdown salta al tiempo correcto sin esperar al próximo tick.
@@ -264,12 +259,7 @@ const claimDaily = async () => {
               <button v-for="f in friendsLiveData?.friends || []" :key="f.user_id"
                 @click="onOpenLiveFriend(f); showFriendsLive = false"
                 class="w-full text-left px-4 py-3 hover:bg-white/5 transition flex items-center gap-3">
-                <img v-if="f.avatar"
-                  :src="`https://cdn.discordapp.com/avatars/${f.discord_id}/${f.avatar}.png?size=64`"
-                  class="w-9 h-9 rounded-full shrink-0" />
-                <div v-else class="w-9 h-9 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                  {{ f.username?.[0]?.toUpperCase() || '?' }}
-                </div>
+                <Avatar :discord-id="f.discord_id" :avatar="f.avatar" :username="f.username" size="lg" />
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-xs font-mono font-bold truncate">{{ f.username }}</p>
                   <p class="text-white/50 text-[10px] font-mono truncate">
@@ -359,10 +349,8 @@ const claimDaily = async () => {
         </button>
         <button v-else @click="showUserMenu = !showUserMenu"
           class="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/20 transition">
-          <img v-if="avatarUrl" :src="avatarUrl" class="w-6 h-6 rounded-full" />
-          <span v-else class="w-6 h-6 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold">
-            {{ auth.user.value?.username?.[0]?.toUpperCase() ?? '?' }}
-          </span>
+          <Avatar :discord-id="auth.user.value?.discord_id" :avatar="auth.user.value?.avatar"
+            :username="auth.user.value?.username" size="sm" />
           <span class="text-white text-xs font-mono">{{ auth.user.value?.username }}</span>
         </button>
 
