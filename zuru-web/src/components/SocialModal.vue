@@ -90,6 +90,46 @@
 
           <!-- CLUSTERS -->
           <div v-else-if="active === 'clusters'">
+            <!-- Toolbar: k selector + help toggle -->
+            <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <div class="flex items-center gap-1.5">
+                <span class="text-white/40 text-[10px] font-mono uppercase tracking-widest">Grupos:</span>
+                <button v-for="k in [2, 4, 6, 8]" :key="k" @click="setClustersK(k)"
+                  :class="clustersK === k ? 'bg-[#c89b3c]/20 text-[#c89b3c] border-[#c89b3c]/50' : 'text-white/40 border-white/15 hover:text-white/70'"
+                  class="text-[11px] font-mono px-2.5 py-1 rounded border transition">
+                  {{ k }}
+                </button>
+              </div>
+              <button @click="clustersHelpOpen = !clustersHelpOpen"
+                :class="clustersHelpOpen ? 'text-[#c89b3c] border-[#c89b3c]/40' : 'text-white/40 hover:text-white/70 border-white/15'"
+                class="text-[10px] font-mono px-2 py-1 rounded border transition"
+                title="¿Qué son los clusters?">
+                {{ clustersHelpOpen ? '✕ Cerrar' : '? ¿Qué es esto?' }}
+              </button>
+            </div>
+
+            <!-- Help panel -->
+            <Transition name="modal">
+              <div v-if="clustersHelpOpen"
+                class="mb-3 p-3 bg-cyan-950/30 border border-cyan-500/30 rounded-lg text-[11px] font-mono leading-relaxed text-white/70">
+                <p class="text-cyan-300 font-bold mb-1">🧬 Clusters por arquetipo</p>
+                <p class="mb-1">
+                  Cada cluster agrupa jugadores con perfil similar (tumor histórico, tumor reciente, winrate,
+                  fracción tilteada/hot-streak). Usa <span class="text-[#c89b3c]">k-means</span> sobre los priors
+                  cacheados de los últimos jugadores analizados.
+                </p>
+                <p class="mb-1">
+                  Cambia <span class="text-[#c89b3c]">grupos</span> para ver agrupaciones más finas (8) o
+                  más groseras (2). Pulsa una tarjeta para <span class="text-[#c89b3c]">expandir</span>
+                  y ver detalles por sample (🌋 tilteado, 🔥 hot streak, partidas).
+                </p>
+                <p class="text-white/40">
+                  Nota: el nombre del cluster es un arquetipo derivado del centroide — dos clusters pueden
+                  coincidir en nombre si k es alto.
+                </p>
+              </div>
+            </Transition>
+
             <div v-if="clustersLoading" class="text-white/30 text-sm font-mono text-center py-8">
               {{ $t('social.calculating') }}
             </div>
@@ -98,7 +138,9 @@
             </div>
             <div v-else class="space-y-4">
               <div v-for="c in clusters" :key="c.id"
-                class="relative rounded-2xl overflow-hidden border-2 transition hover:scale-[1.01]"
+                @click="toggleClusterExpand(c.id)"
+                class="relative rounded-2xl overflow-hidden border-2 transition hover:scale-[1.01] cursor-pointer select-none"
+                :class="clustersExpanded.has(c.id) ? 'ring-2 ring-[#c89b3c]/30' : ''"
                 :style="{
                   borderColor: (c.color || '#64748b') + '99',
                   background: `linear-gradient(135deg, ${c.color || '#64748b'}22 0%, transparent 50%, ${c.color || '#64748b'}11 100%)`,
@@ -172,23 +214,37 @@
                   </div>
                 </div>
 
-                <!-- Ejemplos -->
+                <!-- Ejemplos: indicadores 🌋/🔥 inline. Expandidos muestran
+                     recent_avg y W/L además del prior+winrate. -->
                 <div v-if="c.samples.length" class="p-4 pt-2 border-t border-white/5 bg-black/20">
                   <p class="text-white/30 text-[9px] font-mono tracking-widest mb-2">{{ $t('social.cluster_examples') }}</p>
                   <div class="space-y-1">
                     <div v-for="(s, i) in (c.samples as any[])" :key="i"
                       class="flex items-center gap-2 text-[10px] font-mono py-0.5">
                       <span class="text-white/30 w-4">{{ Number(i) + 1 }}.</span>
-                      <span class="text-white/70 truncate flex-1">
-                        <span class="text-white/40">{{ s.tier || 'UNRANKED' }}</span>
-                        <span class="text-white/20"> · </span>
-                        <span class="text-white/50">{{ ROLE_LABEL[s.role] || (s.role ? s.role.slice(0,3) : '?') }}</span>
+                      <span class="text-white/70 truncate flex-1 flex items-center gap-1.5 min-w-0">
+                        <span class="text-white/40 shrink-0">{{ s.tier || 'UNRANKED' }}</span>
+                        <span class="text-white/20">·</span>
+                        <span class="text-white/50 shrink-0">{{ ROLE_LABEL[s.role] || (s.role ? s.role.slice(0,3) : '?') }}</span>
+                        <span v-if="s.is_tilted" title="Tilteado" class="text-orange-400 shrink-0">🌋</span>
+                        <span v-if="s.is_hotstreak" title="Hot streak" class="text-emerald-400 shrink-0">🔥</span>
+                        <span v-if="clustersExpanded.has(c.id) && (s.wins != null || s.losses != null)"
+                          class="text-white/30 truncate">
+                          · {{ s.wins ?? 0 }}W / {{ s.losses ?? 0 }}L
+                        </span>
                       </span>
-                      <span class="text-yellow-300 w-7 text-right font-bold">{{ s.prior_tumor }}</span>
+                      <span v-if="clustersExpanded.has(c.id) && s.recent_avg != null"
+                        class="text-white/40 w-8 text-right" title="Tumor reciente">
+                        ↗{{ s.recent_avg }}
+                      </span>
+                      <span class="text-yellow-300 w-7 text-right font-bold" title="Tumor prior">{{ s.prior_tumor }}</span>
                       <span class="text-white/30">·</span>
                       <span class="text-green-400 w-10 text-right">{{ s.win_rate }}%</span>
                     </div>
                   </div>
+                  <p v-if="!clustersExpanded.has(c.id)" class="text-white/30 text-[9px] font-mono italic text-center mt-2">
+                    Pulsa la tarjeta para más detalle
+                  </p>
                 </div>
               </div>
             </div>
@@ -758,6 +814,18 @@ const leaderboardKinds = computed(() => [
 const active = ref<TabKey>('hot')
 const clusters = ref<any[]>([])
 const clustersLoading = ref(false)
+const clustersK = ref(4)
+const clustersHelpOpen = ref(false)
+// Expanded set: ids de clusters cuya tarjeta está expandida para mostrar
+// detalle por sample (bools is_tilted/is_hotstreak, recent_avg). Click en la
+// tarjeta toggle ese id dentro/fuera del Set.
+const clustersExpanded = ref<Set<number>>(new Set())
+function toggleClusterExpand(id: number) {
+  if (clustersExpanded.value.has(id)) clustersExpanded.value.delete(id)
+  else clustersExpanded.value.add(id)
+  // Reactividad: Set en sí no es deep-reactive, fuerza re-render via spread.
+  clustersExpanded.value = new Set(clustersExpanded.value)
+}
 
 // 1v1 Challenges state
 const myChallenges = ref<any[]>([])
@@ -1040,13 +1108,21 @@ function challengeNeedsSubmit(c: any) {
 async function loadClusters() {
   clustersLoading.value = true
   try {
-    const data = await auth.fetchClusters(4)
+    const data = await auth.fetchClusters(clustersK.value)
     clusters.value = data.clusters || []
+    // Reset expansion al re-fetchar — los ids son nuevos.
+    clustersExpanded.value = new Set()
   } catch {
     clusters.value = []
   } finally {
     clustersLoading.value = false
   }
+}
+
+function setClustersK(k: number) {
+  if (k === clustersK.value) return
+  clustersK.value = k
+  loadClusters()
 }
 
 async function loadLeaderboard() {
