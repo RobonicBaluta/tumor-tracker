@@ -496,7 +496,10 @@ async function toggleRoomBravery(code: string, active?: boolean) {
 async function fetchAchievements() {
   if (!token.value) return []
   const res = await authedFetch('/achievements')
-  if (!res.ok) return []
+  // Throw en error real para que la UI lo distinga del caso "200 + lista
+  // legítimamente vacía". Antes ambos colapsaban a [] y se mostraba
+  // "0/0 desbloqueados NaN%" sin explicar por qué.
+  if (!res.ok) throw new Error(`Achievements API error: HTTP ${res.status}`)
   return await res.json()
 }
 

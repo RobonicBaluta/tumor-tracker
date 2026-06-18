@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, watch, inject, onMounted } from 'vue'
 import { API_BASE } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import { sfx } from '../composables/useSfx'
@@ -91,6 +91,12 @@ const totalReward = computed(() => {
   return all.filter(m => m.claimable).reduce((s, m) => s + m.reward, 0)
 })
 
+// El modal se monta con `:show="true"` desde Navbar (v-if="showMissions"
+// envuelve la instancia). Por eso `watch(() => props.show)` NUNCA dispara
+// su primera transición — no hay false→true porque arranca en true. Fix:
+// load() en onMounted Y mantenemos watch por si en el futuro se mantiene
+// montado y se hace toggle.
+onMounted(() => { if (props.show) load() })
 watch(() => props.show, v => { if (v) load() })
 </script>
 
