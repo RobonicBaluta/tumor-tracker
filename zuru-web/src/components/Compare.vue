@@ -122,7 +122,7 @@
               match.worse_player === 1 ? 'bg-red-950/30' : match.worse_player === 2 ? 'bg-green-950/20' : ''
             ]">
               <div class="relative shrink-0">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.player1.campeon}.png`"
+                <img :src="championIconUrl(match.player1.campeon, ddragonVersion)"
                   class="w-12 h-12 rounded-lg" />
                 <span :class="match.player1.win ? 'bg-blue-500' : 'bg-red-500'"
                   class="absolute -bottom-1 -right-1 text-white text-[9px] font-bold px-1 rounded font-mono">
@@ -153,7 +153,7 @@
               match.worse_player === 2 ? 'bg-red-950/30' : match.worse_player === 1 ? 'bg-green-950/20' : ''
             ]">
               <div class="relative shrink-0">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.player2.campeon}.png`"
+                <img :src="championIconUrl(match.player2.campeon, ddragonVersion)"
                   class="w-12 h-12 rounded-lg" />
                 <span :class="match.player2.win ? 'bg-blue-500' : 'bg-red-500'"
                   class="absolute -bottom-1 -left-1 text-white text-[9px] font-bold px-1 rounded font-mono">
@@ -189,6 +189,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { API_BASE } from '../composables/useApi'
+import { championIconUrl } from '../composables/overviewConstants'
 
 interface ComparePlayer {
   campeon: string

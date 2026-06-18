@@ -57,7 +57,7 @@
         >
           <!-- Splash background -->
           <div class="absolute inset-0 bg-cover bg-center"
-            :style="{ backgroundImage: `url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${playerData.campeon}_0.jpg)` }">
+            :style="{ backgroundImage: `url(${championSplashUrl(playerData.campeon)})` }">
           </div>
           <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
 
@@ -79,7 +79,7 @@
 
           <!-- Content -->
           <div class="relative p-10 text-center z-10" ref="shareCardRef">
-            <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${playerData.campeon}.png`"
+            <img :src="championIconUrl(playerData.campeon, ddragonVersion)"
               class="w-28 h-28 mx-auto mb-4 rounded-xl shadow-lg animate-pop" />
             <h2 class="text-white text-3xl font-bold">{{ playerData.nombre }}#{{ playerData.tag }}</h2>
             <p class="text-white/60 mb-6">{{ playerData.campeon }}</p>
@@ -147,6 +147,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { API_BASE } from '../composables/useApi'
+import { championIconUrl, championSplashUrl } from '../composables/overviewConstants'
 
 const ddragonVersion = ref('15.1.1')
 fetch('https://ddragon.leagueoflegends.com/api/versions.json')
@@ -247,7 +248,7 @@ const shareCard = async () => {
 
   // Splash art
   try {
-    const splash = await loadImage(`https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${p.campeon}_0.jpg`)
+    const splash = await loadImage(championSplashUrl(p.campeon))
     ctx.drawImage(splash, 0, 0, W, H)
   } catch {}
 
@@ -257,7 +258,7 @@ const shareCard = async () => {
 
   // Champion icon
   try {
-    const icon = await loadImage(`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion.value}/img/champion/${p.campeon}.png`)
+    const icon = await loadImage(championIconUrl(p.campeon, ddragonVersion.value))
     const sz = 112
     roundedImage(ctx, icon, (W - sz) / 2, 80, sz, sz, 14)
   } catch {}

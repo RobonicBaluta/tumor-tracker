@@ -397,10 +397,13 @@ async function fetchNotifications() {
 
 async function markNotificationsRead(ids: number[] | null = null) {
   if (!token.value) return
-  await authedFetch('/notifications/read', {
+  // Lanza si !res.ok para que el caller pueda decidir si vaciar la lista
+  // local o mantenerla (evita parpadeo en errores transitorios).
+  const res = await authedFetch('/notifications/read', {
     method: 'POST',
     body: JSON.stringify({ ids }),
   })
+  if (!res.ok) throw new Error(`mark notifications failed: ${res.status}`)
 }
 
 async function createRoom(name: string) {
