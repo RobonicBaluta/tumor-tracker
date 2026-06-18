@@ -2015,12 +2015,30 @@ def set_room_bravery(room_id, active):
 
 
 def get_room_members(room_id):
+    # LEFT JOIN con users para arrastrar discord_id + avatar + username del
+    # miembro si tiene cuenta linkeada al riot_id. NULL para riot_ids sin
+    # cuenta Discord registrada (caso normal cuando se invitó por ID puro).
     cur = _exec(
-        "SELECT riot_id, joined_at FROM room_members WHERE room_id=? ORDER BY joined_at ASC",
+        """
+        SELECT m.riot_id, m.joined_at, u.id, u.discord_id, u.discord_username, u.discord_avatar
+        FROM room_members m
+        LEFT JOIN users u ON u.riot_id = m.riot_id
+        WHERE m.room_id=? ORDER BY m.joined_at ASC
+        """,
         (room_id,),
     )
     rows = cur.fetchall()
-    return [{"riot_id": r[0], "joined_at": r[1]} for r in rows]
+    return [
+        {
+            "riot_id": r[0],
+            "joined_at": r[1],
+            "user_id": r[2],
+            "discord_id": r[3],
+            "username": r[4],
+            "avatar": r[5],
+        }
+        for r in rows
+    ]
 
 
 def add_room_member(room_id, riot_id):

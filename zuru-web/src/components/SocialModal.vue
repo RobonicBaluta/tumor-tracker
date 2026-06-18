@@ -70,11 +70,7 @@
                   :class="i < 3 ? 'text-[#c89b3c]' : 'text-white/30'">
                   {{ i < 3 ? ['🥇','🥈','🥉'][i] : '#' + (i + 1) }}
                 </span>
-                <img v-if="u.avatar && u.discord_id" :src="`https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=32`"
-                  class="w-7 h-7 rounded-full" />
-                <div v-else class="w-7 h-7 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                  {{ u.username?.[0]?.toUpperCase() ?? '?' }}
-                </div>
+                <Avatar :discord-id="u.discord_id" :avatar="u.avatar" :username="u.username" size="md" />
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">{{ u.username }}</p>
                   <p v-if="u.riot_id" class="text-[#c89b3c] text-[10px] font-mono">{{ u.riot_id }}</p>
@@ -474,11 +470,8 @@
             <div class="space-y-1">
               <div v-for="f in friends" :key="f.id"
                 class="bg-black/30 border border-white/10 rounded-lg px-3 py-2 flex items-center gap-3">
-                <img v-if="f.other_user?.avatar" :src="`https://cdn.discordapp.com/avatars/${f.other_user.discord_id}/${f.other_user.avatar}.png?size=32`"
-                  class="w-7 h-7 rounded-full" />
-                <div v-else class="w-7 h-7 rounded-full bg-[#5865F2] flex items-center justify-center text-white text-xs font-bold">
-                  {{ f.other_user?.username?.[0]?.toUpperCase() ?? '?' }}
-                </div>
+                <Avatar :discord-id="f.other_user?.discord_id" :avatar="f.other_user?.avatar"
+                  :username="f.other_user?.username" size="md" />
                 <div class="flex-1 min-w-0">
                   <p class="text-white text-sm font-mono truncate">{{ f.other_user?.username || 'Usuario' }}</p>
                   <p class="text-white/40 text-[10px] font-mono">
@@ -605,10 +598,14 @@
               <p class="text-white/40 text-[10px] font-mono mb-2">👥 MIEMBROS ({{ currentRoom.members.length }}/8)</p>
               <div class="grid grid-cols-2 gap-1.5">
                 <div v-for="m in currentRoom.members" :key="m.riot_id"
-                  class="flex items-center bg-black/30 border border-white/10 rounded px-2 py-1.5"
+                  class="flex items-center bg-black/30 border border-white/10 rounded px-2 py-1.5 gap-1.5"
                   :class="{ 'border-yellow-500/50': auth?.user.value?.riot_id === m.riot_id }">
-                  <span class="text-xs">👤</span>
-                  <span class="text-white text-[11px] font-mono truncate ml-1.5">{{ m.riot_id }}</span>
+                  <!-- Avatar Discord si el miembro tiene cuenta linkeada al riot_id;
+                       si no, fallback a inicial. Backend desde 2026-06-18 enriquece
+                       get_room_members con LEFT JOIN users. -->
+                  <Avatar :discord-id="m.discord_id" :avatar="m.avatar"
+                    :username="m.username || m.riot_id" size="xs" />
+                  <span class="text-white text-[11px] font-mono truncate">{{ m.username || m.riot_id }}</span>
                   <span v-if="auth?.user.value?.riot_id === m.riot_id"
                     class="text-[8px] font-mono ml-auto text-yellow-300/70">tú</span>
                 </div>
@@ -729,6 +726,7 @@ import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ROLE_LABEL } from '../composables/overviewConstants'
 import BraveryPanel from './BraveryPanel.vue'
+import Avatar from './Avatar.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useToast } from '../composables/useToast'
 

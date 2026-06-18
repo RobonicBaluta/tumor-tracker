@@ -142,9 +142,16 @@ status: en ejecución
 - [x] Spacer `calc(6rem + env(safe-area-inset-bottom))` para iOS home indicator
 - [x] Export error toast respeta safe-area-inset-bottom
 
+### Sesión 2026-06-18 (continuación 3) — fase visual polish
+
+- [x] 🎨 #14 Discord avatars — `Avatar.vue` (xs..xl, circle|square) + 5 sites swap (Navbar user menu, Friends LIVE, SocialModal Leaderboards/Friends/Room members) + backend LEFT JOIN en `get_room_members`. Room members ahora muestran avatar + username en vez de "👤" + riot_id raw.
+- [x] 🎨 #9 Skeleton loaders — `SkeletonCard.vue` con variants match-detail (2 equipos × 5 filas) y match-row. Wired al loadingDetail del match modal.
+- [x] 📱 #43 match cards densidad mobile — px/py/gap responsivos (sm:px-4 vs px-3), arrow divider oculta en `<sm`, space-y-2.5 entre cards (vs 4 desktop). Reducción ~120px scroll en feed típico de 20 partidas.
+
 ### Siguiente sesión
 
-- [ ] 🎨 #14 Discord avatar en challenges + room members (requiere schema change en `room_members`)
-- [ ] ⚡ #16 code-split Overview.vue en subcomponents lazy (Overview ya está en 148KB)
-- [ ] 📱 #42 pull-to-refresh en match list
-- [ ] 📱 #43 match cards más densas en mobile
+- [ ] ⚡ #16 code-split Overview.vue (ya en 150KB, en crecimiento)
+- [ ] 📱 #42 pull-to-refresh en match list (gesture handler)
+- [ ] 🎨 #10 microanimaciones: count-up tumor scores, hover scale en icons
+- [ ] 🎨 #13 confetti en streak ≥3 (canvas-confetti)
+- [ ] 🐛 #25 cancel/refund bravery toggle off con locks pending

@@ -382,7 +382,7 @@
       <div class="flex flex-col lg:flex-row gap-6 lg:items-start">
 
       <!-- Match list -->
-      <div class="space-y-4 flex-1 min-w-0">
+      <div class="space-y-2.5 sm:space-y-4 flex-1 min-w-0">
         <div v-for="(match, index) in filteredMatches" :key="match.match_id"
           class="relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
           :style="{ animationDelay: `${Math.min(index * 55, 550)}ms` }"
@@ -400,7 +400,7 @@
             <div :class="match.win ? 'bg-blue-500' : 'bg-red-500'" class="w-1.5 shrink-0"></div>
 
             <!-- My stats -->
-            <div class="flex items-center gap-4 px-4 py-4 border-r border-white/10 min-w-[200px]">
+            <div class="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-2.5 sm:py-4 border-r border-white/10 min-w-[160px] sm:min-w-[200px]">
               <div class="relative">
                 <img :src="championIconUrl(match.my_champion, ddragonVersion)" @error="championIconFallback"
                   class="w-12 h-12 rounded-lg" />
@@ -429,11 +429,12 @@
               </div>
             </div>
 
-            <!-- Arrow (solo si hay worst player a la derecha) -->
-            <div v-if="match.worst" class="flex items-center px-3 text-white/20 text-lg">→</div>
+            <!-- Arrow (solo si hay worst player a la derecha). Oculto en mobile
+                 para ganar ~28px horizontales que se notan en 375px. -->
+            <div v-if="match.worst" class="hidden sm:flex items-center px-3 text-white/20 text-lg">→</div>
 
             <!-- Non-ranked: raw stats card (sin worst player ni tumor) -->
-            <div v-if="!match.worst" class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
+            <div v-if="!match.worst" class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 flex-1 min-w-0">
               <span class="text-[10px] font-mono px-2 py-0.5 rounded border border-white/15 text-white/50 shrink-0">
                 {{ match.queue_name || 'NON-RANKED' }}
               </span>
@@ -465,7 +466,7 @@
             </div>
 
             <!-- Ranked: worst player + tumor -->
-            <div v-else class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
+            <div v-else class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 flex-1 min-w-0">
               <div class="relative shrink-0">
                 <img :src="championIconUrl(match.worst.campeon, ddragonVersion)" @error="championIconFallback"
                   class="w-11 h-11 rounded-lg" />
@@ -695,21 +696,11 @@
             <button @click="closeMatchDetail" class="text-white/40 hover:text-white text-xl transition">✕</button>
           </div>
 
-          <!-- Loading -->
-          <div v-if="loadingDetail" class="flex items-center justify-center py-16">
-            <div class="w-full max-w-md px-6">
-              <p class="text-white/50 font-mono text-xs text-center mb-5 animate-pulse" :key="loadingFlavor">{{ loadingFlavor }}</p>
-              <div class="space-y-2">
-                <div v-for="n in 5" :key="n" class="flex items-center gap-3 bg-white/5 rounded-lg p-3">
-                  <div class="w-9 h-9 rounded-lg bg-white/10 shimmer"></div>
-                  <div class="flex-1 space-y-1.5">
-                    <div class="h-2.5 bg-white/10 rounded shimmer" :style="{ width: `${55 + (n*7)%35}%` }"></div>
-                    <div class="h-2 bg-white/5 rounded shimmer" :style="{ width: `${30 + (n*11)%30}%` }"></div>
-                  </div>
-                  <div class="w-10 h-6 bg-white/10 rounded shimmer"></div>
-                </div>
-              </div>
-            </div>
+          <!-- Loading: skeleton de 2 equipos × 5 jugadores. Espacio fiel a la
+               estructura real para que el salto a data lograda sea suave. -->
+          <div v-if="loadingDetail" class="py-8 px-6">
+            <p class="text-white/50 font-mono text-xs text-center mb-5 animate-pulse" :key="loadingFlavor">{{ loadingFlavor }}</p>
+            <SkeletonCard variant="match-detail" />
           </div>
 
           <!-- Scorecard -->
@@ -1805,6 +1796,7 @@
 import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 import BetModal from './BetModal.vue'
 import BottomNav from './BottomNav.vue'
+import SkeletonCard from './SkeletonCard.vue'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
   EXCUSE_STARTERS, EXCUSE_REASONS, EXCUSE_ENDINGS,
