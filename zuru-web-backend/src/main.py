@@ -338,6 +338,42 @@ def _pred_db():
             CREATE INDEX IF NOT EXISTS idx_predictions_stats
             ON predictions(viewer_puuid, resolved, predicted_winner, created_at DESC)
         """)
+        # Tabla viewer_match_history: log persistente de las partidas que el
+        # viewer ha jugado, indexado por puuid+champion para queries de
+        # "lifetime stats con X champion" sin tener que re-fetchear de Riot
+        # cada vez. Se popula incrementalmente desde /getOverview (INSERT OR
+        # IGNORE — match_id+puuid es PK así que duplicados son idempotentes).
+        # Permite responder /championHistory en O(log N) gracias al índice.
+        _pred_conn.execute("""
+            CREATE TABLE IF NOT EXISTS viewer_match_history (
+                match_id TEXT NOT NULL,
+                viewer_puuid TEXT NOT NULL,
+                champion_name TEXT NOT NULL,
+                queue_id INTEGER,
+                game_date REAL NOT NULL,
+                game_duration INTEGER,
+                win INTEGER NOT NULL DEFAULT 0,
+                kills INTEGER NOT NULL DEFAULT 0,
+                deaths INTEGER NOT NULL DEFAULT 0,
+                assists INTEGER NOT NULL DEFAULT 0,
+                kda_ratio REAL,
+                cs INTEGER NOT NULL DEFAULT 0,
+                damage INTEGER NOT NULL DEFAULT 0,
+                vision_score INTEGER NOT NULL DEFAULT 0,
+                tumor_score REAL,
+                lane TEXT,
+                tier TEXT,
+                PRIMARY KEY (match_id, viewer_puuid)
+            )
+        """)
+        _pred_conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vmh_champion
+            ON viewer_match_history(viewer_puuid, champion_name, game_date DESC)
+        """)
+        _pred_conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vmh_recent
+            ON viewer_match_history(viewer_puuid, game_date DESC)
+        """)
         if os.path.exists(PREDICTIONS_FILE):
             try:
                 with open(PREDICTIONS_FILE, "r") as f:
@@ -605,6 +641,51 @@ def get_live_snapshot(match_id):
         return json.loads(row[0])
     except Exception:
         return None
+
+
+def viewer_match_history_add(
+    match_id, viewer_puuid, champion_name, queue_id, game_date,
+    *, game_duration=None, win=False, kills=0, deaths=0, assists=0,
+    kda_ratio=None, cs=0, damage=0, vision_score=0, tumor_score=None,
+    lane=None, tier=None,
+):
+    """Persist a single viewer's match summary. INSERT OR IGNORE: idempotente
+    sobre (match_id, viewer_puuid) PK. Llamado desde el procesamiento de
+    /getOverview por cada partida del user — barato (~1µs), nunca tira.
+
+    Sin esto, los stats per-champion estaban limitados al window de 20-30
+    matches que /getOverview pide a Riot. Ahora acumulamos histórico real
+    persistente. /championHistory consulta esto.
+    """
+    if not match_id or not viewer_puuid or not champion_name:
+        return
+    # Validar game_date: si Riot devolvió gameCreation=0 (response malformada
+    # rara pero observada en API instability), skipeamos en vez de meter una
+    # fila con game_date=0 (epoch 1970) que contaminaría agregaciones.
+    try:
+        if not game_date or float(game_date) <= 0:
+            return
+    except (TypeError, ValueError):
+        return
+    try:
+        db = _pred_db()
+        db.execute(
+            """INSERT OR IGNORE INTO viewer_match_history
+                (match_id, viewer_puuid, champion_name, queue_id, game_date,
+                 game_duration, win, kills, deaths, assists, kda_ratio,
+                 cs, damage, vision_score, tumor_score, lane, tier)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                match_id, viewer_puuid, champion_name, queue_id, float(game_date),
+                game_duration, 1 if win else 0,
+                int(kills), int(deaths), int(assists), kda_ratio,
+                int(cs), int(damage), int(vision_score),
+                tumor_score, lane, tier,
+            ),
+        )
+    except Exception:
+        # nice-to-have, no rompe el flow del caller si falla.
+        pass
 
 
 def predictions_add(entry):
@@ -1309,6 +1390,22 @@ def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
                     "my_vision": my_data.get("visionScore", 0),
                     "worst": None,  # raw mode: no worst player
                 })
+                # Persist en history (non-ranked: sin tumor_score). queue_id
+                # se filtra en query si quieres separar SoloQ del resto.
+                viewer_match_history_add(
+                    match_id=match_id, viewer_puuid=puuid,
+                    champion_name=my_data["championName"],
+                    queue_id=match_queue_id,
+                    game_date=info.get("gameCreation", 0) / 1000.0,
+                    game_duration=game_duration, win=my_data["win"],
+                    kills=my_data["kills"], deaths=my_data["deaths"], assists=my_data["assists"],
+                    kda_ratio=round(my_kda, 2),
+                    cs=my_cs, damage=my_data["totalDamageDealtToChampions"],
+                    vision_score=my_data.get("visionScore", 0),
+                    tumor_score=None,
+                    lane=my_data.get("teamPosition") or None,
+                    tier=tier,
+                )
                 continue
 
             # === Path normal (queue ranked): tumor + worst player ===
@@ -1393,6 +1490,35 @@ def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
                 "my_damage": my_data["totalDamageDealtToChampions"],
                 "worst": worst_dict,
             })
+            # Persist viewer's match en history para queries lifetime.
+            # Calculamos el tumor del propio viewer (no del worst) — si soy
+            # el worst este número coincide con worst_dict.tumor_score, si no
+            # mide mi performance al margen de quién fue el peor del equipo.
+            my_role = my_data.get("teamPosition") or "DEFAULT"
+            my_stats_for_tumor = {
+                "kills": my_data["kills"], "deaths": my_data["deaths"],
+                "assists": my_data["assists"], "cs": my_cs,
+                "damage": my_data["totalDamageDealtToChampions"],
+                "vision_score": my_data.get("visionScore", 0),
+                "wards_placed": my_data.get("wardsPlaced", 0),
+                "champ_level": my_data.get("champLevel", 0),
+                "time_dead": my_data.get("totalTimeSpentDead", 0),
+            }
+            my_tumor = calculate_tumor_score(my_stats_for_tumor, game_duration, tier, my_role)
+            viewer_match_history_add(
+                match_id=match_id, viewer_puuid=puuid,
+                champion_name=my_data["championName"],
+                queue_id=match_queue_id,
+                game_date=info.get("gameCreation", 0) / 1000.0,
+                game_duration=game_duration, win=my_data["win"],
+                kills=my_data["kills"], deaths=my_data["deaths"], assists=my_data["assists"],
+                kda_ratio=round(my_kda, 2),
+                cs=my_cs, damage=my_data["totalDamageDealtToChampions"],
+                vision_score=my_data.get("visionScore", 0),
+                tumor_score=my_tumor,
+                lane=my_role if my_role != "DEFAULT" else None,
+                tier=tier,
+            )
 
         summoner_key = f"{account['gameName']}#{account['tagLine']}"
 
@@ -1415,6 +1541,10 @@ def get_overview(game_name, tag_line, start=0, tier_override=None, queue=None):
             "matches": matches_overview,
             "has_more": len(match_ids) == MATCHES_COUNT,
             "alerts": alerts,
+            # puuid del viewer: lo necesita el frontend para llamar a
+            # /championHistory (lifetime stats). Es el mismo puuid de Riot
+            # del usuario cuyas matches son las que listamos arriba.
+            "viewer_puuid": puuid,
         }
 
     except Exception as e:
@@ -5294,6 +5424,108 @@ def _auto_resolve_orphan_bets(max_matches=20):
 _PREDSTATS_SWEEP_LOCK = threading.Lock()
 _PREDSTATS_LAST_SWEEP = {"ts": 0.0}
 PREDSTATS_SWEEP_INTERVAL = 30.0  # segundos entre sweeps globales
+
+
+@app.route('/championHistory', methods=['GET'])
+def champion_history_endpoint():
+    """Lifetime stats persistidos del viewer + un champion específico.
+
+    Lee de viewer_match_history (acumulada a partir de /getOverview) sin
+    pegar a Riot — el endpoint anterior /playerAnalytics estaba capado a
+    las últimas ~30 partidas vía API. Aquí podemos devolver miles de
+    rows si el user lleva semanas en la app.
+
+    Params:
+        viewer_puuid (str, required) — id del viewer
+        champion (str, required) — nombre canónico del champion
+        limit (int, opt, default 30) — cuántas partidas recientes devolver
+
+    Returns:
+        {
+          total_games, total_wins, lifetime_winrate, avg_kda, avg_tumor,
+          avg_cs, avg_damage, avg_vision,
+          recent_matches: [{match_id, game_date, win, kda, kills, deaths,
+                            assists, cs, damage, vision, tumor_score, lane,
+                            queue_id, game_duration}]
+        }
+    """
+    viewer_puuid = (request.args.get("viewer_puuid") or "").strip()
+    champion = (request.args.get("champion") or "").strip()
+    try:
+        limit = int(request.args.get("limit", 30))
+    except (TypeError, ValueError):
+        limit = 30
+    if limit < 1:
+        limit = 1
+    if limit > 200:
+        limit = 200
+    if not viewer_puuid or not champion:
+        return jsonify({"error": "viewer_puuid and champion required"}), 400
+
+    db = _pred_db()
+    # Aggregate query — un solo round-trip a la DB. SUM y AVG ignoran NULL,
+    # así que matches sin tumor (non-ranked) no inflan ni la media ni el count.
+    agg = db.execute(
+        """SELECT
+            COUNT(*) AS games,
+            SUM(win) AS wins,
+            AVG(kda_ratio) AS avg_kda,
+            AVG(tumor_score) AS avg_tumor,
+            AVG(cs) AS avg_cs,
+            AVG(damage) AS avg_damage,
+            AVG(vision_score) AS avg_vision
+           FROM viewer_match_history
+           WHERE viewer_puuid=? AND champion_name=?""",
+        (viewer_puuid, champion),
+    ).fetchone()
+    total_games = int(agg[0] or 0)
+    total_wins = int(agg[1] or 0)
+    if total_games == 0:
+        return jsonify({
+            "champion": champion,
+            "total_games": 0, "total_wins": 0,
+            "lifetime_winrate": None, "avg_kda": None, "avg_tumor": None,
+            "avg_cs": None, "avg_damage": None, "avg_vision": None,
+            "recent_matches": [],
+        })
+
+    cur = db.execute(
+        """SELECT match_id, game_date, win, kills, deaths, assists, kda_ratio,
+                  cs, damage, vision_score, tumor_score, lane, queue_id,
+                  game_duration
+           FROM viewer_match_history
+           WHERE viewer_puuid=? AND champion_name=?
+           ORDER BY game_date DESC
+           LIMIT ?""",
+        (viewer_puuid, champion, limit),
+    )
+    recent = []
+    for r in cur.fetchall():
+        recent.append({
+            "match_id": r[0],
+            "game_date": r[1],
+            "win": bool(r[2]),
+            "kills": r[3], "deaths": r[4], "assists": r[5],
+            "kda": r[6],
+            "cs": r[7], "damage": r[8], "vision": r[9],
+            "tumor_score": r[10],
+            "lane": r[11],
+            "queue_id": r[12],
+            "game_duration": r[13],
+        })
+
+    return jsonify({
+        "champion": champion,
+        "total_games": total_games,
+        "total_wins": total_wins,
+        "lifetime_winrate": round(total_wins / total_games * 100, 1),
+        "avg_kda": round(float(agg[2]), 2) if agg[2] is not None else None,
+        "avg_tumor": round(float(agg[3])) if agg[3] is not None else None,
+        "avg_cs": round(float(agg[4])) if agg[4] is not None else None,
+        "avg_damage": round(float(agg[5])) if agg[5] is not None else None,
+        "avg_vision": round(float(agg[6])) if agg[6] is not None else None,
+        "recent_matches": recent,
+    })
 
 
 @app.route('/predictionStats', methods=['GET'])

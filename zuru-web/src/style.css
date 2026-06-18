@@ -1,4 +1,38 @@
 @import "tailwindcss";
+
+/* =============================================================================
+ * Theme accent utilities — propagan --theme-accent (CSS var seteada en App
+ * y Overview desde el theme actual del user) a borders, backgrounds, text y
+ * focus rings sin que cada componente tenga que hacer arbitrary-value
+ * Tailwind con color-mix verboso.
+ *
+ * Patrón: opacity-controlled vía color-mix. Si el browser no soporta
+ * color-mix (cae cuota raros), el fallback es el theme-accent sólido —
+ * peor UX pero no roto.
+ * ============================================================================ */
+@layer utilities {
+  .text-accent          { color: var(--theme-accent, #c89b3c); }
+  .bg-accent-10         { background-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 10%, transparent); }
+  .bg-accent-15         { background-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 15%, transparent); }
+  .bg-accent-20         { background-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 20%, transparent); }
+  .border-accent-20     { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 20%, transparent); }
+  .border-accent-30     { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 30%, transparent); }
+  .border-accent-40     { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 40%, transparent); }
+  .border-accent-50     { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 50%, transparent); }
+  .border-accent-60     { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 60%, transparent); }
+  .ring-accent-30       { --tw-ring-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 30%, transparent); }
+  .ring-accent-50       { --tw-ring-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 50%, transparent); }
+
+  .hover\:text-accent:hover         { color: var(--theme-accent, #c89b3c); }
+  .hover\:bg-accent-10:hover        { background-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 10%, transparent); }
+  .hover\:bg-accent-15:hover        { background-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 15%, transparent); }
+  .hover\:border-accent-30:hover    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 30%, transparent); }
+  .hover\:border-accent-40:hover    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 40%, transparent); }
+  .hover\:border-accent-50:hover    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 50%, transparent); }
+
+  .focus\:border-accent-60:focus    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 60%, transparent); }
+}
+
 /*
 :root {
   --text: #6b6375;

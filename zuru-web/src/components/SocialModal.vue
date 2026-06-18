@@ -3,7 +3,7 @@
   <Transition name="modal">
     <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-3xl max-h-[88vh] flex flex-col">
+      <div class="bg-[#0d1b2a] border border-accent-30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-3xl max-h-[88vh] flex flex-col">
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
             <span>🌐</span><span>{{ $t('social.title') }}</span>
@@ -15,7 +15,7 @@
         <div class="flex gap-1 px-5 py-2 border-b border-white/10">
           <button v-for="tab in tabs" :key="tab.key" @click="active = tab.key"
             :class="active === tab.key
-              ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50'
+              ? 'bg-accent-15 text-accent border-accent-50'
               : 'text-white/40 border-transparent hover:text-white/70'"
             class="text-xs font-mono px-3 py-1.5 rounded border transition">
             {{ tab.label }}
@@ -54,7 +54,7 @@
             <div class="flex gap-1 mb-3">
               <button v-for="lk in leaderboardKinds" :key="lk.key" @click="lbKind = lk.key; loadLeaderboard()"
                 :class="lbKind === lk.key
-                  ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50'
+                  ? 'bg-accent-15 text-accent border-accent-50'
                   : 'text-white/40 border-transparent hover:text-white/70'"
                 class="text-[10px] font-mono px-2 py-1 rounded border transition">
                 {{ lk.label }}
@@ -289,7 +289,7 @@
               <div v-if="newChallengeFormat === 'single'" class="mb-2">
                 <label class="text-white/40 text-[9px] font-mono tracking-widest">ESTADÍSTICA A COMPARAR</label>
                 <select v-model="newChallengeStat"
-                  class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1">
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-accent-60 focus:outline-none mt-1">
                   <option value="kda">📊 KDA</option>
                   <option value="kills">🗡 Kills</option>
                   <option value="deaths">💀 Deaths ({{ $t('social.lower_wins_label') }})</option>
@@ -306,7 +306,7 @@
                 <div>
                   <label class="text-white/40 text-[9px] font-mono tracking-widest">RIVAL</label>
                   <select v-model="newChallengeRival"
-                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1">
+                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-accent-60 focus:outline-none mt-1">
                     <option :value="null">🌐 Cualquiera (share code)</option>
                     <option v-for="f in friends" :key="f.id || f.user_id" :value="f.id || f.user_id">
                       👤 {{ f.username }}
@@ -316,7 +316,7 @@
                 <div>
                   <label class="text-white/40 text-[9px] font-mono tracking-widest">STAKE TC</label>
                   <input type="number" v-model.number="newChallengeAmount" :min="10"
-                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none mt-1"
+                    class="w-full bg-black/40 border border-white/15 rounded-lg px-2 py-1.5 text-white font-mono text-xs focus:border-accent-60 focus:outline-none mt-1"
                     :placeholder="$t('social.stake_placeholder')" />
                 </div>
               </div>
@@ -443,7 +443,7 @@
                 <!-- Submit match (legacy single) -->
                 <div v-if="challengeNeedsSubmit(c)" class="flex gap-2 mt-2">
                   <input v-model="matchIdInput" placeholder="EUW1_1234567890"
-                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-yellow-500/60 focus:outline-none" />
+                    class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-[11px] focus:border-accent-60 focus:outline-none" />
                   <button @click="onSubmitMatch(c)" :disabled="!matchIdInput.trim() || submittingMatchFor === c.share_code"
                     class="text-[10px] font-mono px-2 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded">
                     {{ submittingMatchFor === c.share_code ? '...' : $t('social.submit') }}
@@ -513,7 +513,7 @@
             <div class="flex gap-2 mb-4">
               <input v-model="friendSearchInput" placeholder="Riot ID (Nombre#TAG)"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                class="flex-1 bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none" />
+                class="flex-1 bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-accent-60 focus:outline-none" />
               <button @click="onAddFriend" :disabled="addingFriend"
                 class="text-xs font-mono px-3 py-2 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-30 text-black font-bold rounded-lg">
                 {{ addingFriend ? '...' : '+ Añadir' }}
@@ -560,7 +560,7 @@
                   <p class="text-yellow-400 text-[10px] font-mono tracking-widest mb-2">+ CREAR SALA</p>
                   <div class="flex gap-2">
                     <input v-model="newRoomName" placeholder="Nombre opcional" maxlength="40"
-                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1.5 text-white font-mono text-xs focus:border-accent-60 focus:outline-none" />
                     <button @click="onCreateRoom"
                       class="text-xs font-mono px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-black font-bold rounded">
                       Crear
@@ -681,9 +681,9 @@
                 <div v-if="isRoomOwner" class="bg-black/40 border border-white/10 rounded-lg p-2 mb-3">
                   <div class="flex gap-2 items-center">
                     <input type="number" v-model.number="newPoolStake" :min="10" placeholder="Stake TC"
-                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                      class="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-accent-60 focus:outline-none" />
                     <select v-model.number="newPoolHours"
-                      class="bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none">
+                      class="bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-accent-60 focus:outline-none">
                       <option :value="6">6h</option>
                       <option :value="12">12h</option>
                       <option :value="24">24h</option>

@@ -3,7 +3,7 @@
   <Transition name="modal">
     <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col">
+      <div class="bg-[#0d1b2a] border border-accent-30 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-2xl max-h-[85vh] flex flex-col">
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div>
@@ -23,7 +23,7 @@
         <!-- Filtro -->
         <div class="flex gap-1 px-5 py-2 border-b border-white/5">
           <button v-for="f in filters" :key="f.key" @click="filter = f.key"
-            :class="filter === f.key ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50' : 'text-white/40 border-transparent hover:text-white/70'"
+            :class="filter === f.key ? 'bg-accent-15 text-accent border-accent-50' : 'text-white/40 border-transparent hover:text-white/70'"
             class="text-[11px] font-mono px-2.5 py-1 rounded border transition">
             {{ f.label }}
           </button>
