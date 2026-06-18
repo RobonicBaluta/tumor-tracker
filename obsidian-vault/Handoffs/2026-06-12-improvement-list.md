@@ -148,10 +148,30 @@ status: en ejecución
 - [x] 🎨 #9 Skeleton loaders — `SkeletonCard.vue` con variants match-detail (2 equipos × 5 filas) y match-row. Wired al loadingDetail del match modal.
 - [x] 📱 #43 match cards densidad mobile — px/py/gap responsivos (sm:px-4 vs px-3), arrow divider oculta en `<sm`, space-y-2.5 entre cards (vs 4 desktop). Reducción ~120px scroll en feed típico de 20 partidas.
 
+### Sesión 2026-06-18 (continuación 4) — fase fun + polish
+
+- [x] 🎨 #13 confetti en prediction streak ≥3 — `canvas-confetti` lazy-import,
+  helper `fireStreakConfetti` (130 particles + segunda salva 60p), throttle
+  por matchId. Fix bug latente en `fetchPredictionStats` que devolvía streak
+  global porque `(summoner.value as any).puuid` siempre era undefined.
+- [x] 🎨 #10 microanimaciones — `useCountUp` composable + `TumorScoreCounter.vue`
+  wrapper (rAF, ease-out cubic, ~700ms). Wired en live game team scores +
+  match worst score. Hover scale `hover:scale-110` en live game champion
+  icons + `group-hover:scale-105` en match card icon.
+- [x] 📱 #42 pull-to-refresh — `usePullToRefresh` composable (touch-only,
+  threshold 70px, resistencia 0.55, snap-back). Indicator con rotation
+  proporcional al progress + spinner refrescando. Wire en Overview root.
+- [x] 🐛 #25 bravery refund en toggle off — `refund_room_bravery_locks` con
+  optimistic locking (UPDATE ... WHERE status='pending' + rowcount check)
+  para evitar double-credit en race concurrente. Notif push a cada user
+  afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
+  multi-lock-per-user, cross-room aislamiento.
+
 ### Siguiente sesión
 
-- [ ] ⚡ #16 code-split Overview.vue (ya en 150KB, en crecimiento)
-- [ ] 📱 #42 pull-to-refresh en match list (gesture handler)
-- [ ] 🎨 #10 microanimaciones: count-up tumor scores, hover scale en icons
-- [ ] 🎨 #13 confetti en streak ≥3 (canvas-confetti)
-- [ ] 🐛 #25 cancel/refund bravery toggle off con locks pending
+- [ ] ⚡ #16 code-split Overview.vue (~154KB ahora, en crecimiento — necesita
+  design work para extraer LiveGameModal/AnalyticsModal sin prop drilling)
+- [ ] 🎨 #11 theme auto según role detectado (top→púrpura, jg→verde, etc.)
+- [ ] 🎨 #15 "Compartir como GIF animado" — card con tumor counter 0→valor
+- [ ] 🚀 #31 stats con champion al click en icon (modal con WR/KDA/tumor)
+- [ ] 🐛 #24 daily next_claim_at re-fetch (verificar fix anterior funciona)

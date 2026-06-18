@@ -1,6 +1,24 @@
 <template>
-  <div class="flex-1 flex flex-col overflow-y-auto relative"
+  <div ref="scrollContainerRef" class="flex-1 flex flex-col overflow-y-auto relative"
     :style="{ background: `linear-gradient(to bottom right, ${theme.from}, ${theme.to})` }">
+
+    <!-- Pull-to-refresh indicator (mobile-only por la composable, que sólo
+         escucha touch). Aparece colgando del top con altura proporcional al
+         pull y un spinner que rota con el progress. -->
+    <div v-show="pullDistance > 0 || isPullRefreshing"
+      class="absolute top-0 left-0 right-0 z-30 flex items-end justify-center pointer-events-none overflow-hidden"
+      :style="{ height: `${Math.max(pullDistance, isPullRefreshing ? 56 : 0)}px` }">
+      <div class="pb-1 flex flex-col items-center gap-1">
+        <span class="text-lg leading-none"
+          :class="isPullRefreshing ? 'animate-spin' : ''"
+          :style="!isPullRefreshing ? { transform: `rotate(${pullProgress * 180}deg)` } : {}">
+          ↻
+        </span>
+        <span class="text-[10px] font-mono text-white/50 uppercase tracking-wide">
+          {{ isPullRefreshing ? 'Refrescando…' : (pullProgress >= 1 ? 'Suelta' : 'Tira') }}
+        </span>
+      </div>
+    </div>
 
     <!-- X-Ray scanning overlay -->
     <Transition name="xray">
@@ -384,7 +402,7 @@
       <!-- Match list -->
       <div class="space-y-2.5 sm:space-y-4 flex-1 min-w-0">
         <div v-for="(match, index) in filteredMatches" :key="match.match_id"
-          class="relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
+          class="group relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
           :style="{ animationDelay: `${Math.min(index * 55, 550)}ms` }"
           @click="openMatchDetail(match.match_id)">
 
@@ -403,7 +421,7 @@
             <div class="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-2.5 sm:py-4 border-r border-white/10 min-w-[160px] sm:min-w-[200px]">
               <div class="relative">
                 <img :src="championIconUrl(match.my_champion, ddragonVersion)" @error="championIconFallback"
-                  class="w-12 h-12 rounded-lg" />
+                  class="w-12 h-12 rounded-lg transition-transform duration-200 group-hover:scale-105" />
                 <span :class="match.win ? 'bg-blue-500' : 'bg-red-500'"
                   class="absolute -bottom-1 -right-1 text-white text-[9px] font-bold px-1 rounded font-mono">
                   {{ match.win ? 'W' : 'L' }}
@@ -530,7 +548,9 @@
 
               <!-- Tumor score + watch -->
               <div class="shrink-0 flex flex-col items-center justify-center gap-2 pl-3 border-l border-white/10 min-w-[64px]">
-                <p :class="tumorColor(match.worst.tumor_score)" class="text-2xl font-black font-mono">{{ match.worst.tumor_score }}</p>
+                <p :class="tumorColor(match.worst.tumor_score)" class="text-2xl font-black font-mono">
+                  <TumorScoreCounter :value="match.worst.tumor_score" />
+                </p>
                 <p :class="tumorColor(match.worst.tumor_score)" class="text-[9px] font-mono font-bold text-center leading-tight">{{ tumorLabel(match.worst.tumor_score) }}</p>
                 <button v-if="!match.worst_is_me" @click.stop="toggleWatch(match.worst.nombre)"
                   :class="isWatched(match.worst.nombre) ? 'text-orange-400 border-orange-500/40' : 'text-white/20 border-white/10 hover:text-orange-300 hover:border-orange-500/30'"
@@ -1028,7 +1048,7 @@
                       <img v-if="champData[String(p.champion_id)]"
                         :src="championIconUrl(champData[String(p.champion_id)], ddragonVersion)"
                         @error="championIconFallback"
-                        class="w-12 h-12 rounded-lg border border-white/20" />
+                        class="w-12 h-12 rounded-lg border border-white/20 transition-transform duration-200 hover:scale-110" />
                       <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
                         <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
                         <img v-if="p.spell2_id && spellIconUrl(p.spell2_id)" :src="spellIconUrl(p.spell2_id)" class="w-4 h-4 rounded-sm border border-black/60" />
@@ -1083,7 +1103,10 @@
                     </div>
                     <div class="text-right flex flex-col items-end gap-0.5">
                       <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
-                        {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
+                        <template v-if="typeof p.avg_tumor_score === 'number'">
+                          <TumorScoreCounter :value="p.avg_tumor_score" />{{ p.score_is_team_avg ? '*' : '' }}
+                        </template>
+                        <template v-else>?</template>
                       </p>
                       <p class="text-white/30 text-[9px] font-mono">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
                       <button v-if="canBetPlayer(p)" @click.stop="openPlayerBet(p)"
@@ -1111,7 +1134,7 @@
                       <img v-if="champData[String(p.champion_id)]"
                         :src="championIconUrl(champData[String(p.champion_id)], ddragonVersion)"
                         @error="championIconFallback"
-                        class="w-12 h-12 rounded-lg border border-white/20" />
+                        class="w-12 h-12 rounded-lg border border-white/20 transition-transform duration-200 hover:scale-110" />
                       <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
                         <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
                         <img v-if="p.spell2_id && spellIconUrl(p.spell2_id)" :src="spellIconUrl(p.spell2_id)" class="w-4 h-4 rounded-sm border border-black/60" />
@@ -1166,7 +1189,10 @@
                     </div>
                     <div class="text-right flex flex-col items-end gap-0.5">
                       <p :class="[tumorColor(p.avg_tumor_score ?? 0), p.score_is_team_avg ? 'opacity-60 italic' : '']" class="text-2xl font-mono font-bold leading-none">
-                        {{ p.avg_tumor_score ?? '?' }}{{ p.score_is_team_avg ? '*' : '' }}
+                        <template v-if="typeof p.avg_tumor_score === 'number'">
+                          <TumorScoreCounter :value="p.avg_tumor_score" />{{ p.score_is_team_avg ? '*' : '' }}
+                        </template>
+                        <template v-else>?</template>
                       </p>
                       <p class="text-white/30 text-[9px] font-mono">{{ p.score_is_team_avg ? 'media equipo' : tumorLabel(p.avg_tumor_score ?? 0) }}</p>
                       <button v-if="canBetPlayer(p)" @click.stop="openPlayerBet(p)"
@@ -1797,6 +1823,8 @@ import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 import BetModal from './BetModal.vue'
 import BottomNav from './BottomNav.vue'
 import SkeletonCard from './SkeletonCard.vue'
+import TumorScoreCounter from './TumorScoreCounter.vue'
+import { usePullToRefresh } from '../composables/usePullToRefresh'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
   EXCUSE_STARTERS, EXCUSE_REASONS, EXCUSE_ENDINGS,
@@ -2024,6 +2052,21 @@ const matches = ref<MatchOverview[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
 const scanning = ref(false)
+
+// Pull-to-refresh (sólo mobile, la composable sólo escucha touchstart/move/end).
+// El refresh() se referencia tarde porque está declarado más abajo en este
+// script. Como onTouchEnd corre tras un gesto real del user, refresh ya
+// estará en el closure scope para entonces.
+const scrollContainerRef = ref<HTMLDivElement | null>(null)
+const {
+  pullDistance,
+  isRefreshing: isPullRefreshing,
+  progress: pullProgress,
+} = usePullToRefresh(
+  () => scrollContainerRef.value,
+  () => refresh(),
+  { disabled: loading, threshold: 70 },
+)
 
 const loadingFlavor = ref(LOADING_FLAVORS[0])
 const profileUrl = (nombre: string) => {
@@ -3403,10 +3446,13 @@ watch(() => liveGame.value?.match_id, () => {
   checkExistingPlayerBet()
 })
 
-const fetchPredictionStats = async () => {
+// summoner.value es un STRING ("name#tag"), no un objeto — el código viejo
+// `(summoner.value as any)?.puuid` siempre era undefined y caía al endpoint
+// global, devolviendo current_streak agregado de todos los users. El caller
+// que tiene un puuid (ej. resolveLivePrediction → liveGame.viewer_puuid) lo
+// pasa explícito y obtenemos stats del user real.
+const fetchPredictionStats = async (puuid?: string | null) => {
   try {
-    // Si tenemos puuid del summoner cargado, pedir stats per-user (con streak)
-    const puuid = (summoner.value as any)?.puuid
     const url = puuid
       ? `${API_BASE}/predictionStats?viewer_puuid=${encodeURIComponent(puuid)}`
       : `${API_BASE}/predictionStats`
@@ -3804,6 +3850,42 @@ onMounted(() => { checkBetHash() })
 window.addEventListener('hashchange', checkBetHash)
 const resolving = ref(false)
 
+// Confeti en streak ≥ 3 — gold/green/cyan, burst centro-superior ~3s.
+// Lazy-import canvas-confetti para no inflar el initial bundle (este path
+// se ejecuta tras una predicción acertada, no en cada render).
+let _lastConfettiMatchId: string | null = null
+async function fireStreakConfetti() {
+  try {
+    const mod = await import('canvas-confetti')
+    const confetti = mod.default
+    confetti({
+      particleCount: 130,
+      spread: 75,
+      origin: { x: 0.5, y: 0.35 },
+      startVelocity: 45,
+      gravity: 0.85,
+      ticks: 280,
+      decay: 0.94,
+      colors: ['#c89b3c', '#22c55e', '#22d3ee', '#fbbf24'],
+    })
+    // Segunda salva más pequeña para "celebración doble".
+    setTimeout(() => {
+      confetti({
+        particleCount: 60,
+        spread: 100,
+        origin: { x: 0.5, y: 0.4 },
+        startVelocity: 30,
+        gravity: 0.9,
+        ticks: 220,
+        colors: ['#c89b3c', '#22c55e'],
+      })
+    }, 200)
+  } catch {
+    // Confetti es eye candy — si falla la import o el browser bloquea
+    // canvas (rare), no rompemos la app.
+  }
+}
+
 const resolveLivePrediction = async () => {
   if (!liveGame.value?.match_id || !liveGame.value?.viewer_puuid) return
   resolving.value = true
@@ -3824,9 +3906,23 @@ const resolveLivePrediction = async () => {
         actual: data.actual_winner,
         correct: data.correct,
       }
-      fetchPredictionStats()
-      // Push notificación inmediata
       const matchId = liveGame.value?.match_id || ''
+      const viewerPuuid = liveGame.value?.viewer_puuid || null
+      // Await para que current_streak esté actualizado cuando decidamos
+      // si lanzar el confeti. Pasamos viewer_puuid explícito — sin él el
+      // endpoint /predictionStats devuelve agregado global y el streak no
+      // sería del user actual.
+      await fetchPredictionStats(viewerPuuid)
+      // Confeti SOLO si acertó Y lleva racha ≥ 3. Throttle por match_id
+      // para evitar múltiples disparos si el user resuelve dos veces.
+      if (data.correct && matchId) {
+        const streak = (predictionStats.value as any)?.current_streak ?? 0
+        if (streak >= 3 && _lastConfettiMatchId !== matchId) {
+          _lastConfettiMatchId = matchId
+          fireStreakConfetti()
+        }
+      }
+      // Push notificación inmediata
       fetchWorstChampion(matchId).then(champ => {
         pushNotification({
           id: `pred-${matchId}`,

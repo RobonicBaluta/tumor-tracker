@@ -3743,6 +3743,13 @@ def rooms_bravery_toggle(code):
         return jsonify({"error": "Sólo el dueño puede activar Bravery"}), 403
     data = request.get_json(silent=True) or {}
     target = bool(data.get("active", not room["bravery_active"]))
+    # Refund los locks pending ANTES del set_room_bravery: si el toggle off
+    # es lo que pasa, queremos devolver TC a los usuarios con setup lockeado
+    # que ya no podrán resolverlo. Si bravery_active ya era False, no hay
+    # locks pending (no se pueden crear sin la sala activa) — skip.
+    refund_summary = None
+    if not target and room["bravery_active"]:
+        refund_summary = _users.refund_room_bravery_locks(room["id"], reason="room toggle off")
     updated = _users.set_room_bravery(room["id"], target)
     # Notificar a miembros si se activa
     if target and not room["bravery_active"]:
@@ -3760,6 +3767,21 @@ def rooms_bravery_toggle(code):
                         body="Entra y lockea tu setup",
                         link="#/social", icon="🎲",
                     )
+            except Exception:
+                pass
+    # Notificar a cada usuario afectado por el refund (después del toggle off).
+    # Push notif separada para que el user sepa que su TC vuelve y por qué.
+    if refund_summary and refund_summary["refunded_count"] > 0:
+        room_label = room.get("name") or room["code"]
+        for affected_user_id, stake in refund_summary["affected_users"].items():
+            try:
+                _users.push_notification(
+                    user_id=affected_user_id,
+                    notif_type="bravery_room_cancelled",
+                    title=f"🎲 Bravery cancelado en {room_label}",
+                    body=f"Te devolvemos {stake} TC al saldo",
+                    link="#/social", icon="🎲",
+                )
             except Exception:
                 pass
     return jsonify(updated)
