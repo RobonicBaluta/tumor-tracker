@@ -446,11 +446,16 @@
       <!-- Match list -->
       <div class="space-y-2.5 sm:space-y-4 flex-1 min-w-0">
         <div v-for="(match, index) in filteredMatches" :key="match.match_id"
-          class="group relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
+          class="group relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 focus:border-accent focus:outline-none transition cursor-pointer"
           :style="{ animationDelay: `${Math.min(index * 55, 550)}ms` }"
+          tabindex="0"
           @click="openMatchDetail(match.match_id)"
+          @keydown.enter="openMatchDetail(match.match_id)"
+          @keydown.space.prevent="openMatchDetail(match.match_id)"
           @mouseenter="onMatchHoverEnter(match, $event)"
-          @mouseleave="onMatchHoverLeave">
+          @mouseleave="onMatchHoverLeave"
+          @focusin="onMatchHoverEnter(match, $event)"
+          @focusout="onMatchHoverLeave">
 
           <!-- Remake overlay -->
           <div v-if="match.game_duration < 300"
@@ -2354,9 +2359,13 @@ const hoverMatch = ref<MatchOverview | null>(null)
 const hoverAnchorRect = ref<{ left: number; top: number; right: number; bottom: number } | null>(null)
 let hoverShowTimer: number | null = null
 const HOVER_DELAY_MS = 250
-function onMatchHoverEnter(match: MatchOverview, e: MouseEvent) {
+function onMatchHoverEnter(match: MatchOverview, e: Event) {
   // Touch devices: el event sigue siendo "mouseenter" en algunos browsers
   // pero no queremos preview en touch. Si el último input fue touch, skip.
+  // Para focusin (keyboard nav) el mismo gate aplica — un user con keyboard
+  // físico no es touch-only, así que (hover: none) será false. Si llega
+  // focusin desde un screen-reader táctil, mejor no mostrar el popup
+  // porque no le ayuda.
   if ((window as any).matchMedia?.('(hover: none)').matches) return
   if (hoverShowTimer != null) window.clearTimeout(hoverShowTimer)
   const target = e.currentTarget as HTMLElement

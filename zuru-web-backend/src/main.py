@@ -843,6 +843,37 @@ def load_recent():
         return json.load(f)
 
 
+# mtime-keyed cache para hot-paths como /search/summoners donde el mismo
+# JSON se lee múltiples veces por segundo. El mtime de Python en Windows
+# tiene granularidad de ~1ms — suficiente para invalidar correctamente
+# cuando save_recent/save_saved_accounts escriben.
+_FILE_CACHE: dict = {}  # path -> {mtime, data}
+_FILE_CACHE_LOCK = threading.Lock()
+
+def _cached_file_list(path):
+    """Lee `path` y devuelve una list[str]. Cacheada por mtime. Devuelve []
+    si el archivo no existe o no parsea. Thread-safe (Render con threads
+    paralelos podría pegarse a 2 lectores simultáneos del mismo archivo)."""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return []
+    with _FILE_CACHE_LOCK:
+        cached = _FILE_CACHE.get(path)
+        if cached and cached.get("mtime") == mtime:
+            return cached["data"]
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            data = []
+    except Exception:
+        data = []
+    with _FILE_CACHE_LOCK:
+        _FILE_CACHE[path] = {"mtime": mtime, "data": data}
+    return data
+
+
 def save_recent(summoner: str):
     recent = load_recent()
     recent = [s for s in recent if s != summoner]
@@ -944,16 +975,18 @@ def search_summoners():
 
     candidates = set()
 
-    # 1) Recent summoners (todos los users del proceso).
+    # 1) Recent summoners (todos los users del proceso). mtime-cache para
+    # evitar leer el JSON desde disco en cada keystroke con el debounce
+    # del autocomplete activo (bug LOW cazado por review).
     try:
-        for s in load_recent():
+        for s in _cached_file_list(RECENT_FILE):
             if s: candidates.add(s)
     except Exception:
         pass
 
     # 2) Saved accounts.
     try:
-        for s in load_saved_accounts():
+        for s in _cached_file_list(SAVED_ACCOUNTS_FILE):
             if s: candidates.add(s)
     except Exception:
         pass
@@ -1341,8 +1374,20 @@ def get_compare_n(riot_ids):
         # partidas recientes primero. Sin ordenar, la iteración de set
         # variaba entre llamadas y la UI veía orden no determinista
         # (bug LOW cazado por review).
-        for match_id in sorted(common, reverse=True):
-            mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+        ordered = sorted(common, reverse=True)
+
+        # Fetch paralelo de match details. riot_get tiene su propio token
+        # bucket interno, así que aunque lancemos 8 a la vez, el bucket
+        # las serializa con backoff cuando toca. Cold-cache de 15 matches
+        # pasa de ~15× latencia a ~2× — bug LOW cazado por review.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            details = list(_ex.map(
+                lambda mid: (mid, riot_get(f"{MATCH_DETAILS_URL}/{mid}")),
+                ordered,
+            ))
+
+        for match_id, mres in details:
             if mres.status_code != 200:
                 continue
             data = mres.json()

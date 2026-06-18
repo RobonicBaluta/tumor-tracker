@@ -32,7 +32,9 @@ import hashlib
 # UI agrupe visualmente o lo muestre como tag.
 MISSIONS = {
     'daily': [
-        {'key': 'claim_daily',       'kind': 'meta',  'name': '🎁 Reclama tu daily',         'desc': 'Pulsa el botón 🎁 hoy',                 'target': 1, 'reward': 20},
+        # NOTA: reward bajo (5 TC) porque ya pagas el daily reward principal
+        # al reclamar. La mission es más onboarding/discovery que economy.
+        {'key': 'claim_daily',       'kind': 'meta',  'name': '🎁 Reclama tu daily',         'desc': 'Pulsa el botón 🎁 hoy',                 'target': 1, 'reward': 5},
         {'key': 'create_bet',        'kind': 'meta',  'name': '🎲 Crea 1 apuesta',           'desc': 'Lanza una bet P2P (cualquier monto)',   'target': 1, 'reward': 40},
         {'key': 'win_1_bet',         'kind': 'meta',  'name': '💰 Gana 1 apuesta',           'desc': 'Acierta 1 bet P2P hoy',                 'target': 1, 'reward': 80},
         {'key': 'predict_1_correct', 'kind': 'tumor', 'name': '🔮 Predice 1 partida bien',    'desc': 'Live prediction acertada hoy',          'target': 1, 'reward': 70},

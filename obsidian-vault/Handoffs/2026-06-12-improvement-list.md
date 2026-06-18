@@ -198,6 +198,45 @@ Tras batch 15 **TODO el plan de 50 items está cerrado** salvo:
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 16) — polish batch (tech-debt menor del verify)
+
+User preguntó si quedaba algo. Cleanup de los LOW que dejé marcados
+como "defer hasta que duela". Todos son fixes pequeños sin riesgo.
+
+- [x] **ThreadPoolExecutor en `/compare/multi`**: cold-cache de N matches
+  pasa de N× latencia secuencial a ~2× concurrente. riot_get internal
+  token bucket sigue serializando contra Riot, así que no hay riesgo de
+  burst sobre rate limits.
+- [x] **mtime-cache en `/search/summoners`**: nuevo helper
+  `_cached_file_list(path)` (thread-safe con `threading.Lock`) que cachea
+  recent + saved invalidando por `os.path.getmtime`. Antes era 2 reads
+  por keystroke con el debounce activo. Las escrituras (save_recent /
+  saved_accounts) modifican el mtime → cache se invalida solo.
+- [x] **claim_daily mission balance**: reward bajado 20→5 TC con
+  comentario explicando por qué (ya pagas el daily principal al
+  reclamar; la mission es onboarding/discovery, no economy).
+- [x] **ARIA combobox en Compare autocomplete**: input recibe
+  `role=combobox`, `aria-expanded`, `aria-controls`, `aria-activedescendant`,
+  `aria-autocomplete=list`. Dropdown es `role=listbox` con items
+  `role=option` + `aria-selected`. Screen readers ahora anuncian el
+  autocomplete correctamente.
+- [x] **Enter-to-submit cuando no hay dropdown**: nuevo helper `onEnter`
+  que distingue entre "hay sugerencias → seleccionar" vs "no hay → submit
+  search()". Mismo con `onArrow`: sólo `preventDefault` cuando el
+  dropdown está visible. Sin esto las flechas se comían siempre y Enter
+  no disparaba la búsqueda.
+- [x] **Hover preview con keyboard focus** en Overview: cada match row
+  recibe `tabindex=0`, `@focusin/@focusout` (mismos handlers que
+  mouseenter/leave), Enter/Space dispara `openMatchDetail`. Outline
+  azul-accent en focus. Type del handler ampliado `MouseEvent → Event`.
+
+Skipped (sigue defer):
+- Tests ISO-week para missions (no hay test framework setup todavía).
+- tumor_below_40 mission unreachable (necesita snapshot del tumor_score
+  por match en predictions.db).
+- /friends/weekly N+1 (1 query por friend en predictions.db) — bajo
+  tirón a escala actual.
+
 ### Sesión 2026-06-18 (continuación 15) — finalizing batch: #47 ext + #12 + #28 + smart search
 
 Última sesión "para finalizar" la lista. Recon paralelo (4 Explore agents),
