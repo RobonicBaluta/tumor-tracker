@@ -171,7 +171,7 @@
         <div class="min-w-0">
           <h1 class="text-white font-mono text-3xl font-bold">Top Tumores</h1>
           <div class="flex items-center gap-2 mt-1">
-            <p class="text-[#c89b3c] font-mono truncate">{{ summoner }}</p>
+            <p class="text-accent font-mono truncate">{{ summoner }}</p>
             <img v-if="tier && tierIconUrl" :src="tierIconUrl"
               :alt="tierFullLabel" :title="tierFullLabel"
               class="w-16 h-16 object-contain shrink-0 -my-4"
@@ -203,14 +203,14 @@
           </button>
           <!-- Refrescar -->
           <button @click="refresh" :disabled="loading"
-            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
             :title="loading ? 'Cargando...' : 'Refrescar'">
             <span :class="loading ? 'animate-spin inline-block' : ''">↻</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Refrescar</span>
           </button>
           <!-- Guardar / Guardada (oculto en perfil público) -->
           <button v-if="!isPublicView" @click="toggleSaveAccount"
-            :class="isSaved ? 'bg-[#c89b3c]/20 border-[#c89b3c]/50 text-[#c89b3c] hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40'"
+            :class="isSaved ? 'bg-accent-20 border-accent-50 text-accent hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-accent hover:border-accent-40'"
             class="h-9 px-2.5 text-sm border rounded-lg transition font-mono flex items-center gap-1.5"
             :title="isSaved ? 'Quitar de guardadas' : 'Guardar cuenta'">
             <span>{{ isSaved ? '⭐' : '☆' }}</span>
@@ -232,21 +232,21 @@
           </button>
           <!-- Compartir -->
           <button @click="shareProfile"
-            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center gap-1.5"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono flex items-center gap-1.5"
             :title="shareCopied ? '¡Copiado!' : 'Copiar URL del perfil'">
             <span>{{ shareCopied ? '✓' : '🔗' }}</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ shareCopied ? 'Copiado' : 'Compartir' }}</span>
           </button>
           <!-- Card -->
           <button @click="exportStatsImage" :disabled="exportingImage"
-            class="h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
             :title="exportingImage ? 'Generando...' : 'Descargar card PNG'">
             <span>🖼</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
           </button>
           <!-- Notif (oculto en perfil público — son notificaciones del owner) -->
           <button v-if="!isPublicView" @click="showNotifications = !showNotifications"
-            class="relative h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center gap-1.5"
+            class="relative h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Notificaciones">
             <span>🔔</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Notif</span>
@@ -255,7 +255,7 @@
           </button>
           <!-- Logout (oculto en perfil público — no es la sesión del visitante) -->
           <button v-if="!isPublicView" @click="logout"
-            class="h-9 px-2.5 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono flex items-center gap-1.5"
+            class="h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Cerrar sesión">
             <span>⎋</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Salir</span>
@@ -450,7 +450,7 @@
                 <p class="text-white text-sm font-bold">
                   {{ match.my_kills }}/{{ match.my_deaths }}/{{ match.my_assists }}
                 </p>
-                <p class="text-[#c89b3c] text-xs font-mono">{{ match.my_kda }} KDA</p>
+                <p class="text-accent text-xs font-mono">{{ match.my_kda }} KDA</p>
                 <p v-if="match.best_and_lost" class="text-orange-400 text-[10px] font-mono mt-0.5">mejor del equipo</p>
               </div>
             </div>
@@ -505,7 +505,7 @@
               <div class="min-w-0 w-28 shrink-0">
                 <p class="text-white/50 text-[10px] font-mono truncate">{{ match.worst.campeon }}</p>
                 <a :href="profileUrl(match.worst.nombre)" target="_blank" rel="noopener" @click.stop
-                  class="text-white text-xs font-bold truncate block hover:text-[#c89b3c] hover:underline transition"
+                  class="text-white text-xs font-bold truncate block hover:text-accent hover:underline transition"
                   :title="`Abrir perfil de ${match.worst.nombre}`">{{ match.worst.nombre }}</a>
                 <p class="text-xs mt-0.5">
                   <span class="text-green-400">{{ match.worst.kills }}</span>
@@ -578,7 +578,7 @@
         <!-- Load more -->
         <div class="pt-2 pb-4 text-center">
           <button v-if="hasMore" @click="loadMore" :disabled="loadingMore"
-            class="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-[#c89b3c]/40 text-white/60 hover:text-white font-mono text-sm rounded-lg transition disabled:opacity-40">
+            class="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-accent-40 text-white/60 hover:text-accent font-mono text-sm rounded-lg transition disabled:opacity-40">
             {{ loadingMore ? 'Cargando...' : `Cargar más (${currentStart} cargadas)` }}
           </button>
           <p v-else-if="matches.length > 0" class="text-white/20 text-xs font-mono">
@@ -597,7 +597,7 @@
             class="flex-1 py-2 text-[11px] font-mono font-bold tracking-wider transition border-r border-white/10">
             ☢ TOP 5
           </button>
-          <button @click="sidebarTab = 'global'" :class="sidebarTab === 'global' ? 'bg-[#c89b3c]/20 text-[#c89b3c] border-[#c89b3c]/30' : 'text-white/40 hover:text-white/70'"
+          <button @click="sidebarTab = 'global'" :class="sidebarTab === 'global' ? 'bg-accent-20 text-accent border-accent-30' : 'text-white/40 hover:text-white/70'"
             class="flex-1 py-2 text-[11px] font-mono font-bold tracking-wider transition">
             🌍 GLOBAL
           </button>
@@ -674,16 +674,16 @@
         </div>
 
         <!-- Global leaderboard tab -->
-        <div v-if="sidebarTab === 'global'" class="bg-black/30 rounded-2xl border border-[#c89b3c]/20 overflow-hidden">
+        <div v-if="sidebarTab === 'global'" class="bg-black/30 rounded-2xl border border-accent-20 overflow-hidden">
           <div class="px-4 py-3 border-b border-white/10">
-            <p class="text-[#c89b3c] text-[10px] font-mono tracking-widest font-bold">LEADERBOARD GLOBAL · PEORES JUGADORES</p>
+            <p class="text-accent text-[10px] font-mono tracking-widest font-bold">LEADERBOARD GLOBAL · PEORES JUGADORES</p>
           </div>
           <div v-if="leaderboard.length" class="divide-y divide-white/5">
             <a v-for="entry in leaderboard" :key="entry.nombre"
               :href="profileUrl(entry.nombre)" target="_blank" rel="noopener"
               :title="`Abrir perfil de ${entry.nombre}`"
-              class="flex items-center gap-3 px-3 py-2.5 hover:bg-[#c89b3c]/10 transition cursor-pointer">
-              <span :class="entry.position <= 3 ? 'text-[#c89b3c]' : 'text-white/20'"
+              class="flex items-center gap-3 px-3 py-2.5 hover:bg-accent-10 transition cursor-pointer">
+              <span :class="entry.position <= 3 ? 'text-accent' : 'text-white/20'"
                 class="font-mono font-bold text-sm w-5 shrink-0 text-center">
                 {{ entry.position <= 3 ? ['🥇','🥈','🥉'][entry.position - 1] : entry.position }}
               </span>
@@ -710,7 +710,7 @@
     <Transition name="modal">
       <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeMatchDetail">
-        <div class="bg-[#0d1b2a] border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-[#0d1b2a] border border-accent-30 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 
           <!-- Modal header -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
@@ -784,7 +784,7 @@
                       class="w-9 h-9 rounded-lg shrink-0" />
                     <div class="w-36 min-w-0 shrink-0">
                       <a :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
-                        class="text-white text-xs font-bold truncate block hover:text-[#c89b3c] hover:underline transition"
+                        class="text-white text-xs font-bold truncate block hover:text-accent hover:underline transition"
                         :title="`Abrir perfil de ${p.nombre}`">
                         {{ p.nombre === summoner ? '⭐ ' + p.nombre : p.nombre }}
                       </a>
@@ -799,8 +799,10 @@
                     <div class="flex-1 min-w-0">
                       <div class="flex items-center gap-2">
                         <div class="flex-1 bg-white/10 rounded-full h-1.5 overflow-hidden">
-                          <div :style="{ width: `${Math.round(p.damage / Math.max(...[...matchDetail.team_blue, ...matchDetail.team_red].map(x => x.damage)) * 100)}%` }"
-                            :class="p.nombre === summoner ? 'bg-yellow-400' : 'bg-purple-400'"
+                          <div :style="{
+                              width: `${Math.round(p.damage / Math.max(...[...matchDetail.team_blue, ...matchDetail.team_red].map(x => x.damage)) * 100)}%`,
+                              backgroundColor: p.nombre === summoner ? '#facc15' : 'var(--theme-accent, #c89b3c)'
+                            }"
                             class="h-full rounded-full transition-all"></div>
                         </div>
                         <span class="text-white/50 text-[10px] font-mono w-10 text-right shrink-0">{{ formatGold(p.damage) }}</span>
@@ -849,7 +851,7 @@
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
               <p class="text-white font-mono font-bold">Partida en directo · Predicción de tumor</p>
               <div v-if="predictionStats && predictionStats.total > 0"
-                class="flex items-center gap-1.5 bg-[#c89b3c]/10 border border-[#c89b3c]/30 px-2.5 py-1 rounded-lg">
+                class="flex items-center gap-1.5 bg-accent-10 border border-accent-30 px-2.5 py-1 rounded-lg">
                 <span class="text-[9px] font-mono text-white/50 tracking-widest">
                   {{ predictionStats.scope === 'user' ? 'TU ACIERTO' : 'ACIERTO GLOBAL' }}
                 </span>
@@ -994,7 +996,7 @@
             <!-- Acciones secundarias -->
             <div class="flex items-center justify-center gap-3 mb-4 flex-wrap">
               <button @click="resolveLivePrediction" :disabled="resolving"
-                class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40 rounded transition disabled:opacity-30">
+                class="text-xs font-mono px-3 py-1.5 border border-white/15 text-white/60 hover:text-accent hover:border-accent-40 rounded transition disabled:opacity-30">
                 {{ resolving ? 'Comprobando...' : '✅ Comprobar resultado' }}
               </button>
               <button @click="searchLiveGame(true)" :disabled="liveLoading"
@@ -1074,7 +1076,7 @@
                       <div class="flex items-center gap-1.5 flex-wrap">
                         <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
                         <a v-if="!p.streamer_mode" :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
-                          class="text-white text-sm font-mono truncate hover:text-[#c89b3c] hover:underline transition"
+                          class="text-white text-sm font-mono truncate hover:text-accent hover:underline transition"
                           :class="p.is_watched ? 'text-red-300' : ''"
                           :title="`Abrir perfil de ${p.nombre}`">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</a>
                         <p v-else class="text-white/60 text-sm font-mono truncate italic">{{ p.nombre }}</p>
@@ -1160,7 +1162,7 @@
                       <div class="flex items-center gap-1.5 flex-wrap">
                         <span v-if="p.is_watched" title="En tu watch list" class="text-base">💀</span>
                         <a v-if="!p.streamer_mode" :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
-                          class="text-white text-sm font-mono truncate hover:text-[#c89b3c] hover:underline transition"
+                          class="text-white text-sm font-mono truncate hover:text-accent hover:underline transition"
                           :class="p.is_watched ? 'text-red-300' : ''"
                           :title="`Abrir perfil de ${p.nombre}`">{{ p.nombre }}{{ p.is_me ? ' (TÚ)' : '' }}</a>
                         <p v-else class="text-white/60 text-sm font-mono truncate italic">{{ p.nombre }}</p>
@@ -1681,7 +1683,7 @@
                     :title="`Ver tus stats con ${d.top_champion}`" />
                   <div class="flex-1 min-w-0">
                     <a :href="profileUrl(d.nombre)" target="_blank" rel="noopener" @click.stop
-                      class="text-white text-sm font-mono truncate block hover:text-[#c89b3c] hover:underline transition">{{ d.nombre }}</a>
+                      class="text-white text-sm font-mono truncate block hover:text-accent hover:underline transition">{{ d.nombre }}</a>
                     <p class="text-white/30 text-[10px] font-mono">{{ d.top_champion }} · {{ d.games }} partidas juntos · {{ d.wins }}W/{{ d.games - d.wins }}L</p>
                   </div>
                   <!-- Tumor medio combinado (color escala 0-100, peor = más rojo) -->
