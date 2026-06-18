@@ -1,6 +1,42 @@
 // Constantes puras compartidas por la vista Overview y sus futuros modales.
 // Todo lo que hay aquí no tiene reactividad ni side effects.
 
+// ---------------------------------------------------------------------------
+// DDragon champion name normalization
+// ---------------------------------------------------------------------------
+// Riot Match v5 a veces devuelve championName en formato legacy que NO
+// coincide con el archivo de imagen en DDragon. El caso famoso es
+// "FiddleSticks" (S mayúscula) que en DDragon vive como "Fiddlesticks".
+// Mantén este mapping ordenado por aparición; añade aquí cualquier nuevo
+// outlier (verificable con `https://ddragon.../img/champion/<key>.png`).
+const DDRAGON_CHAMP_ALIASES: Record<string, string> = {
+  FiddleSticks: 'Fiddlesticks',
+  // Otros que la gente reporta como problemáticos pero realmente ya son
+  // correctos en DDragon actual: Wukong = MonkeyKing, Belveth = Belveth,
+  // Khazix = Khazix, Chogath = Chogath, KogMaw = KogMaw, RekSai = RekSai.
+  // No los pongo para no enmascarar regresiones futuras de Riot.
+}
+
+export function ddragonChampName(name: string | null | undefined): string {
+  if (!name) return ''
+  return DDRAGON_CHAMP_ALIASES[name] ?? name
+}
+
+export function championIconUrl(
+  name: string | null | undefined,
+  version: string,
+): string {
+  return `https://ddragon.leagueoflegends.com/cdn/${version}/img/champion/${ddragonChampName(name)}.png`
+}
+
+export function championSplashUrl(name: string | null | undefined): string {
+  return `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${ddragonChampName(name)}_0.jpg`
+}
+
+export function championLoadingUrl(name: string | null | undefined): string {
+  return `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${ddragonChampName(name)}_0.jpg`
+}
+
 export const SCAN_MESSAGES = [
   'DETECTANDO TEJIDOS CANCERÍGENOS...',
   'MIDIENDO NIVEL DE TILT EN SANGRE...',

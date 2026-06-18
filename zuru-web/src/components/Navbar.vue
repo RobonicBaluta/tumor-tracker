@@ -109,8 +109,16 @@ function notifTimeAgo(epoch: number): string {
 async function markAllRead() {
   if (!notifications.value.length) return
   const ids = notifications.value.map(n => n.id)
-  await auth.markNotificationsRead(ids)
-  notifications.value = []
+  try {
+    await auth.markNotificationsRead(ids)
+    // Sólo vaciamos local si el backend confirmó. Si falló, mantenemos
+    // las notifs visibles — en el próximo poll volverían igualmente
+    // porque siguen con read=0, y eso confundiría visualmente.
+    notifications.value = []
+  } catch {
+    // Silencioso: la próxima poll las refrescará. El user verá que sigue ahí
+    // y puede reintentar.
+  }
 }
 
 function openNotif(n: any) {

@@ -386,7 +386,7 @@
             <!-- My stats -->
             <div class="flex items-center gap-4 px-4 py-4 border-r border-white/10 min-w-[200px]">
               <div class="relative">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.my_champion}.png`"
+                <img :src="championIconUrl(match.my_champion, ddragonVersion)"
                   class="w-12 h-12 rounded-lg" />
                 <span :class="match.win ? 'bg-blue-500' : 'bg-red-500'"
                   class="absolute -bottom-1 -right-1 text-white text-[9px] font-bold px-1 rounded font-mono">
@@ -451,7 +451,7 @@
             <!-- Ranked: worst player + tumor -->
             <div v-else class="flex items-center gap-3 px-4 py-3 flex-1 min-w-0">
               <div class="relative shrink-0">
-                <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${match.worst.campeon}.png`"
+                <img :src="championIconUrl(match.worst.campeon, ddragonVersion)"
                   class="w-11 h-11 rounded-lg" />
                 <span class="absolute -bottom-1 -right-1 bg-black/70 text-white text-[9px] font-bold px-1 rounded font-mono border border-white/20">
                   Lv{{ match.worst.champ_level }}
@@ -567,7 +567,7 @@
             class="block rounded-2xl overflow-hidden border border-red-500/30 shadow-2xl shadow-red-900/30 mb-3 hover:border-red-400/60 hover:shadow-red-900/50 transition">
             <div class="relative">
               <img
-                :src="`https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${topTumores[0].campeon}_0.jpg`"
+                :src="championLoadingUrl(topTumores[0].campeon)"
                 class="w-full object-cover object-top"
                 style="aspect-ratio: 308/340"
               />
@@ -613,7 +613,7 @@
               :title="`Abrir perfil de ${tumor.nombre}`"
               class="flex items-center gap-3 bg-black/30 rounded-xl border border-white/10 px-3 py-2.5 hover:border-red-500/40 hover:bg-red-950/20 transition cursor-pointer">
               <span class="text-white/30 font-mono font-bold text-sm w-4 shrink-0">#{{ i + 2 }}</span>
-              <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${tumor.campeon}.png`"
+              <img :src="championIconUrl(tumor.campeon, ddragonVersion)"
                 class="w-8 h-8 rounded-lg shrink-0" />
               <div class="flex-1 min-w-0">
                 <p class="text-white text-xs font-bold truncate">{{ tumor.nombre }}</p>
@@ -642,7 +642,7 @@
                 class="font-mono font-bold text-sm w-5 shrink-0 text-center">
                 {{ entry.position <= 3 ? ['🥇','🥈','🥉'][entry.position - 1] : entry.position }}
               </span>
-              <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${entry.campeon}.png`"
+              <img :src="championIconUrl(entry.campeon, ddragonVersion)"
                 class="w-7 h-7 rounded-md shrink-0" />
               <div class="flex-1 min-w-0">
                 <p class="text-white text-xs font-bold truncate">{{ entry.nombre }}</p>
@@ -745,7 +745,7 @@
                   <div v-for="p in team" :key="p.puuid"
                     :class="p.nombre === summoner ? 'bg-yellow-900/10 border-l-2 border-yellow-500/50' : ''"
                     class="flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 transition">
-                    <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${p.campeon}.png`"
+                    <img :src="championIconUrl(p.campeon, ddragonVersion)"
                       class="w-9 h-9 rounded-lg shrink-0" />
                     <div class="w-36 min-w-0 shrink-0">
                       <a :href="profileUrl(p.nombre)" target="_blank" rel="noopener"
@@ -858,7 +858,7 @@
               <span class="text-white/30 text-[10px] font-mono tracking-widest">BANS</span>
               <div class="flex gap-1.5 flex-wrap">
                 <img v-for="b in liveGame.bans" :key="`${b.team_id}-${b.champion_id}`"
-                  :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${b.champion_name}.png`"
+                  :src="championIconUrl(b.champion_name, ddragonVersion)"
                   :alt="b.champion_name"
                   :title="b.champion_name"
                   class="w-7 h-7 rounded border border-white/10 grayscale opacity-70" />
@@ -890,7 +890,7 @@
                   :class="p.is_me ? 'border-yellow-500/50 bg-yellow-900/10' : 'border-white/10'">
                   <span class="text-white/30 text-[9px] font-mono w-5 text-center">#{{ idx + 1 }}</span>
                   <img v-if="p.champion_name"
-                    :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${p.champion_name}.png`"
+                    :src="championIconUrl(p.champion_name, ddragonVersion)"
                     class="w-7 h-7 rounded shrink-0" />
                   <div class="flex-1 min-w-0">
                     <p class="text-[11px] font-mono truncate"
@@ -1017,7 +1017,7 @@
                     class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
                     <div class="relative shrink-0">
                       <img v-if="champData[String(p.champion_id)]"
-                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                        :src="championIconUrl(champData[String(p.champion_id)], ddragonVersion)"
                         class="w-12 h-12 rounded-lg border border-white/20" />
                       <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
                         <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
@@ -1099,7 +1099,7 @@
                     class="flex items-center gap-3 bg-black/30 border rounded-xl p-3">
                     <div class="relative shrink-0">
                       <img v-if="champData[String(p.champion_id)]"
-                        :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${champData[String(p.champion_id)]}.png`"
+                        :src="championIconUrl(champData[String(p.champion_id)], ddragonVersion)"
                         class="w-12 h-12 rounded-lg border border-white/20" />
                       <div class="absolute -right-1 top-0 flex flex-col gap-0.5">
                         <img v-if="p.spell1_id && spellIconUrl(p.spell1_id)" :src="spellIconUrl(p.spell1_id)" class="w-4 h-4 rounded-sm border border-black/60" />
@@ -1556,7 +1556,7 @@
               <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
                 <div v-for="c in analyticsData.champion_pool" :key="c.champion"
                   class="bg-black/30 border border-white/10 rounded-xl p-2 flex items-center gap-2">
-                  <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${c.champion}.png`"
+                  <img :src="championIconUrl(c.champion, ddragonVersion)"
                     class="w-10 h-10 rounded-lg border border-white/20 shrink-0" />
                   <div class="min-w-0 flex-1">
                     <p class="text-white text-[11px] font-mono truncate">{{ c.champion }}</p>
@@ -1577,7 +1577,7 @@
                   <p class="text-green-400/70 text-[10px] font-mono tracking-widest mb-2">🌟 BEST TEAMMATES</p>
                   <div class="bg-black/30 border border-green-500/20 rounded-xl divide-y divide-white/5">
                     <div v-for="d in analyticsData.best_teammates" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
-                      <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                      <img :src="championIconUrl(d.top_champion, ddragonVersion)"
                         class="w-8 h-8 rounded-lg border border-white/20" />
                       <div class="flex-1 min-w-0">
                         <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
@@ -1591,7 +1591,7 @@
                   <p class="text-red-400/70 text-[10px] font-mono tracking-widest mb-2">💢 WORST NEMESIS</p>
                   <div class="bg-black/30 border border-red-500/20 rounded-xl divide-y divide-white/5">
                     <div v-for="d in analyticsData.worst_nemesis" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
-                      <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                      <img :src="championIconUrl(d.top_champion, ddragonVersion)"
                         class="w-8 h-8 rounded-lg border border-white/20" />
                       <div class="flex-1 min-w-0">
                         <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
@@ -1623,7 +1623,7 @@
               <div class="bg-black/30 border border-white/10 rounded-xl divide-y divide-white/5">
                 <div v-for="(d, i) in sortedDuos" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
                   <span class="text-white/30 text-xs font-mono w-6">#{{ i + 1 }}</span>
-                  <img :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${d.top_champion}.png`"
+                  <img :src="championIconUrl(d.top_champion, ddragonVersion)"
                     class="w-10 h-10 rounded-lg border border-white/20" />
                   <div class="flex-1 min-w-0">
                     <a :href="profileUrl(d.nombre)" target="_blank" rel="noopener" @click.stop
@@ -1689,7 +1689,7 @@
             <div v-if="!playerBetState.result" class="p-5 space-y-4">
               <div class="bg-black/30 border border-white/10 rounded-xl p-3 text-center">
                 <img v-if="playerBetState.target.champion_name"
-                  :src="`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${playerBetState.target.champion_name}.png`"
+                  :src="championIconUrl(playerBetState.target.champion_name, ddragonVersion)"
                   class="w-12 h-12 rounded-lg mx-auto mb-2" />
                 <p class="text-white text-sm font-mono font-bold">{{ playerBetState.target.nombre }}</p>
                 <p class="text-white/50 text-[11px] font-mono">{{ playerBetState.target.tier }} {{ playerBetState.target.division }}
@@ -1756,6 +1756,7 @@ import {
   RUNE_STYLES, SUMMONER_SPELLS,
   ROLE_ORDER, ROLE_LABEL, TIER_COLORS,
   tumorColor, tumorLabel,
+  championIconUrl, championLoadingUrl,
 } from '../composables/overviewConstants'
 import { API_BASE } from '../composables/useApi'
 
@@ -3432,7 +3433,21 @@ const pushNotification = (n: Omit<Notification, 'at'>) => {
 
 const markAllRead = () => {
   const newSeen = new Set(notifSeen.value)
+  // 1) Las que están actualmente en la lista visible
   for (const n of notifications.value) newSeen.add(n.id)
+  // 2) BUG FIX: también todas las del último predictionStats.recent.
+  //    El poller dispara fetchWorstChampion(...).then(pushNotification(...))
+  //    de forma async — entre el check inicial y el push, si el user da a
+  //    "Limpiar" en ese intervalo, los .then() en vuelo metían la notif
+  //    OTRA VEZ (pushNotification re-chequea notifSeen, pero solo si ya
+  //    estaba marcada, y no lo estaba porque no se había añadido aún).
+  //    Marcando proactivamente toda la batch actual cierra la race.
+  const recent = (predictionStats.value as any)?.recent
+  if (Array.isArray(recent)) {
+    for (const entry of recent) {
+      if (entry?.match_id) newSeen.add(`pred-${entry.match_id}`)
+    }
+  }
   notifSeen.value = newSeen
   localStorage.setItem('zuruweb-notif-seen', Array.from(newSeen).join(','))
   notifications.value = []
