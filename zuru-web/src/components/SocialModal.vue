@@ -51,7 +51,7 @@
 
           <!-- LEADERBOARDS -->
           <div v-else-if="active === 'leaderboards'">
-            <div class="flex gap-1 mb-3">
+            <div class="flex flex-wrap gap-1 mb-3">
               <button v-for="lk in leaderboardKinds" :key="lk.key" @click="lbKind = lk.key; loadLeaderboard()"
                 :class="lbKind === lk.key
                   ? 'bg-accent-15 text-accent border-accent-50'
@@ -82,6 +82,9 @@
                   </p>
                   <p v-else-if="lbKind === 'accuracy'" class="text-green-400 font-bold">
                     {{ u.accuracy }}% · {{ u.hits }}/{{ u.total }}
+                  </p>
+                  <p v-else-if="lbKind === 'bravery'" class="text-purple-300 font-bold">
+                    {{ u.wins }} W · {{ u.bravery_count }} totales
                   </p>
                 </div>
               </div>
@@ -510,6 +513,42 @@
 
           <!-- FRIENDS -->
           <div v-else-if="active === 'friends'">
+            <!-- #29 — Weekly friend ranking: aparece arriba si hay datos.
+                 Backend devuelve top 10 por bets ganadas + aciertos de
+                 prediction esta semana ISO. Banner compacto con tu posición
+                 destacada (is_me). Card colapsable. -->
+            <div v-if="weeklyRanking && (weeklyRanking.bets_won?.length || weeklyRanking.predictions_correct?.length)"
+              class="mb-3 bg-purple-900/15 border border-purple-500/30 rounded-xl p-3">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-purple-200 text-[10px] font-mono tracking-widest">📅 ESTA SEMANA · ENTRE AMIGOS</p>
+                <button @click="weeklyOpen = !weeklyOpen" class="text-purple-300/60 text-xs font-mono hover:text-purple-200">
+                  {{ weeklyOpen ? '▴' : '▾' }}
+                </button>
+              </div>
+              <div v-if="weeklyOpen" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px] font-mono">
+                <div v-if="weeklyRanking.bets_won?.length">
+                  <p class="text-yellow-300/80 mb-1">🏆 BETS GANADAS</p>
+                  <div v-for="(r, i) in weeklyRanking.bets_won.slice(0, 5)" :key="`b${r.user_id}`"
+                    :class="r.is_me ? 'bg-yellow-900/20 border-yellow-500/40' : 'border-white/10'"
+                    class="flex items-center gap-2 px-2 py-1 rounded border mb-1">
+                    <span class="text-white/40 w-4">#{{ i + 1 }}</span>
+                    <span class="flex-1 truncate text-white">{{ r.username }}</span>
+                    <span class="text-yellow-300 font-bold">{{ r.won }}</span>
+                  </div>
+                </div>
+                <div v-if="weeklyRanking.predictions_correct?.length">
+                  <p class="text-green-300/80 mb-1">🔮 PREDICCIONES OK</p>
+                  <div v-for="(r, i) in weeklyRanking.predictions_correct.slice(0, 5)" :key="`p${r.user_id}`"
+                    :class="r.is_me ? 'bg-green-900/20 border-green-500/40' : 'border-white/10'"
+                    class="flex items-center gap-2 px-2 py-1 rounded border mb-1">
+                    <span class="text-white/40 w-4">#{{ i + 1 }}</span>
+                    <span class="flex-1 truncate text-white">{{ r.username }}</span>
+                    <span class="text-green-300 font-bold">{{ r.correct }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="flex gap-2 mb-4">
               <input v-model="friendSearchInput" placeholder="Riot ID (Nombre#TAG)"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
@@ -809,6 +848,7 @@ const leaderboardKinds = computed(() => [
   { key: 'currency' as const, label: t('social.lb_currency') },
   { key: 'bets' as const, label: t('social.lb_bets') },
   { key: 'accuracy' as const, label: t('social.lb_accuracy') },
+  { key: 'bravery' as const, label: '🎲 Bravery' },  // #46
 ])
 
 const active = ref<TabKey>('hot')
@@ -895,9 +935,11 @@ function humanizeTimeUntil(iso: string | null | undefined): string {
 const submittingMatchFor = ref('')   // share_code currently submitting
 const matchIdInput = ref('')
 const openBets = ref<any[]>([])
-const lbKind = ref<'currency' | 'bets' | 'accuracy'>('currency')
+const lbKind = ref<'currency' | 'bets' | 'accuracy' | 'bravery'>('currency')
 const leaderboard = ref<any[]>([])
 const friends = ref<any[]>([])
+const weeklyRanking = ref<{ bets_won: any[]; predictions_correct: any[] } | null>(null)
+const weeklyOpen = ref(true)
 const friendSearchInput = ref('')
 const addingFriend = ref(false)
 const friendError = ref('')
@@ -1009,7 +1051,12 @@ async function loadActive() {
   if (active.value === 'leaderboards') await loadLeaderboard()
   if (active.value === 'clusters') await loadClusters()
   if (active.value === 'challenges') await loadChallenges()
-  if (active.value === 'friends') friends.value = await auth.fetchFriends()
+  if (active.value === 'friends') {
+    friends.value = await auth.fetchFriends()
+    // #29 — Weekly ranking fetch en paralelo. Si falla swallow — el banner
+    // simplemente no aparece.
+    try { weeklyRanking.value = await auth.fetchFriendsWeekly() } catch { weeklyRanking.value = null }
+  }
   if (active.value === 'rooms') {
     await loadMyRooms()
     // Re-hidratar sala persistida si sigue siendo mía

@@ -237,29 +237,30 @@
             <span>{{ shareCopied ? '✓' : '🔗' }}</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ shareCopied ? 'Copiado' : 'Compartir' }}</span>
           </button>
-          <!-- Card: split pill PNG/GIF. UN solo wrapper con border + hover
-               (no dos botones pegados con borders propios). Divisor 1px
-               entre las zonas. El hover del wrapper colorea la pill entera. -->
-          <div ref="cardMenuRef"
-            :class="[
-              'relative inline-flex h-9 rounded-lg border transition font-mono overflow-hidden',
+          <!-- Card: split pill PNG/GIF. El wrapper outer (`cardMenuRef`) sirve
+               como anchor para el dropdown abs-positioned y NO tiene
+               overflow-hidden (sin esto el menu queda clipped al pill — bug
+               reportado por user). El overflow:hidden se aplica al inner pill
+               para que los hover backgrounds respeten los rounded corners. -->
+          <div ref="cardMenuRef" class="relative inline-flex">
+            <div :class="[
+              'inline-flex h-9 rounded-lg border transition font-mono overflow-hidden',
               exportingImage ? 'border-white/15 opacity-60' : 'border-white/20 hover:border-accent-40',
             ]">
-            <button @click="exportStatsImage" :disabled="exportingImage"
-              class="pl-2.5 pr-1.5 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center gap-1.5 transition disabled:cursor-not-allowed"
-              :title="exportingImage ? (gifProgress > 0 ? `Generando GIF ${gifProgress}%` : 'Generando...') : 'Descargar card PNG'">
-              <span v-if="!exportingImage">🖼</span>
-              <span v-else class="text-[10px]">{{ gifProgress > 0 ? gifProgress + '%' : '⏳' }}</span>
-              <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
-            </button>
-            <!-- Divisor 1px de la misma tonalidad que el border. self-stretch
-                 hace que cubra toda la altura del pill. -->
-            <span class="w-px self-stretch bg-white/15"></span>
-            <button @click="cardMenuOpen = !cardMenuOpen" :disabled="exportingImage"
-              class="px-2 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center transition disabled:cursor-not-allowed"
-              :title="cardMenuOpen ? 'Cerrar' : 'Más formatos'">
-              <span class="text-[9px]">{{ cardMenuOpen ? '▴' : '▾' }}</span>
-            </button>
+              <button @click="exportStatsImage" :disabled="exportingImage"
+                class="pl-2.5 pr-1.5 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center gap-1.5 transition disabled:cursor-not-allowed"
+                :title="exportingImage ? (gifProgress > 0 ? `Generando GIF ${gifProgress}%` : 'Generando...') : 'Descargar card PNG'">
+                <span v-if="!exportingImage">🖼</span>
+                <span v-else class="text-[10px]">{{ gifProgress > 0 ? gifProgress + '%' : '⏳' }}</span>
+                <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
+              </button>
+              <span class="w-px self-stretch bg-white/15"></span>
+              <button @click="cardMenuOpen = !cardMenuOpen" :disabled="exportingImage"
+                class="px-2 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center transition disabled:cursor-not-allowed"
+                :title="cardMenuOpen ? 'Cerrar' : 'Más formatos'">
+                <span class="text-[9px]">{{ cardMenuOpen ? '▴' : '▾' }}</span>
+              </button>
+            </div>
             <Transition name="dropdown">
               <div v-if="cardMenuOpen"
                 class="absolute right-0 top-10 bg-theme-from border border-accent-40 rounded-lg shadow-2xl p-1.5 min-w-[180px] z-50">
@@ -1005,6 +1006,7 @@
       :evolution-area-path="evolutionAreaPath"
       :loading-flavor="loadingFlavor"
       :summoner="summoner"
+      :tier="tier"
       :ddragon-version="ddragonVersion"
       :profile-url="profileUrl"
       @close="closeAnalytics"

@@ -37,6 +37,18 @@
         <div class="flex-1 overflow-y-auto p-5">
           <!-- ACHIEVEMENTS -->
           <div v-if="active === 'achievements'">
+            <!-- Loading / error visibles. Antes una respuesta vacía dejaba el
+                 grid en blanco sin pista del por qué — bug reportado. -->
+            <div v-if="achievementsLoading" class="text-white/40 text-sm font-mono text-center py-8 animate-pulse">
+              Cargando trofeos…
+            </div>
+            <div v-else-if="achievementsError" class="border border-red-500/40 bg-red-950/30 rounded-xl p-4 text-center mb-4">
+              <p class="text-red-300 text-sm font-mono mb-2">{{ achievementsError }}</p>
+              <button @click="loadActive" class="text-xs font-mono px-3 py-1 rounded border border-red-400/40 text-red-200 hover:bg-red-900/30 transition">
+                Reintentar
+              </button>
+            </div>
+            <template v-else>
             <!-- Progreso global con barra -->
             <div class="mb-4 bg-gradient-to-r from-yellow-900/20 via-black/30 to-black/30 border border-yellow-500/30 rounded-xl p-3">
               <div class="flex items-center justify-between mb-1.5">
@@ -54,18 +66,25 @@
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div v-for="a in achievements" :key="a.badge"
-                :class="a.unlocked
-                  ? 'border-yellow-500/50 bg-gradient-to-br from-yellow-900/20 to-black/30 shadow-lg shadow-yellow-900/20'
-                  : 'border-white/10 bg-black/20'"
-                class="rounded-xl border p-3 flex items-start gap-3 transition">
+              <button v-for="a in achievements" :key="a.badge"
+                @click="selectedAch = a"
+                :class="[
+                  a.unlocked
+                    ? tierClasses(a.tier).unlocked
+                    : 'border-white/10 bg-black/20 hover:border-white/30 hover:bg-black/30',
+                ]"
+                class="text-left rounded-xl border p-3 flex items-start gap-3 transition cursor-pointer">
                 <span class="text-3xl shrink-0 transition"
                   :class="a.unlocked ? '' : 'grayscale opacity-40'">{{ a.icon }}</span>
                 <div class="flex-1 min-w-0">
-                  <p class="text-sm font-mono font-bold truncate"
-                    :class="a.unlocked ? 'text-white' : 'text-white/60'">{{ a.name }}</p>
+                  <div class="flex items-center gap-1.5">
+                    <p class="text-sm font-mono font-bold truncate"
+                      :class="a.unlocked ? 'text-white' : 'text-white/60'">{{ a.name }}</p>
+                    <span v-if="a.unlocked && a.tier"
+                      :class="tierClasses(a.tier).badge"
+                      class="text-[8px] font-mono font-black px-1 py-px rounded uppercase shrink-0">{{ a.tier }}</span>
+                  </div>
                   <p class="text-white/40 text-[11px] font-mono">{{ a.desc }}</p>
-                  <!-- Progress bar para progresivos no desbloqueados -->
                   <div v-if="!a.unlocked && a.progress" class="mt-1.5">
                     <div class="flex items-center justify-between text-[9px] font-mono mb-0.5">
                       <span class="text-white/50">{{ a.progress.current }} / {{ a.progress.target }}</span>
@@ -83,8 +102,57 @@
                     🔒 {{ $t('user.locked') }}
                   </p>
                 </div>
-              </div>
+              </button>
             </div>
+
+            <!-- Detail panel sobre el achievement clickeado. Cierra al
+                 clickar fuera o pulsando ✕. Bug HIGH cazado: el user clickaba
+                 los trofeos esperando que algo pasara y nada. -->
+            <Teleport to="body">
+              <Transition name="modal">
+                <div v-if="selectedAch" @click.self="selectedAch = null"
+                  class="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div class="bg-theme-from border rounded-2xl shadow-2xl max-w-sm w-full p-5"
+                    :class="selectedAch.unlocked ? tierClasses(selectedAch.tier).border : 'border-white/20'">
+                    <div class="flex items-start justify-between mb-4">
+                      <span class="text-6xl"
+                        :class="selectedAch.unlocked ? '' : 'grayscale opacity-40'">{{ selectedAch.icon }}</span>
+                      <button @click="selectedAch = null" class="text-white/40 hover:text-white text-xl">✕</button>
+                    </div>
+                    <div class="flex items-center gap-2 mb-1">
+                      <p class="text-white text-lg font-mono font-bold">{{ selectedAch.name }}</p>
+                      <span v-if="selectedAch.tier"
+                        :class="tierClasses(selectedAch.tier).badge"
+                        class="text-[9px] font-mono font-black px-1.5 py-0.5 rounded uppercase">{{ selectedAch.tier }}</span>
+                    </div>
+                    <p class="text-white/60 text-sm font-mono leading-snug mb-3">{{ selectedAch.desc }}</p>
+                    <div v-if="selectedAch.unlocked" class="border border-yellow-500/30 bg-yellow-900/10 rounded-lg px-3 py-2">
+                      <p class="text-yellow-300 text-[10px] font-mono tracking-widest mb-0.5">✓ DESBLOQUEADO</p>
+                      <p class="text-white/70 text-xs font-mono">+50 TC ganados al desbloquear</p>
+                      <p v-if="selectedAch.unlocked_at" class="text-white/40 text-[10px] font-mono mt-1">
+                        {{ formatAchDate(selectedAch.unlocked_at) }}
+                      </p>
+                    </div>
+                    <div v-else-if="selectedAch.progress" class="border border-cyan-500/30 bg-cyan-900/10 rounded-lg px-3 py-2">
+                      <p class="text-cyan-300 text-[10px] font-mono tracking-widest mb-1">⏳ EN PROGRESO</p>
+                      <p class="text-white/70 text-xs font-mono mb-1">
+                        {{ selectedAch.progress.current }} / {{ selectedAch.progress.target }}
+                        ({{ Math.round((selectedAch.progress.current / selectedAch.progress.target) * 100) }}%)
+                      </p>
+                      <div class="h-1.5 bg-black/40 rounded-full overflow-hidden">
+                        <div class="h-full bg-cyan-500"
+                          :style="{ width: `${(selectedAch.progress.current / selectedAch.progress.target) * 100}%` }"></div>
+                      </div>
+                    </div>
+                    <div v-else class="border border-white/10 bg-black/20 rounded-lg px-3 py-2">
+                      <p class="text-white/40 text-[10px] font-mono tracking-widest mb-0.5">🔒 BLOQUEADO</p>
+                      <p class="text-white/60 text-xs font-mono">Cumple la condición y se desbloquea automáticamente.</p>
+                    </div>
+                  </div>
+                </div>
+              </Transition>
+            </Teleport>
+            </template>
           </div>
 
           <!-- HISTORY -->
@@ -177,6 +245,13 @@
                     :model-value="settings.notif_friends"
                     @update:model-value="updateSetting('notif_friends', $event)"
                   />
+                  <!-- #50 — Sound effects local-only, no roundtrip al server. -->
+                  <ToggleRow
+                    label="🔊 Sound effects"
+                    desc="Daily claim, mission reward, prediction correct. Sintetizado en browser, sin descargas."
+                    :model-value="sfxEnabled"
+                    @update:model-value="toggleSfx"
+                  />
                 </div>
               </div>
               <div class="bg-black/30 border border-white/10 rounded-xl p-4">
@@ -249,6 +324,7 @@ import { useConfirm } from '../composables/useConfirm'
 const { confirm } = useConfirm()
 import { setLocale, type LocaleKey } from '../i18n'
 import ToggleRow from './ToggleRow.vue'
+import { sfx } from '../composables/useSfx'
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -269,9 +345,58 @@ const tabs = computed<{ key: TabKey; label: string }[]>(() => [
 const active = ref<TabKey>('achievements')
 
 const achievements = ref<any[]>([])
+const achievementsLoading = ref(false)
+const achievementsError = ref('')
+const selectedAch = ref<any | null>(null)
+
+// Tier visual mapping para el revamp de trofeos. Bronze/silver/gold/platinum
+// con colores de marca progresivamente más calientes. El frontend solo lo
+// usa para estilizar; el backend determina qué tier tiene cada badge.
+function tierClasses(tier?: string) {
+  switch (tier) {
+    case 'platinum': return {
+      unlocked: 'border-cyan-300/60 bg-gradient-to-br from-cyan-900/30 to-black/30 shadow-lg shadow-cyan-900/30',
+      border: 'border-cyan-300/60',
+      badge: 'bg-cyan-300/20 text-cyan-200 border border-cyan-300/40',
+    }
+    case 'gold': return {
+      unlocked: 'border-yellow-500/60 bg-gradient-to-br from-yellow-900/25 to-black/30 shadow-lg shadow-yellow-900/30',
+      border: 'border-yellow-500/60',
+      badge: 'bg-yellow-500/20 text-yellow-200 border border-yellow-500/40',
+    }
+    case 'silver': return {
+      unlocked: 'border-slate-300/50 bg-gradient-to-br from-slate-700/30 to-black/30 shadow shadow-slate-900/30',
+      border: 'border-slate-300/50',
+      badge: 'bg-slate-400/20 text-slate-200 border border-slate-300/40',
+    }
+    case 'bronze':
+    default: return {
+      unlocked: 'border-orange-700/50 bg-gradient-to-br from-orange-900/20 to-black/30 shadow shadow-orange-900/20',
+      border: 'border-orange-700/50',
+      badge: 'bg-orange-700/20 text-orange-200 border border-orange-700/40',
+    }
+  }
+}
+
+function formatAchDate(ts: number): string {
+  try {
+    const d = new Date(ts * 1000)
+    return `Desbloqueado el ${d.toLocaleDateString()} ${d.toLocaleTimeString().slice(0, 5)}`
+  } catch {
+    return ''
+  }
+}
+
 const settings = ref<Record<string, boolean> | null>(null)
 const txHistory = ref<Array<{ delta: number; reason: string; at: number }>>([])
 const txLoading = ref(false)
+
+// #50 — Toggle local del opt-in de sfx. No va al server.
+const sfxEnabled = ref(sfx.isEnabled())
+function toggleSfx(v: boolean) {
+  sfxEnabled.value = v
+  sfx.setEnabled(v)
+}
 
 // Riot ID link/unlink form
 const linkGameName = ref('')
@@ -344,7 +469,20 @@ watch(active, () => loadActive())
 
 async function loadActive() {
   if (active.value === 'achievements') {
-    achievements.value = await auth.fetchAchievements()
+    // Estado de loading + retry visible. Antes el fetch retornaba [] en
+    // caso de error, el grid quedaba vacío sin ninguna pista, el user
+    // entraba al tab y "no se cargaba nada".
+    achievementsLoading.value = true
+    achievementsError.value = ''
+    try {
+      const res = await auth.fetchAchievements()
+      achievements.value = res
+      if (!res.length) achievementsError.value = 'No se pudieron cargar los trofeos. Reintenta.'
+    } catch (e: any) {
+      achievementsError.value = e?.message || 'Error cargando trofeos.'
+    } finally {
+      achievementsLoading.value = false
+    }
   } else if (active.value === 'settings') {
     settings.value = await auth.fetchSettings()
   } else if (active.value === 'history') {

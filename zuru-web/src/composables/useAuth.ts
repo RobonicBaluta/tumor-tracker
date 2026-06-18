@@ -394,6 +394,14 @@ async function fetchFriends() {
   return await res.json()
 }
 
+/** #29 — Ranking semanal entre amigos. */
+async function fetchFriendsWeekly() {
+  if (!token.value) return null
+  const res = await authedFetch('/friends/weekly')
+  if (!res.ok) return null
+  return await res.json()
+}
+
 async function addFriend(riotId: string) {
   const res = await authedFetch('/friends/add', {
     method: 'POST',
@@ -623,6 +631,7 @@ export function useAuth() {
     cancelRoomBet,
     fetchRoomBets,
     fetchFriends,
+    fetchFriendsWeekly,
     addFriend,
     acceptFriend,
     rejectFriend,
@@ -641,6 +650,7 @@ export function useAuth() {
     fetchPublicProfile,
     braveryData,
     braveryRoll,
+    braveryFullReroll,
     braveryLock,
     braveryCancel,
     braveryReroll,
@@ -673,6 +683,37 @@ async function braveryRoll(opts: {
   })
   if (!res.ok) return null
   return await res.json()
+}
+
+/** #34 — Full reroll de pago (todo el pack, no solo items). Mismo input
+ *  que braveryRoll, pero el server descuenta TC. Returns null si el saldo
+ *  es insuficiente o el server respondió error. (No confundir con
+ *  `braveryReroll` que es el reroll de items de un lock existente.) */
+async function braveryFullReroll(opts: {
+  dimensions: string[]
+  room_code?: string | null
+  item_count?: number
+}) {
+  const res = await authedFetch('/bravery/reroll', {
+    method: 'POST',
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) {
+    // Si el server devolvió un error legible (402, 503, etc.), lo expone
+    // al caller para que el toast lo muestre.
+    try {
+      const err = await res.json()
+      return { error: err.error || `HTTP ${res.status}` }
+    } catch {
+      return { error: `HTTP ${res.status}` }
+    }
+  }
+  const body = await res.json()
+  // Sync balance local con el del server.
+  if (user.value && typeof body.new_balance === 'number') {
+    user.value.currency = body.new_balance
+  }
+  return body
 }
 
 async function braveryLock(opts: {

@@ -5,6 +5,7 @@ import OnboardingTour from './components/OnboardingTour.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import GlobalToast from './components/GlobalToast.vue';
 import PwaInstallBanner from './components/PwaInstallBanner.vue';
+import DailySummaryBanner from './components/DailySummaryBanner.vue';
 import { useAuth } from './composables/useAuth';
 import { useConfirm } from './composables/useConfirm';
 
@@ -159,6 +160,9 @@ provide('THEMES', THEMES)
     <!-- PWA install banner (#44). Self-gated: solo aparece tras 3 visitas en
          días distintos y respeta cooldown de dismiss. -->
     <PwaInstallBanner />
+
+    <!-- Daily summary banner (#30). Self-gated: solo 1 vez por día. -->
+    <DailySummaryBanner />
 
     <!-- Confirm dialog global: cualquier componente puede dispararlo con useConfirm() -->
     <ConfirmDialog
