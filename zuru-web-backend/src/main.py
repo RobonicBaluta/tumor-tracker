@@ -132,24 +132,60 @@ def _extract_perks(perks):
 
 
 _champ_id_name_cache = {}
+_champ_cache_lock = threading.Lock()
+# Si el primer fetch falla, no quedamos con cache vacía permanentemente:
+# reintentamos cada _CHAMP_CACHE_RETRY_AFTER segundos en lugar de quedar
+# colgados hasta restart.
+_champ_cache_last_attempt = {"ts": 0.0}
+_CHAMP_CACHE_RETRY_AFTER = 300  # 5 min entre reintentos si DDragon estaba caído
+
 
 def champ_id_to_name(champ_id):
-    """Resuelve championId → 'Yasuo' usando DDragon (cacheado en memoria)."""
+    """Resuelve championId → 'Yasuo' usando DDragon (cacheado en memoria).
+
+    Defensivo contra fallo del primer fetch: si DDragon estaba caído al
+    primer intento, NO quedamos con cache vacía hasta restart — reintentamos
+    cada _CHAMP_CACHE_RETRY_AFTER segundos. También aprovechamos la cache
+    de bravery_engine si ya está warmeada por su daemon thread."""
     if not champ_id:
         return ""
-    if not _champ_id_name_cache:
-        try:
-            v_res = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=5)
-            version = v_res.json()[0] if v_res.status_code == 200 else "15.1.1"
-            c_res = requests.get(
-                f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json",
-                timeout=5,
-            )
-            if c_res.status_code == 200:
-                for key, info in c_res.json()["data"].items():
-                    _champ_id_name_cache[int(info["key"])] = key
-        except Exception:
-            pass
+
+    with _champ_cache_lock:
+        if not _champ_id_name_cache:
+            # Intentar 1: re-aprovechar la cache de bravery_engine si ya tiene data
+            try:
+                bravery_data = _bravery.get_data()
+                if bravery_data and bravery_data.get("champions"):
+                    for c in bravery_data["champions"]:
+                        try:
+                            _champ_id_name_cache[int(c["id"])] = c["key"]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Intento 2: fetch directo si bravery aún no tiene data Y ha pasado
+            # suficiente tiempo desde el último intento fallido
+            if not _champ_id_name_cache:
+                now = time.time()
+                if (now - _champ_cache_last_attempt["ts"]) >= _CHAMP_CACHE_RETRY_AFTER:
+                    _champ_cache_last_attempt["ts"] = now
+                    try:
+                        v_res = requests.get(
+                            "https://ddragon.leagueoflegends.com/api/versions.json",
+                            timeout=5,
+                        )
+                        version = v_res.json()[0] if v_res.status_code == 200 else "15.1.1"
+                        c_res = requests.get(
+                            f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json",
+                            timeout=5,
+                        )
+                        if c_res.status_code == 200:
+                            for key, info in c_res.json()["data"].items():
+                                _champ_id_name_cache[int(info["key"])] = key
+                    except Exception:
+                        pass
+
     return _champ_id_name_cache.get(int(champ_id), "")
 
 app = Flask(__name__)
@@ -3538,6 +3574,17 @@ def friends_add():
     return jsonify(result)
 
 
+def _invalidate_friends_live_cache(*user_ids):
+    """Saca a uno o varios users del cache de /friends/live.
+    Llamar tras eventos que cambian la lista de amigos (accept/reject/add/remove)
+    para que el dropdown 🟢 vea el cambio sin esperar al TTL de 60s."""
+    if not user_ids:
+        return
+    with _FRIENDS_LIVE_LOCK:
+        for uid in user_ids:
+            _FRIENDS_LIVE_CACHE.pop(uid, None)
+
+
 @app.route('/friends/<int:friendship_id>/accept', methods=['POST'])
 def friends_accept(friendship_id):
     user = _current_user()
@@ -3545,6 +3592,18 @@ def friends_accept(friendship_id):
         return jsonify({"error": "Login requerido"}), 401
     if not _users.accept_friend(user["id"], friendship_id):
         return jsonify({"error": "No se pudo aceptar"}), 400
+    # Invalidar cache friends/live de AMBOS users — ahora son amigos y cada
+    # uno puede ver al otro en partida sin esperar 60s al TTL.
+    try:
+        cur = _users._exec(
+            "SELECT requester_id, target_id FROM friendships WHERE id=?",
+            (friendship_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            _invalidate_friends_live_cache(row[0], row[1])
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 

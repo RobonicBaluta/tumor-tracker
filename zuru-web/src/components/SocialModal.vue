@@ -730,8 +730,10 @@ import { useI18n } from 'vue-i18n'
 import { ROLE_LABEL } from '../composables/overviewConstants'
 import BraveryPanel from './BraveryPanel.vue'
 import { useConfirm } from '../composables/useConfirm'
+import { useToast } from '../composables/useToast'
 
 const { confirm } = useConfirm()
+const { toast } = useToast()
 
 const props = defineProps<{ show: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: []; refresh: [] }>()
@@ -1059,7 +1061,7 @@ async function onAccept(b: any) {
     await loadActive()
     emit('refresh')
   } catch (e: any) {
-    alert(e.message || 'Error')
+    toast.error(e.message || 'Error aceptando la apuesta')
   }
 }
 
@@ -1105,7 +1107,7 @@ async function onCreateRoom() {
     localStorage.setItem(LAST_ROOM_KEY, r.code)
     await loadMyRooms()
   } catch (e: any) {
-    alert(e.message || 'Error creando sala')
+    toast.error(e.message || 'Error creando la sala')
   }
 }
 
@@ -1119,7 +1121,7 @@ async function onJoinRoom() {
     localStorage.setItem(LAST_ROOM_KEY, r.code)
     await loadMyRooms()
   } catch (e: any) {
-    alert(e.message || 'Error uniéndose')
+    toast.error(e.message || 'Error uniéndose a la sala')
   }
 }
 
@@ -1157,7 +1159,7 @@ async function onDeleteCurrent() {
   try {
     const ok = await auth.deleteRoom(currentRoom.value.code)
     if (!ok) {
-      alert('No se pudo borrar la sala')
+      toast.error('No se pudo borrar la sala')
       return
     }
     localStorage.removeItem(LAST_ROOM_KEY)
