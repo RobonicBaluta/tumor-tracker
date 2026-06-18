@@ -2555,6 +2555,12 @@ def analytics_clusters():
         limit = 500
 
     db = _pred_db()
+    # NOTA: no aplicamos DISTINCT ni dedup por puuid. La tabla player_priors_cache
+    # tiene PRIMARY KEY (puuid) con INSERT OR REPLACE, así que cada puuid sólo
+    # vive una vez. Las "repeticiones" que ve el user en la UI vienen del
+    # archetype overlap (dos clusters pueden recibir el mismo nombre porque
+    # los predicados de arquetipo no son mutuamente exclusivos) — el help
+    # panel del frontend lo explica.
     rows = db.execute(
         """SELECT puuid, tier, prior_tumor, sample_size, recent_avg,
                   recent_losses, recent_wins, is_tilted, is_hotstreak, likely_role
@@ -2674,7 +2680,20 @@ def analytics_clusters():
     ]
 
     clusters = []
-    for ci in range(k):
+    # Tracking de archetypes ya asignados para evitar dos clusters con el
+    # mismo nombre (los predicados no son mutuamente exclusivos — antes dos
+    # clusters podían acabar ambos como "Promedio" y el user los percibía
+    # como "repetidos"). Cluster más grande gana el archetype prioritario;
+    # los siguientes caen al siguiente arquetipo que matchea Y no esté
+    # tomado, con fallback a "Promedio".
+    used_archetype_keys: set[str] = set()
+    # Ordenamos los clusters por tamaño DESC antes de asignar archetype para
+    # que los mayores reciban el nombre "preferido".
+    cluster_indices = sorted(
+        [ci for ci in range(k) if any(labels[i] == ci for i in range(len(meta)))],
+        key=lambda ci: -sum(1 for i in range(len(meta)) if labels[i] == ci),
+    )
+    for ci in cluster_indices:
         members = [meta[i] for i in range(len(meta)) if labels[i] == ci]
         if not members:
             continue
@@ -2689,11 +2708,20 @@ def analytics_clusters():
             "tilt_frac": round(tilt_frac * 100, 1),
             "streak_frac": round(streak_frac * 100, 1),
         }
-        # Encuentra archetype
+        # Encuentra el primer archetype que matchea Y no se ha asignado todavía.
+        # Si todos los predicados que matchean ya están tomados, cae a Promedio
+        # (catch-all). "Promedio" puede repetirse: es el bucket de "no destaca
+        # en ningún criterio", y semánticamente es OK tener dos.
         archetype = next(
-            (info for key, predicate, info in ARCHETYPES if predicate(centroid_summary)),
-            ARCHETYPES[-1][2],  # fallback Promedio
+            (info for key, predicate, info in ARCHETYPES
+             if predicate(centroid_summary) and (key == "promedio" or key not in used_archetype_keys)),
+            ARCHETYPES[-1][2],
         )
+        # Marca el key asignado (salvo el catch-all que puede repetirse).
+        for key, _, info in ARCHETYPES:
+            if info is archetype and key != "promedio":
+                used_archetype_keys.add(key)
+                break
         # Ordena samples según el archetype: si es bueno (sort_dir=+1) muestra
         # los mejores primero, si es malo (sort_dir=-1) muestra los peores primero
         members.sort(key=lambda m: (-m["prior_tumor"] if archetype["sort_dir"] == -1

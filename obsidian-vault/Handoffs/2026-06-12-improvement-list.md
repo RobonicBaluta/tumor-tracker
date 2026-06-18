@@ -167,11 +167,26 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 5) — clusters + bravery
+
+- [x] 🧬 Clusters: archetype overlap fix — orden por tamaño DESC + tracking de
+  keys usadas. Dos clusters ya no acaban con el mismo arquetipo (excepto
+  "Promedio" catch-all que es legítimo repetir).
+- [x] 🧬 Clusters UX: k selector (2/4/6/8), botón help con explicación
+  embedded, click en card expande samples con W/L + recent_avg + indicadores
+  inline 🌋/🔥 cuando is_tilted/is_hotstreak.
+- [x] 🎲 Bravery items: fix filtro `maps["11"]` con default `False` — Arena-only
+  items (map "30") que colaban antes ahora excluidos. Items con maps vacío
+  también excluidos (defensive).
+- [x] 🎲 Bravery solo random lane: pickeo frontend de TOP/JG/MID/ADC/SUP al
+  hacer roll + botón 🎲 cambiar para re-rollearla. Rooms intactas (server
+  sigue asignando al lockear desde el pool de 5).
+
 ### Siguiente sesión
 
 - [ ] ⚡ #16 code-split Overview.vue (~154KB ahora, en crecimiento — necesita
   design work para extraer LiveGameModal/AnalyticsModal sin prop drilling)
-- [ ] 🎨 #11 theme auto según role detectado (top→púrpura, jg→verde, etc.)
+- [ ] 🎨 #11 Revamp completo de los temas, no tienen que ser basado en linea, algo mucho mas especial
 - [ ] 🎨 #15 "Compartir como GIF animado" — card con tumor counter 0→valor
 - [ ] 🚀 #31 stats con champion al click en icon (modal con WR/KDA/tumor)
 - [ ] 🐛 #24 daily next_claim_at re-fetch (verificar fix anterior funciona)

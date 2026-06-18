@@ -100,8 +100,14 @@ def _refresh_ddragon():
                     continue
                 if entry.get("inStore") is False:
                     continue
+                # Solo items de Summoner's Rift (map "11"). DDragon usa
+                # {"11":true,"12":false,"30":false} para items SR, mientras
+                # que items exclusivos de Arena (map "30") tienen "11":false
+                # o NO incluyen "11". Default False obliga a la presencia
+                # explícita — fix vs el bug previo (default True) que dejaba
+                # colar Arena items con maps incompletos.
                 maps = entry.get("maps") or {}
-                if maps and not maps.get("11", True):
+                if not maps.get("11", False):
                     continue
                 name = entry.get("name") or ""
                 # Excluir items "Ornn upgrade" (requiredAlly) que no pueden buildearse libremente

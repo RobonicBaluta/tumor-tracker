@@ -176,7 +176,19 @@
           <img v-if="champIcon(lastRoll.champion.name)" :src="champIcon(lastRoll.champion.name)" @error="championIconFallback" class="w-10 h-10 rounded shrink-0" />
           <div class="flex-1 min-w-0">
             <p class="text-white font-mono font-bold text-sm">{{ lastRoll.champion.name }}</p>
-            <p v-if="lastRoll.lane" class="text-cyan-300 text-[10px] font-mono">📍 {{ LANE_LABEL[lastRoll.lane] || lastRoll.lane }}</p>
+            <!-- Sala: lane viene del server, no se re-rollea aquí. -->
+            <p v-if="roomCode && lastRoll.lane" class="text-cyan-300 text-[10px] font-mono">
+              📍 {{ LANE_LABEL[lastRoll.lane] || lastRoll.lane }}
+            </p>
+            <!-- Solo: lane sugerida pickeada en frontend con re-roll a un click. -->
+            <div v-else-if="!roomCode && soloLane" class="flex items-center gap-1.5 mt-0.5">
+              <span class="text-cyan-300 text-[10px] font-mono">📍 {{ LANE_LABEL[soloLane] || soloLane }}</span>
+              <button @click="pickSoloLane"
+                class="text-[9px] font-mono px-1.5 py-0.5 rounded border border-cyan-500/30 text-cyan-300/70 hover:bg-cyan-900/30 hover:text-cyan-200 transition"
+                title="Lane aleatoria">
+                🎲 cambiar
+              </button>
+            </div>
           </div>
         </div>
         <div v-if="lastRoll.items" class="flex gap-1 mt-1.5 flex-wrap">
@@ -271,6 +283,22 @@ const isLoggedIn = computed(() => !!auth?.user.value)
 const dims = ref<string[]>(['champion', 'items'])
 const stake = ref(50)
 const lastRoll = ref<any>(null)
+
+// Solo bravery: lane sugerida random pickeada en frontend (no afecta al lock).
+// En salas el server asigna lane del pool de 5 al hacer lock (no tocamos eso).
+// El user en solo puede re-rollearla con el botón debajo del champion.
+const SOLO_LANES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'] as const
+const soloLane = ref<string | null>(null)
+function pickSoloLane() {
+  const next = SOLO_LANES[Math.floor(Math.random() * SOLO_LANES.length)]
+  // Si por casualidad sale la misma, re-pickea una vez para sensación de cambio
+  if (next === soloLane.value && SOLO_LANES.length > 1) {
+    const alt = SOLO_LANES.filter(l => l !== soloLane.value)
+    soloLane.value = alt[Math.floor(Math.random() * alt.length)]
+  } else {
+    soloLane.value = next
+  }
+}
 const rolling = ref(false)
 const locking = ref(false)
 const cancelling = ref(false)
@@ -369,8 +397,13 @@ async function onRoll() {
       room_code: props.roomCode || null,
       item_count: 5,
     })
-    if (r) lastRoll.value = r
-    else error.value = 'No se pudo aleatorizar'
+    if (r) {
+      lastRoll.value = r
+      // En solo no llega lane desde backend; pickeamos una random local para
+      // que el user pueda jugar SR pretendiendo este lane. En sala lastRoll.lane
+      // ya viene asignado por el server al lockear.
+      if (!props.roomCode) pickSoloLane()
+    } else error.value = 'No se pudo aleatorizar'
   } finally {
     rolling.value = false
   }
