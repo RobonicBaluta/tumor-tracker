@@ -167,6 +167,26 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 11) — #15 GIF share
+
+- [x] 🎨 #15 Share como GIF animado. Tumor counter 0 → finalTumor en
+  ~1.2s con ease-out cubic, 36 frames @ 30fps, último frame se queda
+  1.5s con label "☢ NUCLEAR/TUMOR/etc". Encoder gif.js con web worker
+  (lazy chunked + worker URL via Vite ?url plugin — chunks ~21KB+17KB
+  fuera del initial bundle). Cards 720×720 (vs PNG 1080) — messaging
+  apps recomprimen igual, encoding 2-3s en lugar de 5-6s.
+- Theme-aware: cada GIF usa el gradient + accent del theme actual. Hero
+  number con drop shadow del color tumor + glow. Footer brand.
+- UX: dropdown PNG/GIF en el botón Card (split button: click directo en
+  el icono dispara PNG, ▾ abre menu). Durante encoding el botón muestra
+  % de progreso en lugar del icono.
+- Web Share API si disponible → fallback a anchor.download. Mismo patrón
+  que la PNG existente.
+- Verify 2 fixes: shadow state reset completo + ref al wrapper (en lugar
+  de closest('.relative') que mataba el cierre del dropdown si el user
+  clickeaba en cualquier `.relative` ancestor — champion icons, portrait
+  cards, etc).
+
 ### Sesión 2026-06-18 (continuación 10) — #16 code-split LiveGameModal
 
 - [x] ⚡ #16 (parcial) Extraído `LiveGameModal.vue` de Overview.vue. Lazy-loaded
@@ -298,11 +318,22 @@ Deferred a sesiones dedicadas:
   hacer roll + botón 🎲 cambiar para re-rollearla. Rooms intactas (server
   sigue asignando al lockear desde el pool de 5).
 
-### Siguiente sesión
+### Siguiente sesión (limpieza 2026-06-18)
 
-- [ ] ⚡ #16 code-split Overview.vue (~154KB ahora, en crecimiento — necesita
-  design work para extraer LiveGameModal/AnalyticsModal sin prop drilling)
-- [ ] 🎨 #11 Revamp completo de los temas, no tienen que ser basado en linea, algo mucho mas especial
+Estos items ya están hechos (los listo arriba en sus continuaciones):
+- ~~#11 themes revamp~~ → DONE en cont. 6 (8 themes) + cont. 9-10 (theme.from
+  propagation, radial bg overlay, color-mix utility classes, depth visual).
+- ~~#24 daily next_claim_at re-fetch~~ → DONE en cb9cd9f + verificado en
+  cont. 6.
+- ~~#31 stats con champion modal~~ → DONE en cont. 7 (ChampionStatsModal +
+  4 sites + #14 history DB en cont. 8).
+- #16 code-split → PARCIAL en cont. 10 (LiveGameModal extraído). Próximo
+  candidato: AnalyticsModal (419 LOC, mayor scope que LiveGameModal por
+  tener internal state, filters y backtest runner).
+
+Pendientes reales:
 - [ ] 🎨 #15 "Compartir como GIF animado" — card con tumor counter 0→valor
-- [ ] 🚀 #31 stats con champion al click en icon (modal con WR/KDA/tumor)
-- [ ] 🐛 #24 daily next_claim_at re-fetch (verificar fix anterior funciona)
+- [ ] ⚡ #16 (cont.) AnalyticsModal extract (419 LOC, próximo en bundle ROI)
+- [ ] 🚀 #28 Compare múltiple (3-5 jugadores, hoy solo 2)
+- [ ] ⚡ #20 backend ProcessPoolExecutor (validar primero plan Render)
+- [ ] ⚡ #21 Redis migration (10-15h reales)

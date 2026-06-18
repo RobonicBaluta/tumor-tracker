@@ -237,13 +237,40 @@
             <span>{{ shareCopied ? '✓' : '🔗' }}</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ shareCopied ? 'Copiado' : 'Compartir' }}</span>
           </button>
-          <!-- Card -->
-          <button @click="exportStatsImage" :disabled="exportingImage"
-            class="h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
-            :title="exportingImage ? 'Generando...' : 'Descargar card PNG'">
-            <span>🖼</span>
-            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
-          </button>
+          <!-- Card: dropdown PNG/GIF. Click directo dispara PNG (acción más
+               frecuente). Click sobre el ▾ abre menu para elegir formato. -->
+          <div ref="cardMenuRef" class="relative">
+            <button @click="exportStatsImage" :disabled="exportingImage"
+              class="h-9 pl-2.5 pr-1.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-l-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
+              :title="exportingImage ? (gifProgress > 0 ? `Generando GIF ${gifProgress}%` : 'Generando...') : 'Descargar card PNG'">
+              <span v-if="!exportingImage">🖼</span>
+              <span v-else class="text-[10px]">{{ gifProgress > 0 ? gifProgress + '%' : '⏳' }}</span>
+              <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
+            </button>
+            <button @click="cardMenuOpen = !cardMenuOpen" :disabled="exportingImage"
+              class="h-9 px-1.5 text-sm text-white/60 hover:text-accent border border-l-0 border-white/20 hover:border-accent-40 rounded-r-lg transition font-mono disabled:opacity-30 flex items-center"
+              :title="cardMenuOpen ? 'Cerrar' : 'Más formatos'">
+              <span class="text-[9px]">{{ cardMenuOpen ? '▴' : '▾' }}</span>
+            </button>
+            <Transition name="dropdown">
+              <div v-if="cardMenuOpen"
+                class="absolute right-0 top-10 bg-theme-from border border-accent-40 rounded-lg shadow-2xl p-1.5 min-w-[180px] z-50">
+                <button @click="cardMenuOpen = false; exportStatsImage()"
+                  :disabled="exportingImage"
+                  class="w-full text-left px-3 py-1.5 rounded text-xs font-mono text-white/70 hover:text-accent hover:bg-white/5 transition flex items-center gap-2 disabled:opacity-30">
+                  <span>🖼</span>
+                  <span class="flex-1">PNG · 1080×1080</span>
+                </button>
+                <button @click="cardMenuOpen = false; exportStatsGif()"
+                  :disabled="exportingImage"
+                  class="w-full text-left px-3 py-1.5 rounded text-xs font-mono text-white/70 hover:text-accent hover:bg-white/5 transition flex items-center gap-2 disabled:opacity-30">
+                  <span>🎬</span>
+                  <span class="flex-1">GIF · 720×720</span>
+                  <span class="text-[9px] text-white/30">~2s</span>
+                </button>
+              </div>
+            </Transition>
+          </div>
           <!-- Notif (oculto en perfil público — son notificaciones del owner) -->
           <button v-if="!isPublicView" @click="showNotifications = !showNotifications"
             class="relative h-9 px-2.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-lg transition font-mono flex items-center gap-1.5"
@@ -1795,6 +1822,16 @@ const shareProfile = async () => {
 }
 
 const exportingImage = ref(false)
+// GIF export progress: 0-100. Cuando > 0 y exportingImage es true, mostramos
+// barra de progreso en el botón Card en lugar del icono normal.
+const gifProgress = ref(0)
+// Dropdown PNG/GIF en el botón Card.
+const cardMenuOpen = ref(false)
+// Ref al wrapper del dropdown — usado por el click-outside listener en vez
+// de `closest('.relative')` que hacía falsos positivos en cualquier element
+// con clase .relative (champion icons, portrait cards, etc).
+const cardMenuRef = ref<HTMLDivElement | null>(null)
+function closeCardMenu() { cardMenuOpen.value = false }
 
 // Pinta una matriz QR sobre el canvas. modules es la salida de qrcode-generator
 // (.getModuleCount / .isDark). x,y = esquina sup-izq; size = lado total en px.
@@ -2190,6 +2227,225 @@ const exportStatsImage = async () => {
   }
 }
 
+// =============================================================================
+// GIF export (#15): card mini animado con tumor counter 0 → valor final.
+// Lazy-importa gif.js (+ su worker) para no inflar el initial bundle. La GIF
+// es 720×720 (vs PNG 1080) para que pese menos en chats; messaging apps
+// recomprimen igual así que la pérdida es invisible al ojo.
+// =============================================================================
+const exportStatsGif = async () => {
+  if (exportingImage.value) return
+  exportingImage.value = true
+  gifProgress.value = 0
+  exportError.value = ''
+  try {
+    // Lazy: gif.js entero + URL del worker bundleable por Vite. Si el chunk
+    // tarda, mostramos el botón con spinner pero no jankamos el initial load.
+    const [GIFMod, workerUrlMod] = await Promise.all([
+      import('gif.js'),
+      import('gif.js/dist/gif.worker.js?url'),
+    ])
+    const GIF = (GIFMod as any).default
+    const workerUrl = (workerUrlMod as any).default
+
+    const SIZE = 720
+    const FRAMES = 36           // ~1.2s animación count-up @ 30fps
+    const DELAY_MS = 33         // 30 fps por frame
+    const FINAL_HOLD_MS = 1500  // último frame se queda 1.5s para que se lea
+
+    // Calcula tumor avg (misma fuente que la PNG card).
+    let tumorAvg: number | null = null
+    try {
+      const recent = (filteredMatches.value || []).slice(0, 20)
+      const scores = recent
+        .map((m: any) => m.worst?.tumor_score)
+        .filter((v: any) => typeof v === 'number')
+      if (scores.length) {
+        tumorAvg = Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length)
+      }
+    } catch { /* nada */ }
+    if (tumorAvg === null) {
+      throw new Error('No hay datos suficientes para el GIF (juega más rankeds)')
+    }
+    const finalTumor = tumorAvg
+
+    const FONT_LABEL = '"JetBrains Mono", "Cascadia Mono", Consolas, monospace'
+    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
+
+    // BASE canvas (todo lo que NO cambia entre frames) — fondo, summoner name,
+    // labels. Lo pintamos UNA VEZ y copiamos a cada frame.
+    const baseCanvas = document.createElement('canvas')
+    baseCanvas.width = SIZE
+    baseCanvas.height = SIZE
+    const baseCtx = baseCanvas.getContext('2d')!
+
+    const themeAny = theme.value as any
+    const themeAccent = themeAny.accent || '#c89b3c'
+    const themeFrom = themeAny.from || '#0d1b2a'
+    const themeTo = themeAny.to || '#1b2838'
+
+    // Fondo: gradient diagonal del theme + halo accent radial al top.
+    const bgGrad = baseCtx.createLinearGradient(0, 0, SIZE, SIZE)
+    bgGrad.addColorStop(0, themeFrom)
+    bgGrad.addColorStop(1, themeTo)
+    baseCtx.fillStyle = bgGrad
+    baseCtx.fillRect(0, 0, SIZE, SIZE)
+    const halo = baseCtx.createRadialGradient(SIZE / 2, -50, 30, SIZE / 2, -50, SIZE * 0.7)
+    halo.addColorStop(0, themeAccent + '50')
+    halo.addColorStop(1, themeAccent + '00')
+    baseCtx.fillStyle = halo
+    baseCtx.fillRect(0, 0, SIZE, SIZE * 0.55)
+
+    // Bordes top/bottom: líneas accent sutiles.
+    baseCtx.strokeStyle = themeAccent + 'AA'
+    baseCtx.lineWidth = 2
+    baseCtx.beginPath()
+    baseCtx.moveTo(60, 30); baseCtx.lineTo(SIZE - 60, 30); baseCtx.stroke()
+    baseCtx.beginPath()
+    baseCtx.moveTo(60, SIZE - 30); baseCtx.lineTo(SIZE - 60, SIZE - 30); baseCtx.stroke()
+
+    // Header: HOSPITAL ZURUWEB.
+    baseCtx.fillStyle = '#cbd5e1'
+    baseCtx.font = `bold 13px ${FONT_LABEL}`
+    baseCtx.textAlign = 'center'
+    baseCtx.textBaseline = 'middle'
+    baseCtx.fillText('HOSPITAL ZURUWEB · ONCOLOGÍA', SIZE / 2, 60)
+
+    // Summoner.
+    baseCtx.fillStyle = '#ffffff'
+    baseCtx.font = `bold 36px ${FONT_LABEL}`
+    const sumText = _fitText(baseCtx, summoner.value, SIZE - 100)
+    baseCtx.fillText(sumText, SIZE / 2, 110)
+
+    // Tier en pequeño.
+    if (tier.value && tier.value !== 'UNRANKED') {
+      baseCtx.fillStyle = themeAccent
+      baseCtx.font = `600 18px ${FONT_LABEL}`
+      baseCtx.fillText(`${tier.value} ${division.value || ''}`.trim(), SIZE / 2, 145)
+    }
+
+    // Label "TUMOR PROMEDIO" arriba del número.
+    baseCtx.fillStyle = '#64748b'
+    baseCtx.font = `500 16px ${FONT_LABEL}`
+    baseCtx.fillText('TUMOR PROMEDIO', SIZE / 2, 280)
+
+    // Footer brand.
+    baseCtx.fillStyle = themeAccent
+    baseCtx.font = `bold 14px ${FONT_LABEL}`
+    baseCtx.fillText('TUMOR-TRACKER · ZURUWEB', SIZE / 2, SIZE - 60)
+
+    // Encoder. workers=2 paraleliza el dithering; quality 10 = compromiso
+    // tamaño/calidad razonable para 720px.
+    const gif = new GIF({
+      workers: 2,
+      quality: 10,
+      width: SIZE,
+      height: SIZE,
+      workerScript: workerUrl,
+    })
+    gif.on('progress', (p: number) => {
+      // El encoder reporta progreso de 0..1 después de addFrame; lo mapeamos
+      // al 50-100% del bar (los primeros 50% son el painting + addFrame).
+      gifProgress.value = Math.min(100, Math.round(50 + p * 50))
+    })
+
+    // Frame canvas reusable.
+    const frameCanvas = document.createElement('canvas')
+    frameCanvas.width = SIZE
+    frameCanvas.height = SIZE
+    const frameCtx = frameCanvas.getContext('2d')!
+
+    for (let i = 0; i <= FRAMES; i++) {
+      const progress = i / FRAMES
+      const eased = easeOut(progress)
+      const currentTumor = Math.round(finalTumor * eased)
+      const heroColor = _tumorColor(currentTumor)
+
+      // Copy base.
+      frameCtx.drawImage(baseCanvas, 0, 0)
+
+      // Hero number con drop shadow coloreado.
+      frameCtx.shadowColor = heroColor + '70'
+      frameCtx.shadowBlur = 25
+      frameCtx.shadowOffsetY = 6
+      frameCtx.fillStyle = heroColor
+      frameCtx.font = `bold 230px ${FONT_LABEL}`
+      frameCtx.textAlign = 'center'
+      frameCtx.textBaseline = 'middle'
+      frameCtx.fillText(String(currentTumor), SIZE / 2, SIZE / 2 + 30)
+      // Reset shadow state COMPLETO (verify cazó shadowColor sin reset →
+      // brittle si añadimos shadow al label en el futuro).
+      frameCtx.shadowColor = 'transparent'
+      frameCtx.shadowBlur = 0
+      frameCtx.shadowOffsetY = 0
+
+      // Solo en el frame final mostramos el label (CRACKED / SUS / TUMOR
+      // MALIGNO / etc) — así el "reveal" es claro.
+      if (i === FRAMES) {
+        frameCtx.fillStyle = heroColor
+        frameCtx.font = `bold 30px ${FONT_LABEL}`
+        frameCtx.fillText('☢  ' + _tumorLabel(finalTumor), SIZE / 2, SIZE / 2 + 200)
+      }
+
+      gif.addFrame(frameCanvas, {
+        delay: i === FRAMES ? FINAL_HOLD_MS : DELAY_MS,
+        copy: true,
+      })
+
+      // Yield al main thread cada 6 frames para que la progress bar respire.
+      if (i % 6 === 0) {
+        gifProgress.value = Math.round((i / FRAMES) * 50)
+        await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    // Render — la promesa resuelve cuando el worker termina.
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      gif.on('finished', resolve)
+      gif.on('abort', () => reject(new Error('GIF abortado')))
+      gif.render()
+    })
+
+    // Share o download. Mismo patrón que la PNG (Web Share API → fallback
+    // a anchor.download).
+    const profileSlug = summoner.value.replace('#', '-')
+    const filename = `tumor-tracker-${profileSlug}.gif`
+    const file = new File([blob], filename, { type: 'image/gif' })
+    const nav = navigator as Navigator & {
+      canShare?: (data: { files?: File[] }) => boolean
+      share?: (data: { files?: File[]; title?: string; text?: string }) => Promise<void>
+    }
+    if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({
+          files: [file],
+          title: 'Tumor Tracker · ' + summoner.value,
+          text: '☢ Mi diagnóstico en Tumor Tracker',
+        })
+      } catch (shareErr: any) {
+        if (shareErr?.name !== 'AbortError') {
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url; a.download = filename; a.click()
+          setTimeout(() => URL.revokeObjectURL(url), 1000)
+        }
+      }
+    } else {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename; a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  } catch (e: any) {
+    console.error('GIF export failed:', e)
+    exportError.value = e?.message || 'No se pudo generar el GIF. Reintenta o usa PNG.'
+    setTimeout(() => { exportError.value = '' }, 5000)
+  } finally {
+    exportingImage.value = false
+    gifProgress.value = 0
+  }
+}
+
 // Queues válidos para meter en el hash. Cualquier otro string se ignora silenciosamente.
 const VALID_HASH_QUEUES = new Set(['soloq', 'flex', '450', '1700', 'all'])
 
@@ -2239,12 +2495,25 @@ const parseHashAndLoad = () => {
   login()
 }
 
+// Click outside del dropdown Card cierra el menu. Usa el ref al wrapper
+// (no closest('.relative') que matcheaba CUALQUIER .relative del DOM —
+// champion icons, portrait cards, etc — y dejaba el menu pegado abierto).
+function _onDocClickCloseCardMenu(e: MouseEvent) {
+  if (!cardMenuOpen.value) return
+  const wrap = cardMenuRef.value
+  if (!wrap) { closeCardMenu(); return }
+  const target = e.target as Node | null
+  if (target && wrap.contains(target)) return
+  closeCardMenu()
+}
 onMounted(() => {
   parseHashAndLoad()
   window.addEventListener('hashchange', parseHashAndLoad)
+  document.addEventListener('click', _onDocClickCloseCardMenu)
 })
 onUnmounted(() => {
   window.removeEventListener('hashchange', parseHashAndLoad)
+  document.removeEventListener('click', _onDocClickCloseCardMenu)
   if (loadingFlavorInterval) clearInterval(loadingFlavorInterval)
   if (scanInterval) clearInterval(scanInterval)
   stopGlobalPoller()
