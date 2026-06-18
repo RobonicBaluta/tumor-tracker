@@ -3,6 +3,7 @@ import { ref, computed, provide, onMounted, defineAsyncComponent } from 'vue';
 import Navbar from './components/Navbar.vue';
 import OnboardingTour from './components/OnboardingTour.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
+import GlobalToast from './components/GlobalToast.vue';
 import { useAuth } from './composables/useAuth';
 import { useConfirm } from './composables/useConfirm';
 
@@ -112,6 +113,9 @@ provide('THEMES', THEMES)
           class="text-red-300/60 hover:text-red-200 text-lg leading-none">✕</button>
       </div>
     </Transition>
+
+    <!-- Toasts globales: lanzados desde cualquier componente con useToast() -->
+    <GlobalToast />
 
     <!-- Confirm dialog global: cualquier componente puede dispararlo con useConfirm() -->
     <ConfirmDialog

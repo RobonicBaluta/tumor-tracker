@@ -174,8 +174,8 @@
             <span :class="loading ? 'animate-spin inline-block' : ''">↻</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Refrescar</span>
           </button>
-          <!-- Guardar / Guardada -->
-          <button @click="toggleSaveAccount"
+          <!-- Guardar / Guardada (oculto en perfil público) -->
+          <button v-if="!isPublicView" @click="toggleSaveAccount"
             :class="isSaved ? 'bg-[#c89b3c]/20 border-[#c89b3c]/50 text-[#c89b3c] hover:bg-red-900/20 hover:border-red-500/30 hover:text-red-400' : 'border-white/20 text-white/60 hover:text-[#c89b3c] hover:border-[#c89b3c]/40'"
             class="h-9 px-2.5 text-sm border rounded-lg transition font-mono flex items-center gap-1.5"
             :title="isSaved ? 'Quitar de guardadas' : 'Guardar cuenta'">
@@ -189,8 +189,8 @@
             <span>📊</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Stats</span>
           </button>
-          <!-- Excusa -->
-          <button @click="rollExcuse"
+          <!-- Excusa (oculto en perfil público — broma personal) -->
+          <button v-if="!isPublicView" @click="rollExcuse"
             class="h-9 px-2.5 text-sm text-yellow-200 hover:text-yellow-100 bg-yellow-900/20 border border-yellow-500/40 hover:border-yellow-500/70 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Generar excusa">
             <span>🎲</span>
@@ -210,8 +210,8 @@
             <span>🖼</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
           </button>
-          <!-- Notif -->
-          <button @click="showNotifications = !showNotifications"
+          <!-- Notif (oculto en perfil público — son notificaciones del owner) -->
+          <button v-if="!isPublicView" @click="showNotifications = !showNotifications"
             class="relative h-9 px-2.5 text-sm text-white/60 hover:text-[#c89b3c] border border-white/20 hover:border-[#c89b3c]/40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Notificaciones">
             <span>🔔</span>
@@ -219,13 +219,20 @@
             <span v-if="unreadNotifCount > 0"
               class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">{{ unreadNotifCount }}</span>
           </button>
-          <!-- Logout -->
-          <button @click="logout"
+          <!-- Logout (oculto en perfil público — no es la sesión del visitante) -->
+          <button v-if="!isPublicView" @click="logout"
             class="h-9 px-2.5 text-sm text-white/60 hover:text-white border border-white/20 hover:border-white/40 rounded-lg transition font-mono flex items-center gap-1.5"
             title="Cerrar sesión">
             <span>⎋</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">Salir</span>
           </button>
+          <!-- Badge "👀 VIEWING" cuando es perfil público -->
+          <div v-if="isPublicView"
+            class="h-9 px-3 text-xs text-cyan-300 bg-cyan-950/40 border border-cyan-500/40 rounded-lg font-mono flex items-center gap-1.5"
+            title="Estás viendo el perfil de otro jugador">
+            <span>👀</span>
+            <span class="hidden md:inline text-[10px] uppercase tracking-wide">Perfil público</span>
+          </div>
         </div>
       </div>
 
@@ -1759,6 +1766,9 @@ import {
   championIconUrl, championLoadingUrl,
 } from '../composables/overviewConstants'
 import { API_BASE } from '../composables/useApi'
+import { useToast } from '../composables/useToast'
+
+const { toast } = useToast()
 
 interface TeamAvg {
   kda: number
@@ -2359,11 +2369,18 @@ const exportStatsImage = async () => {
 // Queues válidos para meter en el hash. Cualquier otro string se ignora silenciosamente.
 const VALID_HASH_QUEUES = new Set(['soloq', 'flex', '450', '1700', 'all'])
 
+// Modo public-view: hash empieza con #/u/ → es perfil compartido, NO el del owner.
+// En este modo escondemos botones de owner (Apostar, Excusa, Card, Notif, Logout)
+// para que el visitante vea un perfil limpio sin chrome de propiedad.
+const isPublicView = ref(false)
+
 // Construye el hash completo del perfil + queue. Si se omite queue, conserva el actual.
 function buildProfileHash(slug: string, queue?: string): string {
   const q = queue ?? selectedQueue.value
-  const base = `#/summoner/${encodeURIComponent(slug)}`
-  // 'soloq' es el default — no lo embebemos en el URL para mantenerlo limpio.
+  // Si estamos viendo un perfil público, conservamos el prefijo /u/. Si es el
+  // nuestro, usamos /summoner/ (puede tener queue y refresca controles owner).
+  const prefix = isPublicView.value ? 'u' : 'summoner'
+  const base = `#/${prefix}/${encodeURIComponent(slug)}`
   return q && q !== 'soloq' && VALID_HASH_QUEUES.has(q)
     ? `${base}/${q}`
     : base
@@ -2372,10 +2389,12 @@ function buildProfileHash(slug: string, queue?: string): string {
 const parseHashAndLoad = () => {
   const hash = window.location.hash || ''
   // Acepta: #/summoner/{slug}[/{queue}] · #/u/{slug}[/{queue}]
-  const m = hash.match(/^#\/(?:summoner|u)\/([^/]+)(?:\/([^/]+))?\/?$/)
+  const m = hash.match(/^#\/(summoner|u)\/([^/]+)(?:\/([^/]+))?\/?$/)
   if (!m) return
-  const raw = decodeURIComponent(m[1])
-  const queueFromHash = m[2]
+  // Detectar modo público según el prefijo del hash.
+  isPublicView.value = m[1] === 'u'
+  const raw = decodeURIComponent(m[2])
+  const queueFromHash = m[3]
   // Aplicar queue desde el hash si es válido (antes del fetch para que
   // login() consulte el endpoint con el queue correcto desde la primera petición).
   if (queueFromHash && VALID_HASH_QUEUES.has(queueFromHash)) {
@@ -3641,7 +3660,7 @@ const betToAccept = ref<any>(null)
 
 const openCreateBet = () => {
   if (!auth?.isLoggedIn.value) {
-    alert('Necesitas hacer login con Discord para apostar')
+    toast.warning('Necesitas hacer login con Discord para apostar', { duration: 4500 })
     return
   }
   betModalMode.value = 'create'
@@ -3673,12 +3692,12 @@ const checkBetHash = async () => {
   }
   const bet = await auth.fetchBet(code)
   if (!bet) {
-    alert(`Apuesta ${code} no encontrada`)
+    toast.error(`Apuesta ${code} no encontrada`)
     history.replaceState(null, '', window.location.pathname)
     return
   }
   if (bet.status !== 'open') {
-    alert(`Esta apuesta ya está ${bet.status}`)
+    toast.warning(`Esta apuesta ya está ${bet.status}`)
     history.replaceState(null, '', window.location.pathname)
     return
   }

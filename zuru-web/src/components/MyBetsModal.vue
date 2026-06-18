@@ -140,8 +140,10 @@
 import { ref, computed, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useConfirm } from '../composables/useConfirm'
+import { useToast } from '../composables/useToast'
 
 const { confirm } = useConfirm()
+const { toast } = useToast()
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -299,7 +301,7 @@ async function onCancel(b: Bet) {
     await auth.cancelBet(b.share_code)
     await refresh()
   } catch (e: any) {
-    alert(e.message || 'Error cancelando')
+    toast.error(e.message || 'Error cancelando la apuesta')
   } finally {
     cancelling.value = ''
   }
