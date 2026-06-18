@@ -1984,6 +1984,28 @@ const theme = inject('theme') as any
 
 const ddragonVersion = ref('15.1.1') // fallback; overwritten on mount
 
+// Prefetch hint: inyecta <link rel="prefetch"> al <head> para los icons de
+// los champions más jugados por el user. El browser los baja en idle time
+// (no bloquea renders) y los pone en su HTTP cache; cuando un componente
+// pinta <img src="..."> con la misma URL, sale del cache instant.
+// Idempotente: tracked set para no inyectar dos veces el mismo link entre
+// re-loads de analytics.
+const _prefetchedIcons = new Set<string>()
+function prefetchChampionIcons(pool: Array<{ champion: string }>) {
+  if (!pool?.length || typeof document === 'undefined') return
+  for (const c of pool.slice(0, 20)) {
+    if (!c?.champion) continue
+    const href = `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion.value}/img/champion/${c.champion}.png`
+    if (_prefetchedIcons.has(href)) continue
+    _prefetchedIcons.add(href)
+    const link = document.createElement('link')
+    link.rel = 'prefetch'
+    link.as = 'image'
+    link.href = href
+    document.head.appendChild(link)
+  }
+}
+
 const champData = ref<Record<string, string>>({})
 
 // Cache de DDragon en localStorage con TTL de 24h.
@@ -3130,6 +3152,10 @@ const loadAnalytics = async () => {
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Error')
     analyticsData.value = data
+    // Prefetch hint a los icons de los top champions del user. El browser
+    // los baja en idle time, así que cuando el user abra ChampionStatsModal
+    // o vea el champion_pool con sus icons, ya están en cache HTTP.
+    prefetchChampionIcons(data?.champion_pool || [])
   } catch (err) {
     analyticsError.value = err instanceof Error ? err.message : 'Error desconocido'
   } finally {
@@ -3557,18 +3583,37 @@ const matchPrediction = computed(() => {
   }
 })
 
+// Memoizamos por igualdad de SCALARS: el live game poller reasigna
+// liveGame.value cada ~600ms con un objeto nuevo aunque la predicción no
+// haya cambiado. Sin esto, el computed se recalcula ~100 veces/min y
+// 8 bindings del template re-pintan en el DOM cada vez. Comparamos los
+// 4 scalars relevantes y devolvemos el OBJETO PREVIO si son iguales —
+// Vue ve la misma identidad de referencia y skipea la re-pintura.
+let _cachedLivePrediction: { blueTumor: number; redTumor: number; winner: 'blue' | 'red' | 'tie'; confidence: number } | null = null
 const livePrediction = computed(() => {
-  // Predicción del live. team_tumor en 0-100, gana el menor.
+  let next: { blueTumor: number; redTumor: number; winner: 'blue' | 'red' | 'tie'; confidence: number }
   if (!liveGame.value || !liveGame.value.prediction) {
-    return { blueTumor: 0, redTumor: 0, winner: 'tie' as const, confidence: 0 }
+    next = { blueTumor: 0, redTumor: 0, winner: 'tie', confidence: 0 }
+  } else {
+    const p = liveGame.value.prediction
+    next = {
+      blueTumor: p.blue_team_tumor,
+      redTumor: p.red_team_tumor,
+      winner: p.winner,
+      confidence: p.confidence,
+    }
   }
-  const p = liveGame.value.prediction
-  return {
-    blueTumor: p.blue_team_tumor,
-    redTumor: p.red_team_tumor,
-    winner: p.winner,
-    confidence: p.confidence,
+  // Reuse cached identity si los 4 scalars coinciden.
+  const c = _cachedLivePrediction
+  if (c
+    && c.blueTumor === next.blueTumor
+    && c.redTumor === next.redTumor
+    && c.winner === next.winner
+    && c.confidence === next.confidence) {
+    return c
   }
+  _cachedLivePrediction = next
+  return next
 })
 
 // Si el queue es Arena (1700) o cualquier no-5v5, no hay predicción de equipo.

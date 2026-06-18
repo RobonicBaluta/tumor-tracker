@@ -167,6 +167,43 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 9) — perf items 16-24
+
+Status del bloque que el user pidió:
+
+- [x] #17 `livePrediction` memoize por scalar key — el computed devolvía un
+  objeto NUEVO cada poll (~600ms) aunque blue/red/winner/confidence fueran
+  iguales → 8 bindings re-pintando ~100x/min. Ahora cache de identidad: si
+  los 4 scalars coinciden con el previous, devuelve la MISMA referencia y
+  Vue skipea el re-render. Per recon: ~99% reducción de reactividad
+  innecesaria mientras el live game está abierto.
+- [x] #18 prefetch de champion icons — al cargar `/playerAnalytics` se
+  inyecta `<link rel="prefetch" as="image">` para los icons del
+  champion_pool (top 20). Browser los baja en idle time y entran al HTTP
+  cache. Idempotente vía `_prefetchedIcons` Set. SW ya existe pero no
+  necesitamos tocarlo — el browser respeta el prefetch hint solo.
+- [~] #19 virtual scrolling — **SKIP** per recon. Match list rara vez >50
+  (pagination con "Load more" como checkpoint natural). vue-virtual-scroller
+  +10KB con complejidad alta de refactor por las branches ranked/non-ranked.
+  Re-visitar solo si telemetría muestra users con 200+ matches.
+- [x] #22 cache DDragon defensivo — done en cb9cd9f.
+- [x] #23 friends/live cache invalidation — done en cb9cd9f.
+- [x] #24 daily next_claim_at refetch — done en cb9cd9f + verificado en
+  continuación 6.
+
+Deferred a sesiones dedicadas:
+- #16 code-split Overview.vue — recon recomienda LiveGameModal primero
+  (383 LOC, lowest coupling). Effort real ~2-3h por solo ese, +1h
+  validación. Necesita branch + UX testing post-extract. Mejor en sesión
+  exclusiva.
+- #20 backend ProcessPoolExecutor — riesgo en Render free-tier (1 vCPU
+  hace ProcessPool inútil o peor por overhead pickling) + match_res
+  response objects no son trivialmente picklable. Necesita validar plan
+  Render real antes de invertir.
+- #21 Redis migration — recon revisó el effort de 2h → 10-15h reales
+  (3 caches × wiring + tests + multi-worker). High value pero requiere
+  sesión dedicada por scope.
+
 ### Sesión 2026-06-18 (continuación 8) — themes deep + champ picker + history DB
 
 - [x] 🎨 Themes propagation Phase 1 — `--theme-accent` ahora se respeta en
