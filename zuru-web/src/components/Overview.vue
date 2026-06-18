@@ -1,7 +1,11 @@
 <template>
   <div ref="scrollContainerRef" class="flex-1 flex flex-col overflow-y-auto relative"
     :style="{
-      background: `linear-gradient(to bottom right, ${theme.from}, ${theme.to})`,
+      background: `
+        radial-gradient(ellipse 90% 60% at 50% 0%, color-mix(in srgb, ${(theme as any).accent || '#c89b3c'} 14%, transparent) 0%, transparent 55%),
+        radial-gradient(ellipse 70% 40% at 100% 100%, color-mix(in srgb, ${(theme as any).accent || '#c89b3c'} 10%, transparent) 0%, transparent 60%),
+        linear-gradient(to bottom right, ${theme.from}, ${theme.to})
+      `,
       ['--theme-accent' as any]: (theme as any).accent || '#c89b3c',
     }">
 

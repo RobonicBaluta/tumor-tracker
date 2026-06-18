@@ -184,7 +184,8 @@ const claimDaily = async () => {
 </script>
 
 <template>
-  <nav :class="[navBgColor, 'backdrop-blur-md border-b border-white/20 sticky top-0 z-50 shadow-lg']">
+  <nav :class="[navBgColor, 'backdrop-blur-md border-b border-accent-30 sticky top-0 z-50 shadow-lg']"
+    :style="{ boxShadow: '0 4px 24px -8px color-mix(in srgb, var(--theme-accent, #c89b3c) 35%, transparent)' }">
     <div class="max-w-6xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap justify-center items-center gap-2 sm:gap-4">
       <!-- Anchor tags en lugar de buttons para que:
            - El URL del hover se vea en bottom-left del navegador
@@ -198,9 +199,13 @@ const claimDaily = async () => {
           'px-6 py-2.5 rounded-lg font-bold transition duration-300 font-mono text-sm tracking-wide',
           'hover:-translate-y-1 active:translate-y-0 no-underline',
           currentPage === 'overview'
-            ? 'bg-[#c89b3c] text-black shadow-lg shadow-[#c89b3c]/50'
-            : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
-        ]">
+            ? 'text-black shadow-lg'
+            : 'text-white bg-white/10 hover:bg-white/20 border border-accent-30'
+        ]"
+        :style="currentPage === 'overview' ? {
+          backgroundColor: 'var(--theme-accent, #c89b3c)',
+          boxShadow: '0 10px 15px -3px color-mix(in srgb, var(--theme-accent, #c89b3c) 55%, transparent)'
+        } : undefined">
         Top Tumores
       </a>
       <a href="#/compare" @click.prevent="emit('navigate', 'compare')"
@@ -210,7 +215,7 @@ const claimDaily = async () => {
           'hover:-translate-y-1 active:translate-y-0 no-underline',
           currentPage === 'compare'
             ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/50'
-            : 'text-white bg-white/10 hover:bg-white/20 border border-white/20'
+            : 'text-white bg-white/10 hover:bg-white/20 border border-accent-30'
         ]">
         Versus ⚔️
       </a>
@@ -237,7 +242,7 @@ const claimDaily = async () => {
         </button>
         <Transition name="dropdown">
           <div v-if="showFriendsLive"
-            class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
+            class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-accent-30 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
             <div class="flex items-center justify-between px-4 py-2 border-b border-white/10">
               <p class="text-white/70 text-xs font-mono font-bold">🟢 Amigos en partida</p>
               <button v-if="friendsLiveData" @click="onRefreshFriendsLive" :disabled="friendsLiveLoading"
@@ -292,7 +297,7 @@ const claimDaily = async () => {
           </span>
         </button>
         <Transition name="dropdown">
-          <div v-if="showNotifPanel" class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
+          <div v-if="showNotifPanel" class="absolute right-0 top-12 w-80 bg-[#0d1b2a] border border-accent-30 rounded-xl shadow-2xl z-50 max-h-96 overflow-hidden flex flex-col">
             <div class="flex items-center justify-between px-4 py-2 border-b border-white/10">
               <p class="text-white/70 text-xs font-mono font-bold">🔔 Notificaciones</p>
               <button v-if="notifications.length" @click="markAllRead"
@@ -355,7 +360,7 @@ const claimDaily = async () => {
         </button>
 
         <Transition name="dropdown">
-          <div v-if="showUserMenu && auth.isLoggedIn.value" class="absolute right-0 top-12 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl p-2 min-w-[200px] z-50">
+          <div v-if="showUserMenu && auth.isLoggedIn.value" class="absolute right-0 top-12 bg-[#0d1b2a] border border-accent-30 rounded-xl shadow-2xl p-2 min-w-[200px] z-50">
             <div class="px-3 py-2 border-b border-white/10 mb-1">
               <p class="text-white text-sm font-mono">{{ auth.user.value?.username }}</p>
               <p v-if="auth.user.value?.riot_id" class="text-[#c89b3c] text-[10px] font-mono">{{ auth.user.value?.riot_id }}</p>
@@ -393,7 +398,7 @@ const claimDaily = async () => {
           🎨
         </button>
         <Transition name="dropdown">
-          <div v-if="showThemes" class="absolute right-0 top-10 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl p-2 min-w-[200px] max-h-[70vh] overflow-y-auto z-50">
+          <div v-if="showThemes" class="absolute right-0 top-10 bg-[#0d1b2a] border border-accent-40 rounded-xl shadow-2xl p-2 min-w-[200px] max-h-[70vh] overflow-y-auto z-50">
             <p class="text-white/30 text-[9px] font-mono tracking-widest px-2 pb-2">TEMA</p>
             <button v-for="(t, key) in THEMES" :key="key"
               @click="setTheme(key); showThemes = false"
