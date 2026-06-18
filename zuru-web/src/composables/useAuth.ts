@@ -5,6 +5,20 @@ import { API_BASE } from './useApi'
 
 const TOKEN_KEY = 'zuruweb-jwt'
 
+/**
+ * Header X-TZ-Offset para endpoints que computan boundaries de día (streak
+ * #48). El valor son MINUTOS respecto a UTC, positivo al este. JS reporta
+ * `getTimezoneOffset()` con el SIGNO INVERTIDO (positivo al oeste), así que
+ * invertimos. Para Madrid en CEST (UTC+2) el header vale "120".
+ */
+function tzHeader(): Record<string, string> {
+  try {
+    return { 'X-TZ-Offset': String(-new Date().getTimezoneOffset()) }
+  } catch {
+    return {}
+  }
+}
+
 const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
 const user = ref<{
   id: number
@@ -20,6 +34,8 @@ const user = ref<{
     can_claim: boolean
     next_claim_at: number
     last_claim_at: number
+    streak?: number
+    streak_at_risk?: boolean
   }
 } | null>(null)
 
@@ -38,7 +54,7 @@ async function fetchMe() {
   }
   try {
     const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${token.value}` },
+      headers: { Authorization: `Bearer ${token.value}`, ...tzHeader() },
     })
     if (!res.ok) {
       saveToken(null)
@@ -64,7 +80,7 @@ async function claimDaily() {
   if (!token.value) return null
   const res = await fetch(`${API_BASE}/currency/daily`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token.value}` },
+    headers: { Authorization: `Bearer ${token.value}`, ...tzHeader() },
   })
   if (!res.ok) return null
   const data = await res.json()
@@ -87,7 +103,7 @@ async function refreshBalance() {
   if (!token.value) return
   try {
     const res = await fetch(`${API_BASE}/currency/balance`, {
-      headers: { Authorization: `Bearer ${token.value}` },
+      headers: { Authorization: `Bearer ${token.value}`, ...tzHeader() },
     })
     if (!res.ok) return
     const data = await res.json()

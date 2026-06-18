@@ -4,6 +4,7 @@ import Navbar from './components/Navbar.vue';
 import OnboardingTour from './components/OnboardingTour.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import GlobalToast from './components/GlobalToast.vue';
+import PwaInstallBanner from './components/PwaInstallBanner.vue';
 import { useAuth } from './composables/useAuth';
 import { useConfirm } from './composables/useConfirm';
 
@@ -154,6 +155,10 @@ provide('THEMES', THEMES)
 
     <!-- Toasts globales: lanzados desde cualquier componente con useToast() -->
     <GlobalToast />
+
+    <!-- PWA install banner (#44). Self-gated: solo aparece tras 3 visitas en
+         días distintos y respeta cooldown de dismiss. -->
+    <PwaInstallBanner />
 
     <!-- Confirm dialog global: cualquier componente puede dispararlo con useConfirm() -->
     <ConfirmDialog

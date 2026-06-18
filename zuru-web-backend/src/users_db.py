@@ -101,6 +101,10 @@ def _init_sqlite(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_creator_status ON bets(creator_user_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_taker_status ON bets(taker_user_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bets_status_created ON bets(status, created_at)")
+    # #48 daily_streak / get_recent_transactions / claim_daily COUNT — todos
+    # filtran por (user_id, reason) sobre currency_transactions; sin índice
+    # cada /auth/me hace full scan.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_currency_tx_user_reason ON currency_transactions(user_id, reason, created_at DESC)")
     # Notificaciones por usuario (servidor → cliente, polled).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
@@ -366,6 +370,8 @@ def _init_pg(conn):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_creator_status ON bets(creator_user_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_taker_status ON bets(taker_user_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_status_created ON bets(status, created_at)")
+    # #48 — mismo motivo que en sqlite init: (user_id, reason) hot path.
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_currency_tx_user_reason ON currency_transactions(user_id, reason, created_at DESC)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
             id SERIAL PRIMARY KEY,
@@ -707,18 +713,95 @@ def can_claim_daily(user_id):
     return time.time() - (row[0] or 0) >= DAILY_REWARD_INTERVAL_SECONDS
 
 
-def daily_status(user_id):
+def daily_streak(user_id, tz_offset_minutes=0):
+    """Streak Duolingo-style (#48): días consecutivos en que el user reclamó
+    su daily reward. Calculado on-the-fly desde currency_transactions sin
+    cambios de schema.
+
+    `tz_offset_minutes` es el offset del timezone LOCAL del usuario respecto
+    a UTC (en minutos, como `Date.prototype.getTimezoneOffset() * -1` del
+    browser). Sin esto, un user español que reclama a las 23:50 local lunes
+    y 00:30 local martes (= 21:50 + 22:30 UTC del mismo lunes) vería su
+    streak estancarse porque ambos timestamps caen en el mismo UTC-day.
+    Default 0 = UTC, retrocompat.
+
+    Devuelve: {"current": int, "at_risk": bool, "last_claim_day": str|None}
+
+    Perf: LIMIT 90 — la streak nunca necesita más rows que su ceiling, y
+    90 días de cap acota el scan. Con el índice `idx_currency_tx_user_reason`
+    (ver _init_*), la query es un range scan O(streak_length).
+    """
+    cur = _exec(
+        "SELECT created_at FROM currency_transactions WHERE user_id=? AND reason=? ORDER BY created_at DESC LIMIT 90",
+        (user_id, "daily reward"),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return {"current": 0, "at_risk": False, "last_claim_day": None}
+
+    import datetime as _dt
+
+    # Bucket por día LOCAL del usuario: convertimos UTC → user-local sumando
+    # el offset. Esto bucketea los timestamps al día que el USER ve en su
+    # reloj, no al UTC date.
+    offset_seconds = int(tz_offset_minutes) * 60
+
+    def _day(ts):
+        return _dt.datetime.fromtimestamp(
+            float(ts) + offset_seconds, tz=_dt.timezone.utc,
+        ).date()
+
+    seen = []
+    seen_set = set()
+    for r in rows:
+        d = _day(r[0] or 0)
+        if d in seen_set:
+            continue
+        seen_set.add(d)
+        seen.append(d)
+
+    # `today` en LOCAL del usuario (también con offset aplicado).
+    today = _dt.datetime.fromtimestamp(
+        time.time() + offset_seconds, tz=_dt.timezone.utc,
+    ).date()
+    most_recent = seen[0]
+    gap_today = (today - most_recent).days
+
+    if gap_today > 1:
+        return {"current": 0, "at_risk": False, "last_claim_day": most_recent.isoformat()}
+
+    at_risk = gap_today == 1
+
+    streak = 1
+    for i in range(1, len(seen)):
+        if (seen[i - 1] - seen[i]).days == 1:
+            streak += 1
+        else:
+            break
+
+    return {"current": streak, "at_risk": at_risk, "last_claim_day": most_recent.isoformat()}
+
+
+def daily_status(user_id, tz_offset_minutes=0):
     """Estado completo del daily: amount, can_claim, next_claim_at (epoch s).
-    Usado por el frontend para mostrar countdown sin polling extra."""
+    Usado por el frontend para mostrar countdown sin polling extra.
+
+    `tz_offset_minutes` se forwardea a daily_streak para que el bucketeo de
+    días sea respecto al tz local del user (no UTC). Default 0 mantiene
+    retrocompatibilidad para callers que aún no lo pasan.
+    """
     cur = _exec("SELECT last_claim_at FROM daily_rewards WHERE user_id=?", (user_id,))
     row = cur.fetchone()
     last = float(row[0] or 0) if row else 0.0
     next_claim_at = last + DAILY_REWARD_INTERVAL_SECONDS if last else 0.0
+    streak = daily_streak(user_id, tz_offset_minutes=tz_offset_minutes)
     return {
         "amount": DAILY_REWARD_AMOUNT,
         "can_claim": (time.time() - last) >= DAILY_REWARD_INTERVAL_SECONDS,
         "next_claim_at": next_claim_at,
         "last_claim_at": last,
+        "streak": streak["current"],
+        "streak_at_risk": streak["at_risk"],
     }
 
 

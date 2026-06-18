@@ -48,7 +48,7 @@
               <p :class="bettingClosed ? 'text-red-400' : previewIsUnderdog ? 'text-green-300' : 'text-purple-300'"
                 class="text-3xl font-mono font-black mt-1">x{{ previewMult.toFixed(2) }}</p>
               <p v-if="bettingClosed" class="text-red-400 text-[10px] font-mono font-bold mt-0.5">
-                🚫 VENTANA CERRADA · partida lleva >25 min
+                🚫 VENTANA CERRADA · partida lleva >{{ BET_CLOSE_AT_ELAPSED_MIN }} min
               </p>
               <p v-else-if="previewIsUnderdog" class="text-green-400 text-[10px] font-mono mt-0.5">
                 ⚡ vas contra la predicción · bonus +30%
@@ -221,6 +221,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { BET_CLOSE_AT_ELAPSED_MIN } from '../composables/econConfig'
 
 const props = defineProps<{
   show: boolean

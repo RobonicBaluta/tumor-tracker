@@ -1055,7 +1055,7 @@
               </div>
               <p class="text-white/60 text-xs font-mono leading-relaxed">
                 Apuestas a que <span class="text-yellow-300 font-bold">{{ playerBetState.target.nombre.split('#')[0] }}</span> tendrá un
-                <span class="text-red-400 font-bold">tumor score &gt; 60</span> (será sus). El multiplicador
+                <span class="text-red-400 font-bold">tumor score &gt; {{ SUS_TUMOR_THRESHOLD }}</span> (será sus). El multiplicador
                 escala con su rango: cuanto mejor el rango, más payout (más sorprendente que caiga).
               </p>
               <div>
@@ -1148,6 +1148,7 @@
 
 <script setup lang="ts">
 import { ref, computed, defineAsyncComponent, inject, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { SUS_TUMOR_THRESHOLD } from '../composables/econConfig'
 // Live game modal: lazy-loaded (#16 code-split). El 95% de sessions no
 // abren live game, así que sale del initial bundle. defineAsyncComponent
 // hace que Vite emita el chunk separado y lo cargue al primer v-if true.

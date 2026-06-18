@@ -108,6 +108,24 @@ status: en ejecución
 - Monetización opcional (cosmetic themes, custom card frames) — ¿interesa o queremos f2p?
 - Discord bot que postee cuando amigo entra a partida
 
+## Siguiente sesión — pendientes
+
+Tras la batch 13 quedan ~19 items (de 50). Por valor/effort:
+
+- **#34 Bravery rerolls con coste TC** (1.5h, engagement)
+- **#50 Sound effects** (2h, personality polish)
+- **#28 Compare múltiple 3-5 jugadores** (3h)
+- **#32 Smurf detector con mastery progression** (2h)
+- **#33 Comparar vs promedio del tier** (4h)
+- **#29 Ranking semanal entre amigos** (3h)
+- **#30 Notif resumen diario** (4h)
+- **#46 Bravery leaderboard** (4h)
+- **#47 Achievements tiers bronze/silver/gold** (3h)
+- **#48 Weekly mission con reward 100 TC** (4h)
+- Skip / deferred: #20 ProcessPool (validar plan Render primero),
+  #21 Redis migration (10-15h, sesión dedicada), #36/#37/#38 mega-refactors,
+  #3 ya cubierto por #41, #8/#12/#19 bajo valor
+
 ## Mi top-5 priorizado (orden de ejecución)
 
 1. **#1 alerts → toast** — 30 min, pulido inmediato
@@ -166,6 +184,77 @@ status: en ejecución
   para evitar double-credit en race concurrente. Notif push a cada user
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
+
+### Sesión 2026-06-18 (continuación 13) — batch #39 + #5 + #44 + #48
+
+Cuatro items independientes en un mismo deploy. Cada uno con su recon, fix,
+y la batch entera pasada por verify adversarial de 3 reviewers.
+
+- [x] 🛠 **#39 Magic numbers → `econConfig.ts`**. Mirror del lado frontend de
+  `econ_config.py` con SUS_TUMOR_THRESHOLD, BET_CLOSE_AT_ELAPSED_MIN,
+  DAILY_REWARD_AMOUNT, DAILY_REWARD_INTERVAL_HOURS, WELCOME_BONUS_AMOUNT,
+  LOYALTY_BONUS_AMOUNT, LOYALTY_BONUS_AT_CLAIMS, HOUSE_MULT_MAX. Swap 3
+  call sites: BetModal.vue (25min), Navbar.vue fallback (100 TC), Overview.vue
+  explainer ("tumor > 60"). Header del archivo es honesto: **NO** hay CI
+  check todavía — disciplina manual hasta script de validación.
+
+- [x] 🔥 **#5 v-tooltip directive (tap on mobile, hover on desktop)**.
+  `src/directives/tooltip.ts` — directive global con singleton popup,
+  auto-dismiss 2.5s, hide on tap-outside / scroll capture (cualquier
+  scrollable ancestor, no solo window). Reactivo via WeakMap `metaMap` que
+  guarda el último texto en mounted+updated (sin esto, el handler de
+  touchstart leía el value stale del closure inicial — bug HIGH cazado por
+  review). Cleanup en `unmounted`: remove listener + hideTooltip si era el
+  anchor activo. Registrado en main.ts. Swap de 4 `title=` en Navbar.
+
+- [x] 📱 **#44 PWA install prompt (custom, post-3-visitas)**.
+  `usePwaInstall.ts` composable: captura `beforeinstallprompt` a **nivel
+  módulo** (no en onMounted — bug HIGH: Chrome dispara el evento durante
+  parse y se pierde si esperas a mount). Cuenta visitas en localStorage
+  por día (key `pwa.visitDays.v1`); fallback in-memory para private mode
+  donde LS tira SecurityError (sin esto, Safari private NUNCA vería el
+  banner). VISIT_THRESHOLD=3 días distintos. Dismiss tiene cooldown 14d.
+  iOS Safari: branch separado con instrucciones manuales (Compartir →
+  Añadir a pantalla de inicio). `PwaInstallBanner.vue` montado en App.vue,
+  bottom: `calc(env(safe-area-inset-bottom) + 6.5rem)` para no chocar con
+  BottomNav.
+
+- [x] 🎮 **#48 Daily-streak flame Duolingo-style**.
+  Backend (`users_db.daily_streak(user_id, tz_offset_minutes)`): walk-back
+  desde el día más reciente con bucketing en LOCAL del user (no UTC; sin
+  esto un español que reclama a las 23:50 lunes + 00:30 martes ve la racha
+  estancarse porque ambos timestamps caen en el mismo UTC-day). Aritmética
+  con `timezone.utc` aware (deprecación de `utcfromtimestamp/utcnow` en
+  Python 3.13+). LIMIT 90 + nuevo índice `idx_currency_tx_user_reason` en
+  ambos schemas (SQLite + PG) — sin esto, full scan por cada /auth/me.
+  `daily_status()` incluye `streak` + `streak_at_risk`. Endpoints
+  `/auth/me`, `/currency/balance`, `/currency/daily` leen header
+  `X-TZ-Offset` (minutos al este de UTC).
+  Frontend: `useAuth` envía `X-TZ-Offset` (= `-getTimezoneOffset()`). Tipo
+  User extendido con `daily.streak` / `streak_at_risk`. Navbar muestra
+  badge 🔥+count cuando `streak ≥ 2 || streak_at_risk` — incluye el caso
+  streak=1 a-punto-de-romperse (review MEDIUM: el at_risk con streak=1
+  era INVISIBLE, justo al user que más necesitaba el recordatorio). Pulse
+  + color naranja cuando at_risk. Tooltip via v-tooltip muestra "racha N"
+  solo si N≥1 (en lugar de "racha 0" feo).
+
+**Verify adversarial 3 reviewers (frontend, backend, integration/UX/sec)**
+cazó 4 HIGH + 4 MEDIUM. Todos resueltos antes del commit:
+- HIGH v-tooltip stale closure → WeakMap metaMap updated en mounted+updated.
+- HIGH beforeinstallprompt race → listener a nivel módulo.
+- HIGH falsa documentación econConfig (decía que había CI test, no existe)
+  → header reescrito honesto.
+- HIGH Python 3.13+ deprecation utcfromtimestamp/utcnow → timezone.utc
+  aware.
+- HIGH streak query unbounded + sin índice → LIMIT 90 + nuevo índice.
+- MEDIUM private mode LS fail → fallback in-memory.
+- MEDIUM streak >=2 escondía at_risk en streak=1 → v-if incluye at_risk.
+- MEDIUM streak en UTC en lugar de local user → header X-TZ-Offset
+  end-to-end.
+
+LOW deferred: tooltip orphan al dismiss banner (cubierto por hideTooltip
+en unmounted), recordVisit guard si standalone, todayKey usa LOCAL date
+mientras streak usa offset header (acuerdo cross-convention).
 
 ### Sesión 2026-06-18 (continuación 12) — #16 code-split AnalyticsModal
 
