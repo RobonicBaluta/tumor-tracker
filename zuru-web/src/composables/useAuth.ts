@@ -72,6 +72,14 @@ async function claimDaily() {
     user.value.currency = data.currency
     user.value.can_claim_daily = false
   }
+  // Re-sincronizar el resto del estado (next_claim_at, last_claim_at,
+  // streak, etc.) que el endpoint POST /currency/daily no devuelve.
+  // Esperamos al fetchMe ANTES de devolver para evitar la race window en
+  // la que Navbar.dailyCountdown leía el next_claim_at viejo durante
+  // 100-500ms y el countdown saltaba bruscamente al refrescarse. Swallow
+  // de errores para que un fallo de red en fetchMe no rompa el claim — la
+  // currency/can_claim_daily ya están actualizadas localmente arriba.
+  try { await fetchMe() } catch { /* swallow */ }
   return data
 }
 

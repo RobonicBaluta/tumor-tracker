@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, ref, onMounted, onUnmounted, onBeforeUnmount, defineAsyncComponent } from 'vue';
+import { computed, inject, ref, onMounted, defineAsyncComponent } from 'vue';
+import { useVisibilityPoller } from '../composables/useVisibilityPoller';
 // Modales lazy: la mayoría de visitas no los abre. Saca ~15KB gzip del bundle inicial.
 const MyBetsModal = defineAsyncComponent(() => import('./MyBetsModal.vue'));
 const SocialModal = defineAsyncComponent(() => import('./SocialModal.vue'));
@@ -29,7 +30,6 @@ const showUserModal = ref(false)
 const userModalTab = ref<string | undefined>(undefined)
 const notifications = ref<any[]>([])
 const showNotifPanel = ref(false)
-let notifPollerId: ReturnType<typeof setInterval> | null = null
 
 // Friends LIVE state
 interface FriendsLiveResponse {
@@ -47,7 +47,6 @@ interface FriendsLiveResponse {
 const friendsLiveData = ref<FriendsLiveResponse | null>(null)
 const showFriendsLive = ref(false)
 const friendsLiveLoading = ref(false)
-let friendsLivePollerId: ReturnType<typeof setInterval> | null = null
 
 const friendsLiveCount = computed(() => friendsLiveData.value?.friends?.length ?? 0)
 
@@ -130,18 +129,17 @@ function openNotif(n: any) {
   notifications.value = notifications.value.filter(x => x.id !== n.id)
 }
 
+// Pollers visibility-aware: se pausan cuando la pestaña está hidden y se
+// re-disparan al volver al foreground (ahorro de battery/data en background).
+// Los callbacks ya hacen short-circuit interno si !auth.isLoggedIn — así el
+// poller funciona aunque el user haga login después del mount, sin tener que
+// re-armar setInterval.
+useVisibilityPoller(pollNotifs, 30000, { immediate: true })
+useVisibilityPoller(pollFriendsLive, 90000)
 onMounted(() => {
-  if (auth?.isLoggedIn.value) {
-    pollNotifs()
-    notifPollerId = setInterval(pollNotifs, 30000) // cada 30s
-    // Friends LIVE: lazy primer pull tras 5s (no bloquea load), poll cada 90s
-    setTimeout(pollFriendsLive, 5000)
-    friendsLivePollerId = setInterval(pollFriendsLive, 90000)
-  }
-})
-onUnmounted(() => {
-  if (notifPollerId) clearInterval(notifPollerId)
-  if (friendsLivePollerId) clearInterval(friendsLivePollerId)
+  // Primer pull friendsLive a los 5s sólo si ya hay sesión: no bloquea load.
+  // Si no hay sesión todavía, el poller arrancará en el siguiente tick (90s).
+  if (auth?.isLoggedIn.value) setTimeout(pollFriendsLive, 5000)
 })
 
 const navBgColor = computed(() => {
@@ -161,13 +159,11 @@ const avatarUrl = computed(() => {
   return `https://cdn.discordapp.com/avatars/${u.discord_id}/${u.avatar}.png?size=64`
 })
 
-// Tick global cada 60s para refrescar el countdown del daily reward
+// Tick cada 60s para refrescar el countdown del daily reward. Pausable en
+// background — al volver al foreground el composable hace fire-on-visible y
+// el countdown salta al tiempo correcto sin esperar al próximo tick.
 const nowTs = ref(Date.now() / 1000)
-let _tickInterval: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  _tickInterval = setInterval(() => { nowTs.value = Date.now() / 1000 }, 60_000)
-})
-onBeforeUnmount(() => { if (_tickInterval) clearInterval(_tickInterval) })
+useVisibilityPoller(() => { nowTs.value = Date.now() / 1000 }, 60_000)
 
 const dailyAmount = computed(() => auth?.user.value?.daily?.amount ?? 100)
 const dailyCountdown = computed(() => {

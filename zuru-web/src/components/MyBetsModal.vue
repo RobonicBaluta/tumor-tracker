@@ -122,13 +122,20 @@
         </div>
 
         <!-- Footer -->
-        <div class="px-5 py-3 border-t border-white/10 flex items-center justify-between">
+        <div class="px-5 py-3 border-t border-white/10 flex items-center justify-between gap-3">
           <p class="text-white/30 text-[10px] font-mono">
             {{ $t('bets.current_balance') }}: <span class="text-yellow-300 font-bold">{{ balance }} TC</span>
           </p>
-          <button @click="refresh" class="text-[10px] font-mono text-white/40 hover:text-white/70">
-            ↻ {{ $t('common.refresh') }}
-          </button>
+          <div class="flex items-center gap-3">
+            <button @click="exportCsv" :disabled="!filtered.length"
+              class="text-[10px] font-mono text-white/40 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed"
+              :title="`Descarga ${filtered.length} apuesta(s) según el filtro activo`">
+              ↓ CSV
+            </button>
+            <button @click="refresh" class="text-[10px] font-mono text-white/40 hover:text-white/70">
+              ↻ {{ $t('common.refresh') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -305,6 +312,61 @@ async function onCancel(b: Bet) {
   } finally {
     cancelling.value = ''
   }
+}
+
+// Escape CSV: cualquier celda que contenga ",", '"', '\n' o '\r' va entre
+// comillas dobles con las comillas internas escapadas ("" según RFC 4180).
+function csvCell(v: unknown): string {
+  const s = v === null || v === undefined ? '' : String(v)
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function exportCsv() {
+  const rows = filtered.value
+  if (!rows.length) return
+  const header = [
+    'share_code', 'created_at', 'bet_kind', 'house_or_p2p',
+    'role', 'side', 'opponent', 'match_id',
+    'target_name', 'stat_type', 'threshold', 'stat_actual',
+    'amount', 'status', 'winner_side', 'result', 'net_tc', 'payout_multiplier',
+  ]
+  const body = rows.map(b => [
+    b.share_code,
+    b.created_at ? new Date(b.created_at * 1000).toISOString() : '',
+    b.bet_kind || 'match',
+    b.is_house ? 'house' : 'p2p',
+    myRole(b),
+    mySide(b),
+    opponent(b)?.username || '',
+    b.match_id,
+    b.target_name || '',
+    b.stat_type || '',
+    b.threshold ?? '',
+    b.stat_actual ?? '',
+    b.amount,
+    b.status,
+    b.winner_side || '',
+    b.status === 'resolved'
+      ? (isPush(b) ? 'push' : didIWin(b) ? 'win' : 'loss')
+      : '',
+    netGain(b),
+    b.payout_multiplier ?? '',
+  ])
+  // BOM ﻿ para que Excel/Sheets detecten UTF-8 sin "guessar" latin-1.
+  const csv = '﻿' + [header, ...body].map(r => r.map(csvCell).join(',')).join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const date = new Date().toISOString().slice(0, 10)
+  a.href = url
+  a.download = `tumor-tracker-bets-${filter.value}-${date}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // Liberar URL después de un tick — algunos browsers necesitan el blob vivo
+  // hasta que el download dispatch se complete.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 const summary = computed(() => {

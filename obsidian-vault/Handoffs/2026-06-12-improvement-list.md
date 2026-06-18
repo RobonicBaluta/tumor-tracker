@@ -118,8 +118,23 @@ status: en ejecución
 
 ## Estado de ejecución
 
-- [ ] 🔥 #1 alerts → useToast composable + Toast component
-- [ ] 🐛 #22 cache DDragon defensivo (warm-up + reuse)
-- [ ] 🐛 #23 invalidar friends/live cache
-- [ ] 🚀 #27 perfil público pulido
-- [ ] 📱 #41 bottom-nav mobile (siguiente sesión, scope grande)
+### Sesión 2026-06-18 — bloque cerrado
+
+- [x] 🔥 #1 alerts → useToast composable + Toast component
+- [x] 🐛 #22 cache DDragon defensivo (warm-up + reuse)
+- [x] 🐛 #23 invalidar friends/live cache
+- [x] 🚀 #27 perfil público pulido
+- [x] 🔥 #2 onepiece.mp3 → public/ (no era importado, mover puro y limpio)
+- [x] 🔥 #4 pause pollers cuando tab hidden — composable `useVisibilityPoller` + 5 sites
+- [x] 🔥 #6 glow dorado + text-shadow en card export (4 capas: summoner / hero / podio / QR halo)
+- [x] 🔥 #7 `<img @error>` fallback en champion icons — 14 sites en Overview + 2 Compare + 1 Tinder + 4 BraveryPanel; helper `championIconFallback` con SVG data URL "?"
+- [x] 🐛 #24 daily next_claim_at re-fetch tras claim (await fetchMe, race fixed)
+- [x] 🐛 #26 INDEX sobre `predictions(viewer_puuid, resolved, predicted_winner, created_at DESC)`
+- [x] 🚀 #35 export CSV de bet history desde MyBetsModal (filtro respetado, BOM + RFC 4180)
+- [x] 🛠 #40 type stub para qrcode-generator (`src/types/qrcode-generator.d.ts`)
+
+### Siguiente sesión
+
+- [ ] 📱 #41 bottom-nav mobile (scope grande — recon plan ya en handoff anterior)
+- [ ] 🎨 #14 Discord avatar en challenges + room members (requiere schema change en `room_members`)
+- [ ] ⚡ #16 code-split Overview.vue en subcomponents lazy

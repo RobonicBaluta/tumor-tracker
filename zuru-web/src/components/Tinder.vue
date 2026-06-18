@@ -79,7 +79,7 @@
 
           <!-- Content -->
           <div class="relative p-10 text-center z-10" ref="shareCardRef">
-            <img :src="championIconUrl(playerData.campeon, ddragonVersion)"
+            <img :src="championIconUrl(playerData.campeon, ddragonVersion)" @error="championIconFallback"
               class="w-28 h-28 mx-auto mb-4 rounded-xl shadow-lg animate-pop" />
             <h2 class="text-white text-3xl font-bold">{{ playerData.nombre }}#{{ playerData.tag }}</h2>
             <p class="text-white/60 mb-6">{{ playerData.campeon }}</p>
@@ -147,7 +147,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { API_BASE } from '../composables/useApi'
-import { championIconUrl, championSplashUrl } from '../composables/overviewConstants'
+import { championIconUrl, championSplashUrl, championIconFallback } from '../composables/overviewConstants'
 
 const ddragonVersion = ref('15.1.1')
 fetch('https://ddragon.leagueoflegends.com/api/versions.json')

@@ -49,7 +49,7 @@
         <span class="text-[10px] font-mono text-white/40">x{{ pendingLock.style_mult.toFixed(2) }} · {{ pendingLock.stake }} TC</span>
       </div>
       <div class="flex items-center gap-3">
-        <img v-if="champIcon(pendingLock.champion_name)" :src="champIcon(pendingLock.champion_name)" class="w-12 h-12 rounded shrink-0" />
+        <img v-if="champIcon(pendingLock.champion_name)" :src="champIcon(pendingLock.champion_name)" @error="championIconFallback" class="w-12 h-12 rounded shrink-0" />
         <div class="flex-1 min-w-0">
           <p class="text-white font-mono font-bold text-sm">{{ pendingLock.champion_name }}</p>
           <p v-if="pendingLock.lane" class="text-cyan-300 text-[10px] font-mono">
@@ -173,7 +173,7 @@
       <!-- Roll resultado -->
       <div v-if="lastRoll" class="bg-black/40 border border-purple-500/40 rounded-lg p-2 mt-2">
         <div class="flex items-center gap-2">
-          <img v-if="champIcon(lastRoll.champion.name)" :src="champIcon(lastRoll.champion.name)" class="w-10 h-10 rounded shrink-0" />
+          <img v-if="champIcon(lastRoll.champion.name)" :src="champIcon(lastRoll.champion.name)" @error="championIconFallback" class="w-10 h-10 rounded shrink-0" />
           <div class="flex-1 min-w-0">
             <p class="text-white font-mono font-bold text-sm">{{ lastRoll.champion.name }}</p>
             <p v-if="lastRoll.lane" class="text-cyan-300 text-[10px] font-mono">📍 {{ LANE_LABEL[lastRoll.lane] || lastRoll.lane }}</p>
@@ -207,7 +207,7 @@
       <p class="text-white/30 text-[10px] font-mono tracking-widest">HISTORIAL</p>
       <div v-for="h in historyResolved.slice(0, 5)" :key="h.id"
         class="bg-black/20 border border-white/10 rounded px-2 py-1.5 flex items-center gap-2 text-[10px] font-mono">
-        <img v-if="champIcon(h.champion_name)" :src="champIcon(h.champion_name)" class="w-6 h-6 rounded" />
+        <img v-if="champIcon(h.champion_name)" :src="champIcon(h.champion_name)" @error="championIconFallback" class="w-6 h-6 rounded" />
         <span class="text-white/70 truncate flex-1">{{ h.champion_name }}{{ h.lane ? ' · ' + (LANE_LABEL[h.lane] || h.lane) : '' }}</span>
         <span :class="(h.payout || 0) > h.stake ? 'text-green-400' : h.status === 'refunded' ? 'text-yellow-400' : 'text-red-400'"
           class="font-bold">
@@ -221,7 +221,7 @@
       <p class="text-white/30 text-[10px] font-mono tracking-widest">OTROS EN ESTA SALA</p>
       <div v-for="r in otherRoomLocks" :key="r.id"
         class="bg-black/20 border border-white/10 rounded px-2 py-1.5 flex items-center gap-2 text-[10px] font-mono">
-        <img v-if="champIcon(r.champion_name)" :src="champIcon(r.champion_name)" class="w-6 h-6 rounded" />
+        <img v-if="champIcon(r.champion_name)" :src="champIcon(r.champion_name)" @error="championIconFallback" class="w-6 h-6 rounded" />
         <span class="text-white/70 truncate flex-1">{{ r.champion_name }}{{ r.lane ? ' · ' + (LANE_LABEL[r.lane] || r.lane) : '' }}</span>
         <span class="text-purple-300">x{{ r.style_mult.toFixed(2) }}</span>
         <span class="text-white/40">{{ r.stake }} TC</span>
@@ -233,6 +233,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
+import { championIconFallback } from '../composables/overviewConstants'
 
 const props = defineProps<{
   roomCode?: string | null

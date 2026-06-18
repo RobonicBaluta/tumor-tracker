@@ -37,6 +37,29 @@ export function championLoadingUrl(name: string | null | undefined): string {
   return `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${ddragonChampName(name)}_0.jpg`
 }
 
+// Fallback inline para champion icons que devuelven 404 (champ nuevo cuyo
+// name no normaliza correctamente, o DDragon cayéndose). SVG data URL para
+// no shippear un PNG binario y para que escale a cualquier tamaño sin pixelar.
+// "?" centrado en un cuadrado oscuro con borde dorado sutil — encaja con el
+// resto del theme.
+export const CHAMPION_ICON_FALLBACK =
+  'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+      '<rect width="64" height="64" fill="#1a2638" stroke="#c89b3c44" stroke-width="2"/>' +
+      '<text x="32" y="44" text-anchor="middle" font-family="monospace" font-size="34" font-weight="bold" fill="#c89b3c88">?</text>' +
+    '</svg>',
+  )
+
+export function championIconFallback(e: Event) {
+  const img = e.target as HTMLImageElement | null
+  if (!img) return
+  // Evita loop si el fallback también fallara por algún motivo extraño.
+  if (img.dataset.championFallback === '1') return
+  img.dataset.championFallback = '1'
+  img.src = CHAMPION_ICON_FALLBACK
+}
+
 export const SCAN_MESSAGES = [
   'DETECTANDO TEJIDOS CANCERÍGENOS...',
   'MIDIENDO NIVEL DE TILT EN SANGRE...',

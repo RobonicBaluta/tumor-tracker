@@ -324,6 +324,20 @@ def _pred_db():
                 PRIMARY KEY (match_id, viewer_puuid)
             )
         """)
+        # Índice para predictions_aggregate_stats. Cubre los dos cuellos de
+        # botella:
+        #  1) Filtro WHERE: resolved=1 + predicted_winner IS NOT NULL +
+        #     viewer_puuid = ?  → seek directo sobre el prefijo del índice.
+        #  2) ORDER BY created_at DESC LIMIT 10 (recientes) → usa el sufijo
+        #     del índice sin sort extra.
+        # NOTA: la query de streaks ordena por COALESCE(resolved_at, created_at)
+        # DESC; SQLite no puede usar el índice para ese ORDER BY (expression
+        # opaque), pero sigue acelerando el WHERE — y el LIMIT 200 cae sobre
+        # una población ya filtrada, no sobre el full scan original.
+        _pred_conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_predictions_stats
+            ON predictions(viewer_puuid, resolved, predicted_winner, created_at DESC)
+        """)
         if os.path.exists(PREDICTIONS_FILE):
             try:
                 with open(PREDICTIONS_FILE, "r") as f:
