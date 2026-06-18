@@ -157,9 +157,18 @@
               {{ tier[0] }}{{ division || '' }}
             </span>
           </div>
+          <!-- Badge mobile-only "PERFIL PÚBLICO" cuando el strip del header
+               está oculto en <sm. La versión desktop sigue viva en la strip. -->
+          <div v-if="isPublicView"
+            class="mt-1.5 inline-flex sm:hidden items-center gap-1.5 text-[10px] text-cyan-300 bg-cyan-950/40 border border-cyan-500/40 rounded font-mono px-1.5 py-0.5 uppercase tracking-wide">
+            <span>👀</span>
+            <span>Perfil público</span>
+          </div>
         </div>
-        <!-- Action buttons: icon-only with title tooltips for compactness -->
-        <div class="flex gap-1.5 flex-wrap justify-end shrink-0">
+        <!-- Action buttons: icon-only with title tooltips for compactness.
+             Oculta en mobile (<sm) — BottomNav.vue es el interfaz primario
+             allí. A partir de sm: vuelve la strip horizontal del header. -->
+        <div class="hidden sm:flex gap-1.5 flex-wrap justify-end shrink-0">
           <!-- En directo: keeps text since it's the primary action -->
           <button @click="() => searchLiveGame()" :disabled="liveLoading"
             class="h-9 px-3 text-xs text-red-300 hover:text-red-200 bg-red-950/30 border border-red-500/40 hover:border-red-500/70 rounded-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
@@ -1224,7 +1233,8 @@
 
     <!-- Card export error toast -->
     <Transition name="modal">
-      <div v-if="exportError" class="fixed bottom-6 right-6 z-[60] max-w-sm">
+      <div v-if="exportError" class="fixed right-6 z-[60] max-w-sm"
+        style="bottom: calc(1.5rem + env(safe-area-inset-bottom));">
         <div class="bg-red-950/90 border-2 border-red-500/60 rounded-xl shadow-2xl backdrop-blur px-4 py-3 flex items-start gap-3">
           <span class="text-xl shrink-0">🖼</span>
           <p class="flex-1 text-red-200 text-sm font-mono leading-snug">{{ exportError }}</p>
@@ -1756,12 +1766,45 @@
       </Transition>
     </Teleport>
 
+    <!-- Spacer mobile: deja respirar el último elemento sobre la BottomNav.
+         BottomNav nav ~58px + safe-area-inset-bottom (~34px en iPhone con home
+         indicator). h-24 (96px) cubre Android sin notch y iOS con home
+         indicator. Sólo aplica donde la BottomNav se renderiza. -->
+    <div v-if="summoner && !scanning" class="h-24 sm:hidden" aria-hidden="true"
+      style="height: calc(6rem + env(safe-area-inset-bottom));"></div>
+
+    <!-- BottomNav mobile-only (Teleport interno a body). Renderiza solo cuando
+         hay summoner cargado y no estamos scanneando, para no aparecer en la
+         pantalla de login. Estado de loaders pasado por props para que los
+         botones reflejen "Buscando.../Cargando/etc". -->
+    <BottomNav
+      v-if="summoner && !scanning"
+      :is-public-view="isPublicView"
+      :live-loading="liveLoading"
+      :analytics-loading="analyticsLoading"
+      :exporting-image="exportingImage"
+      :loading="loading"
+      :share-copied="shareCopied"
+      :is-saved="!!isSaved"
+      :unread-notif-count="unreadNotifCount"
+      @live="searchLiveGame()"
+      @stats="openAnalytics"
+      @card="exportStatsImage"
+      @refresh="refresh"
+      @share="shareProfile"
+      @save="toggleSaveAccount"
+      @excuse="rollExcuse"
+      @notif="showNotifications = !showNotifications"
+      @logout="logout"
+    />
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 import BetModal from './BetModal.vue'
+import BottomNav from './BottomNav.vue'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
   EXCUSE_STARTERS, EXCUSE_REASONS, EXCUSE_ENDINGS,

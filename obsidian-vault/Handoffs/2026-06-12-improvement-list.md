@@ -133,8 +133,18 @@ status: en ejecución
 - [x] 🚀 #35 export CSV de bet history desde MyBetsModal (filtro respetado, BOM + RFC 4180)
 - [x] 🛠 #40 type stub para qrcode-generator (`src/types/qrcode-generator.d.ts`)
 
+### Sesión 2026-06-18 (continuación) — fase mobile UX
+
+- [x] 📱 #41 bottom-nav mobile (`BottomNav.vue`: Live/Stats/Card/Más + drawer)
+- [x] 📱 #45 bottom-sheet UserModal en <sm (rounded-t-2xl, items-end, drag handle)
+- [x] Header action strip oculta en mobile (`hidden sm:flex`)
+- [x] Badge "👀 PERFIL PÚBLICO" fallback mobile bajo el título
+- [x] Spacer `calc(6rem + env(safe-area-inset-bottom))` para iOS home indicator
+- [x] Export error toast respeta safe-area-inset-bottom
+
 ### Siguiente sesión
 
-- [ ] 📱 #41 bottom-nav mobile (scope grande — recon plan ya en handoff anterior)
 - [ ] 🎨 #14 Discord avatar en challenges + room members (requiere schema change en `room_members`)
-- [ ] ⚡ #16 code-split Overview.vue en subcomponents lazy
+- [ ] ⚡ #16 code-split Overview.vue en subcomponents lazy (Overview ya está en 148KB)
+- [ ] 📱 #42 pull-to-refresh en match list
+- [ ] 📱 #43 match cards más densas en mobile
