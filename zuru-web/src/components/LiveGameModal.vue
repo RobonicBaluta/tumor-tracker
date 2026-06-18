@@ -105,7 +105,11 @@ const SIDES = [
 </script>
 
 <template>
-  <Transition name="modal">
+  <!-- `appear` necesario: el modal está en un chunk lazy y se monta con
+       `show=true` ya activo en la primera apertura, lo que Vue trata como
+       render inicial (sin enter animation). Mismo bug detectado en
+       AnalyticsModal — extiendo el fix por paridad. -->
+  <Transition name="modal" appear>
     <div v-if="show" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[6vh] sm:pt-4"
       @click.self="emit('close')">
       <div class="bg-theme-from border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">

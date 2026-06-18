@@ -980,425 +980,41 @@
       </div>
     </Transition>
 
-    <!-- Analytics modal -->
-    <Transition name="modal">
-      <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
-        @click.self="closeAnalytics">
-        <div class="bg-theme-from border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
-          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-theme-from/95 backdrop-blur z-10">
-            <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
-            <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
-          </div>
-
-          <div v-if="analyticsLoading" class="flex items-center justify-center py-16">
-            <div class="w-full max-w-2xl px-6 py-8">
-              <p class="text-white/50 font-mono text-xs text-center mb-6 animate-pulse" :key="loadingFlavor">{{ loadingFlavor }}</p>
-              <div class="space-y-5">
-                <div class="bg-white/5 rounded-xl p-5 h-24 shimmer"></div>
-                <div class="bg-white/5 rounded-xl p-5 h-40 shimmer"></div>
-                <div class="grid grid-cols-3 gap-3">
-                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
-                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
-                  <div class="bg-white/5 rounded-xl h-20 shimmer"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-else-if="analyticsError" class="py-16 text-center">
-            <p class="text-red-400 font-mono text-sm">{{ analyticsError }}</p>
-          </div>
-          <div v-else-if="analyticsData" class="p-4 sm:p-6 space-y-8">
-
-            <!-- Filter bar -->
-            <section>
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-2">🔎 FILTROS</p>
-              <div class="flex flex-wrap gap-2 items-center bg-black/30 border border-white/10 rounded-xl p-3">
-                <select v-model="analyticsFilters.role" @change="loadAnalytics"
-                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
-                  <option value="">Cualquier rol</option>
-                  <option value="TOP">Top</option>
-                  <option value="JUNGLE">Jungle</option>
-                  <option value="MIDDLE">Mid</option>
-                  <option value="BOTTOM">ADC</option>
-                  <option value="UTILITY">Support</option>
-                </select>
-                <select v-model="analyticsFilters.result" @change="loadAnalytics"
-                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
-                  <option value="">Todas</option>
-                  <option value="win">Solo wins</option>
-                  <option value="loss">Solo losses</option>
-                </select>
-                <select v-model="analyticsFilters.champion" @change="loadAnalytics"
-                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1 max-w-[160px]">
-                  <option value="">Cualquier champ</option>
-                  <option v-for="c in analyticsData.champion_pool" :key="c.champion" :value="c.champion">
-                    {{ c.champion }} ({{ c.games }})
-                  </option>
-                </select>
-                <select v-model.number="analyticsFilters.count" @change="loadAnalytics"
-                  class="bg-black/40 border border-white/15 text-white/70 text-xs font-mono rounded px-2 py-1">
-                  <option :value="20">Últimas 20</option>
-                  <option :value="30">Últimas 30</option>
-                  <option :value="50">Últimas 50</option>
-                </select>
-                <button @click="analyticsFilters = { champion: '', role: '', result: '', count: 30 }; loadAnalytics()"
-                  class="text-[11px] font-mono text-white/40 hover:text-white/70 px-2 py-1 border border-white/10 rounded">Reset</button>
-                <span class="text-white/30 text-[10px] font-mono ml-auto">{{ analyticsData.total_matches }} partidas</span>
-              </div>
-            </section>
-
-            <!-- Backtest del modelo -->
-            <section>
-              <div class="flex items-center justify-between mb-3">
-                <p class="text-white/30 text-[10px] font-mono tracking-widest">🧪 BACKTEST DEL PREDICTOR</p>
-                <button @click="runBacktest" :disabled="backtestLoading"
-                  class="text-[11px] font-mono px-2.5 py-1 border border-purple-500/40 text-purple-300 hover:border-purple-400/80 rounded disabled:opacity-40">
-                  {{ backtestLoading ? 'Procesando...' : (backtestData ? 'Volver a ejecutar' : 'Ejecutar') }}
-                </button>
-              </div>
-
-              <!-- Progress bar mientras corre -->
-              <div v-if="backtestLoading" class="bg-black/30 border border-purple-500/20 rounded-xl p-4 space-y-3">
-                <p class="text-purple-200 font-mono text-xs">{{ backtestProgress.step || 'Procesando...' }}</p>
-                <div class="w-full bg-white/5 border border-white/10 rounded-full h-2 overflow-hidden">
-                  <div class="h-full bg-gradient-to-r from-purple-500 to-fuchsia-400 transition-all duration-500"
-                    :style="{ width: `${Math.min(100, (backtestProgress.progress / Math.max(1, backtestProgress.total)) * 100)}%` }"></div>
-                </div>
-                <p class="text-white/40 font-mono text-[10px]">{{ backtestProgress.progress }}/{{ backtestProgress.total }} partidas — sigue navegando, te avisamos al terminar 🔔</p>
-              </div>
-
-              <!-- Resultado -->
-              <div v-else-if="backtestData" class="bg-black/30 border border-purple-500/20 rounded-xl p-4">
-                <div class="flex items-baseline gap-6">
-                  <div>
-                    <p :class="backtestData.accuracy >= 60 ? 'text-green-400' : backtestData.accuracy >= 50 ? 'text-yellow-400' : 'text-red-400'"
-                      class="text-4xl font-mono font-black">{{ backtestData.accuracy }}%</p>
-                    <p class="text-white/40 text-[10px] font-mono">acierto real</p>
-                  </div>
-                  <div class="text-sm font-mono text-white/60">
-                    <p>{{ backtestData.correct }} / {{ backtestData.total }} aciertos</p>
-                    <p class="text-white/30 text-xs">{{ backtestData.ties }} partidas sin predicción clara</p>
-                  </div>
-                </div>
-              </div>
-              <p v-else class="text-white/30 font-mono text-xs">Ejecuta el modelo sobre tus últimas 20 partidas ya acabadas para ver su acierto real.</p>
-            </section>
-
-            <!-- Lane diff -->
-            <section v-if="(analyticsData as any).lane_diff">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">⚔ DIFF VS TU LANER</p>
-              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
-                <div class="grid grid-cols-4 gap-4 text-center">
-                  <div>
-                    <p :class="(analyticsData as any).lane_diff.win_lane_rate >= 50 ? 'text-green-400' : 'text-red-400'"
-                      class="text-3xl font-mono font-black">{{ (analyticsData as any).lane_diff.win_lane_rate }}%</p>
-                    <p class="text-white/40 text-[10px] font-mono">ganaste lane</p>
-                  </div>
-                  <div>
-                    <p :class="(analyticsData as any).lane_diff.avg_cs_diff > 0 ? 'text-green-400' : 'text-red-400'"
-                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_cs_diff > 0 ? '+' : '' }}{{ (analyticsData as any).lane_diff.avg_cs_diff }}</p>
-                    <p class="text-white/40 text-[10px] font-mono">CS diff</p>
-                  </div>
-                  <div>
-                    <p :class="(analyticsData as any).lane_diff.avg_dmg_diff > 0 ? 'text-green-400' : 'text-red-400'"
-                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_dmg_diff > 0 ? '+' : '' }}{{ Math.round((analyticsData as any).lane_diff.avg_dmg_diff / 1000) }}k</p>
-                    <p class="text-white/40 text-[10px] font-mono">DMG diff</p>
-                  </div>
-                  <div>
-                    <p :class="(analyticsData as any).lane_diff.avg_kda_diff > 0 ? 'text-green-400' : 'text-red-400'"
-                      class="text-2xl font-mono font-black">{{ (analyticsData as any).lane_diff.avg_kda_diff > 0 ? '+' : '' }}{{ (analyticsData as any).lane_diff.avg_kda_diff }}</p>
-                    <p class="text-white/40 text-[10px] font-mono">KDA diff</p>
-                  </div>
-                </div>
-                <p class="text-white/30 text-[9px] font-mono mt-3 text-center">
-                  Promedio sobre {{ (analyticsData as any).lane_diff.games }} partidas comparando contigo y tu rival directo en la misma posición.
-                </p>
-              </div>
-            </section>
-
-            <!-- Tilt forecast -->
-            <section v-if="(analyticsData as any).tilt_forecast">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🌡 TILT FORECAST</p>
-              <div class="bg-black/30 border rounded-xl p-4"
-                :class="(analyticsData as any).tilt_forecast.score >= 60 ? 'border-red-500/40' : (analyticsData as any).tilt_forecast.score >= 30 ? 'border-yellow-500/40' : 'border-green-500/40'">
-                <div class="flex items-baseline gap-4">
-                  <p :class="(analyticsData as any).tilt_forecast.score >= 60 ? 'text-red-400' : (analyticsData as any).tilt_forecast.score >= 30 ? 'text-yellow-400' : 'text-green-400'"
-                    class="text-4xl font-mono font-black">{{ (analyticsData as any).tilt_forecast.score }}</p>
-                  <div>
-                    <p class="text-white text-sm font-mono">Riesgo de tilt: <span class="font-bold uppercase">{{ (analyticsData as any).tilt_forecast.level }}</span></p>
-                    <p class="text-white/60 text-xs font-mono italic">"{{ (analyticsData as any).tilt_forecast.advice }}"</p>
-                  </div>
-                </div>
-                <ul v-if="(analyticsData as any).tilt_forecast.reasons.length" class="mt-3 space-y-1">
-                  <li v-for="r in (analyticsData as any).tilt_forecast.reasons" :key="r"
-                    class="text-white/50 text-[11px] font-mono flex items-center gap-2">
-                    <span>·</span><span>{{ r }}</span>
-                  </li>
-                </ul>
-              </div>
-            </section>
-
-            <!-- Weekly comparison -->
-            <section v-if="analyticsData.week_stats.this || analyticsData.week_stats.last">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">📅 COMPARATIVA SEMANAL</p>
-              <div class="grid grid-cols-2 gap-4">
-                <div v-for="(w, label) in { 'Esta semana': analyticsData.week_stats.this, 'Semana pasada': analyticsData.week_stats.last }" :key="label"
-                  class="bg-black/30 border border-white/10 rounded-xl p-4">
-                  <p class="text-white/40 text-[10px] font-mono tracking-widest">{{ label }}</p>
-                  <div v-if="w" class="flex items-end gap-4 mt-2">
-                    <div>
-                      <p class="text-white text-2xl font-mono font-black">{{ w.games }}</p>
-                      <p class="text-white/30 text-[9px] font-mono">partidas</p>
-                    </div>
-                    <div>
-                      <p :class="w.winrate >= 50 ? 'text-green-400' : 'text-red-400'" class="text-2xl font-mono font-black">{{ w.winrate }}%</p>
-                      <p class="text-white/30 text-[9px] font-mono">WR ({{ w.wins }}W)</p>
-                    </div>
-                    <div>
-                      <p :class="tumorColor(w.avg_tumor)" class="text-2xl font-mono font-black">{{ w.avg_tumor }}</p>
-                      <p class="text-white/30 text-[9px] font-mono">tumor medio</p>
-                    </div>
-                  </div>
-                  <p v-else class="text-white/30 text-xs font-mono mt-3">Sin partidas</p>
-                </div>
-              </div>
-              <p v-if="weekDelta" class="text-white/40 text-xs font-mono mt-3">
-                <span :class="weekDelta.better ? 'text-green-400' : 'text-red-400'">
-                  {{ weekDelta.better ? '↓' : '↑' }} {{ Math.abs(weekDelta.pct) }}% de tumor vs semana pasada
-                </span>
-                — {{ weekDelta.better ? 'vas mejorando' : 'vas peor' }}
-              </p>
-            </section>
-
-            <!-- Tumor evolution line chart (SVG) -->
-            <section v-if="analyticsData.evolution.length > 1">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">📈 EVOLUCIÓN DEL TUMOR SCORE</p>
-              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
-                <svg :viewBox="`0 0 600 180`" class="w-full h-44">
-                  <!-- gridlines -->
-                  <line v-for="y in [0, 25, 50, 75, 100]" :key="y"
-                    :x1="30" :x2="590" :y1="160 - y * 1.4" :y2="160 - y * 1.4"
-                    stroke="rgba(255,255,255,0.07)" stroke-width="1" />
-                  <text v-for="y in [0, 25, 50, 75, 100]" :key="`t${y}`"
-                    :x="5" :y="164 - y * 1.4" fill="rgba(255,255,255,0.25)" font-size="9" font-family="monospace">{{ y }}</text>
-                  <!-- area -->
-                  <path :d="evolutionAreaPath" fill="url(#tumorGradient)" />
-                  <defs>
-                    <linearGradient id="tumorGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="rgba(239,68,68,0.4)" />
-                      <stop offset="100%" stop-color="rgba(239,68,68,0)" />
-                    </linearGradient>
-                  </defs>
-                  <!-- line -->
-                  <polyline :points="evolutionLinePoints" fill="none" stroke="#f87171" stroke-width="1.8" />
-                  <!-- dots -->
-                  <circle v-for="(pt, i) in evolutionPoints" :key="i" :cx="pt.x" :cy="pt.y" r="3"
-                    :fill="pt.win ? '#4ade80' : '#f87171'" stroke="#0d1b2a" stroke-width="1">
-                    <title>{{ pt.champion }} · {{ pt.win ? 'WIN' : 'LOSS' }} · tumor {{ pt.tumor }}</title>
-                  </circle>
-                </svg>
-                <p class="text-white/30 text-[9px] font-mono mt-1">Verde = win · Rojo = loss · Eje Y = tumor score</p>
-              </div>
-            </section>
-
-            <!-- Horario tóxico -->
-            <section v-if="analyticsData.hour_stats.length">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🕒 HORARIO TÓXICO</p>
-              <div class="bg-black/30 border border-white/10 rounded-xl p-4">
-                <div class="flex items-end gap-[2px]" style="height: 140px;">
-                  <div v-for="h in hourly24" :key="h.hour"
-                    class="flex-1 h-full flex flex-col items-center justify-end gap-1 group relative">
-                    <div class="w-full rounded-t transition-all relative"
-                      :class="h.games === 0 ? 'bg-white/5' : h.winrate >= 60 ? 'bg-green-500/70' : h.winrate >= 50 ? 'bg-yellow-500/70' : 'bg-red-500/70'"
-                      :style="{ height: h.games === 0 ? '4px' : `${Math.max(8, (h.avg_tumor / hourMaxTumor) * 100)}%` }"></div>
-                    <span class="text-white/30 text-[8px] font-mono">{{ String(h.hour).padStart(2, '0') }}</span>
-                    <div v-if="h.games > 0" class="hidden group-hover:block absolute -top-12 left-1/2 -translate-x-1/2 bg-black/95 border border-white/20 rounded px-2 py-1 text-[10px] font-mono text-white whitespace-nowrap z-10 shadow-xl">
-                      {{ String(h.hour).padStart(2,'0') }}h · {{ h.games }}g · {{ h.winrate }}% WR · {{ h.avg_tumor }} tumor
-                    </div>
-                  </div>
-                </div>
-                <p class="text-white/30 text-[9px] font-mono mt-2">Altura = tumor medio · Color = winrate · Pasa el ratón por encima</p>
-              </div>
-            </section>
-
-            <!-- Heatmap de roles -->
-            <!-- Role combo heatmap removed: tabla de correlación rol × rol no aportaba
-                 mucho. Se mantiene la data en el backend; si la queremos otra vez,
-                 descomentar este bloque. -->
-            <!--
-            <section v-if="analyticsData.role_combo_stats.length">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🎯 COMBOS DE ROLES (TÚ × COMPAÑERO)</p>
-              ... (oculto)
-            </section>
-            -->
-
-            <!-- Death heatmap (SR únicamente) -->
-            <section>
-              <div class="flex items-center justify-between mb-3">
-                <p class="text-white/30 text-[10px] font-mono tracking-widest">💀 HEATMAP DE MUERTES (SR)</p>
-                <button @click="loadDeathHeatmap" :disabled="heatmapLoading"
-                  class="text-[11px] font-mono px-2.5 py-1 border border-red-500/40 text-red-300 hover:border-red-400/80 rounded disabled:opacity-40">
-                  {{ heatmapLoading ? 'Procesando...' : (heatmapData ? 'Recargar' : 'Cargar últimas 10') }}
-                </button>
-              </div>
-              <div v-if="heatmapData" class="bg-black/30 border border-white/10 rounded-xl p-3">
-                <p class="text-white/50 text-[10px] font-mono mb-2">
-                  {{ heatmapData.total_deaths }} muertes en {{ heatmapData.matches_processed }} partidas. Más rojo = más muertes en esa zona.
-                </p>
-                <div class="relative mx-auto rounded-lg overflow-hidden" style="max-width: 480px; aspect-ratio: 1 / 1;">
-                  <!-- Background SR shape: blue base bottom-left, red base top-right, jungle middle.
-                       No relying on external images — gradient + lane lines via CSS. -->
-                  <div class="absolute inset-0"
-                    style="background:
-                      radial-gradient(circle at 8% 92%, rgba(59,130,246,0.20) 0%, transparent 18%),
-                      radial-gradient(circle at 92% 8%, rgba(239,68,68,0.20) 0%, transparent 18%),
-                      linear-gradient(135deg, #1a2e3a 0%, #0f1f2a 50%, #2a1a1a 100%);"></div>
-                  <!-- Three lanes -->
-                  <svg class="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <!-- Top lane: top-left corner along the top + right side -->
-                    <path d="M 5,20 L 5,5 L 80,5 L 80,15" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
-                    <!-- Bot lane: bottom-left along bottom + right -->
-                    <path d="M 20,95 L 95,95 L 95,80" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
-                    <!-- Mid lane: diagonal -->
-                    <path d="M 12,88 L 88,12" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="0.7" />
-                    <!-- River: top-right to bottom-left perpendicular to mid -->
-                    <path d="M 70,30 Q 50,50 30,70" fill="none" stroke="rgba(56,189,248,0.18)" stroke-width="2" />
-                  </svg>
-                  <!-- Lane labels (subtle) -->
-                  <div class="absolute top-1 left-3 text-[9px] font-mono text-white/30">TOP</div>
-                  <div class="absolute bottom-1 right-3 text-[9px] font-mono text-white/30">BOT</div>
-                  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-mono text-white/20 rotate-[-45deg]">MID</div>
-                  <div class="absolute bottom-2 left-3 text-[9px] font-mono text-blue-400/50">BLUE</div>
-                  <div class="absolute top-2 right-3 text-[9px] font-mono text-red-400/50">RED</div>
-                  <!-- Heatmap canvas overlay -->
-                  <canvas ref="heatmapCanvas" class="absolute inset-0 w-full h-full pointer-events-none" />
-                </div>
-                <p v-if="!heatmapData.total_deaths" class="text-white/40 text-xs font-mono italic text-center mt-2">
-                  Sin muertes en las últimas {{ heatmapData.matches_processed }} partidas. Bien jugado 👀
-                </p>
-              </div>
-              <p v-else class="text-white/30 font-mono text-xs">
-                Pulsa cargar para ver dónde mueres más en el mapa. Solo SR ranked (SoloQ/Flex), las últimas 10 partidas.
-              </p>
-            </section>
-
-            <!-- Champion pool -->
-            <section v-if="analyticsData.champion_pool && analyticsData.champion_pool.length">
-              <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">🏆 CHAMPION POOL</p>
-              <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
-                <div v-for="c in analyticsData.champion_pool" :key="c.champion"
-                  @click.stop="openChampStats(c.champion)"
-                  class="bg-black/30 border border-white/10 rounded-xl p-2 flex items-center gap-2 cursor-pointer hover:border-yellow-500/40 transition"
-                  :title="`Ver stats con ${c.champion}`">
-                  <img :src="championIconUrl(c.champion, ddragonVersion)" @error="championIconFallback"
-                    class="w-10 h-10 rounded-lg border border-white/20 shrink-0 transition-transform group-hover:scale-105" />
-                  <div class="min-w-0 flex-1">
-                    <p class="text-white text-[11px] font-mono truncate">{{ c.champion }}</p>
-                    <p class="text-[9px] font-mono">
-                      <span :class="c.winrate >= 60 ? 'text-green-400' : c.winrate >= 50 ? 'text-yellow-400' : 'text-red-400'">{{ c.winrate }}%</span>
-                      <span class="text-white/30"> · {{ c.games }}g</span>
-                    </p>
-                    <p :class="tumorColor(c.avg_tumor)" class="text-[9px] font-mono">{{ c.avg_tumor }} tumor</p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Best teammates / Worst nemesis grid -->
-            <section v-if="(analyticsData.best_teammates && analyticsData.best_teammates.length) || (analyticsData.worst_nemesis && analyticsData.worst_nemesis.length)">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div v-if="analyticsData.best_teammates && analyticsData.best_teammates.length">
-                  <p class="text-green-400/70 text-[10px] font-mono tracking-widest mb-2">🌟 BEST TEAMMATES</p>
-                  <div class="bg-black/30 border border-green-500/20 rounded-xl divide-y divide-white/5">
-                    <div v-for="d in analyticsData.best_teammates" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
-                      <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                        @click.stop="openChampStats(d.top_champion)"
-                        class="w-8 h-8 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
-                        :title="`Ver tus stats con ${d.top_champion}`" />
-                      <div class="flex-1 min-w-0">
-                        <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
-                        <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
-                      </div>
-                      <p class="text-green-400 text-sm font-mono font-black">{{ d.winrate }}%</p>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="analyticsData.worst_nemesis && analyticsData.worst_nemesis.length">
-                  <p class="text-red-400/70 text-[10px] font-mono tracking-widest mb-2">💢 WORST NEMESIS</p>
-                  <div class="bg-black/30 border border-red-500/20 rounded-xl divide-y divide-white/5">
-                    <div v-for="d in analyticsData.worst_nemesis" :key="d.puuid" class="flex items-center gap-3 px-3 py-2">
-                      <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                        @click.stop="openChampStats(d.top_champion)"
-                        class="w-8 h-8 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
-                        :title="`Ver tus stats con ${d.top_champion}`" />
-                      <div class="flex-1 min-w-0">
-                        <p class="text-white text-[11px] font-mono truncate">{{ d.nombre }}</p>
-                        <p class="text-white/30 text-[9px] font-mono">{{ d.games }} partidas</p>
-                      </div>
-                      <p class="text-red-400 text-sm font-mono font-black">{{ d.winrate }}%</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <!-- Duos: media de tumor cuando jugáis juntos -->
-            <section v-if="analyticsData.duo_stats.length">
-              <div class="flex items-center justify-between mb-3">
-                <p class="text-white/30 text-[10px] font-mono tracking-widest">🤝 DUOS · TUMOR MEDIO JUNTOS</p>
-                <div class="flex gap-1">
-                  <button @click="duoSortBy = 'combined'"
-                    :class="duoSortBy === 'combined' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
-                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">tumor</button>
-                  <button @click="duoSortBy = 'games'"
-                    :class="duoSortBy === 'games' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
-                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">partidas</button>
-                  <button @click="duoSortBy = 'winrate'"
-                    :class="duoSortBy === 'winrate' ? 'bg-yellow-900/40 text-yellow-300' : 'text-white/40 hover:text-white/70'"
-                    class="text-[9px] font-mono px-2 py-0.5 rounded border border-white/10">winrate</button>
-                </div>
-              </div>
-              <div class="bg-black/30 border border-white/10 rounded-xl divide-y divide-white/5">
-                <div v-for="(d, i) in sortedDuos" :key="d.puuid" class="flex items-center gap-3 px-4 py-3">
-                  <span class="text-white/30 text-xs font-mono w-6">#{{ i + 1 }}</span>
-                  <img :src="championIconUrl(d.top_champion, ddragonVersion)" @error="championIconFallback"
-                    @click.stop="openChampStats(d.top_champion)"
-                    class="w-10 h-10 rounded-lg border border-white/20 cursor-pointer hover:border-yellow-500/60 hover:scale-105 transition"
-                    :title="`Ver tus stats con ${d.top_champion}`" />
-                  <div class="flex-1 min-w-0">
-                    <a :href="profileUrl(d.nombre)" target="_blank" rel="noopener" @click.stop
-                      class="text-white text-sm font-mono truncate block hover:text-accent hover:underline transition">{{ d.nombre }}</a>
-                    <p class="text-white/30 text-[10px] font-mono">{{ d.top_champion }} · {{ d.games }} partidas juntos · {{ d.wins }}W/{{ d.games - d.wins }}L</p>
-                  </div>
-                  <!-- Tumor medio combinado (color escala 0-100, peor = más rojo) -->
-                  <div class="text-center w-16 shrink-0">
-                    <p :class="tumorColor(d.combined_avg_tumor ?? 0)" class="text-2xl font-mono font-black">{{ d.combined_avg_tumor ?? '?' }}</p>
-                    <p class="text-white/30 text-[9px] font-mono">tumor medio</p>
-                  </div>
-                  <!-- Breakdown tu/él -->
-                  <div class="text-right w-20 shrink-0">
-                    <p class="text-[10px] font-mono">
-                      <span class="text-white/40">tú</span>
-                      <span :class="tumorColor(d.my_avg_tumor ?? 0)" class="ml-1 font-bold">{{ d.my_avg_tumor ?? '?' }}</span>
-                    </p>
-                    <p class="text-[10px] font-mono">
-                      <span class="text-white/40">él</span>
-                      <span :class="tumorColor(d.their_avg_tumor ?? 0)" class="ml-1 font-bold">{{ d.their_avg_tumor ?? '?' }}</span>
-                    </p>
-                    <p :class="d.winrate >= 60 ? 'text-green-400' : d.winrate >= 50 ? 'text-yellow-400' : 'text-red-400'"
-                      class="text-[11px] font-mono font-bold mt-0.5">{{ d.winrate }}%</p>
-                  </div>
-                </div>
-              </div>
-              <p class="text-white/30 text-[10px] font-mono italic mt-2">
-                "tumor medio" = media del tumor combinado de ambos en las partidas que jugasteis juntos. Más alto = pareja más tóxica.
-              </p>
-            </section>
-
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <!-- Analytics modal — extracted to AnalyticsModal.vue (#16 cont) for
+         code-split. Lazy chunk, only fetched the first time the user opens
+         analytics. State + handlers + heatmap canvas bridge stay here. -->
+    <AnalyticsModal
+      ref="analyticsModalRef"
+      :show="showAnalytics"
+      :analytics-data="analyticsData"
+      :analytics-loading="analyticsLoading"
+      :analytics-error="analyticsError"
+      v-model:filters="analyticsFilters"
+      :backtest-data="backtestData"
+      :backtest-loading="backtestLoading"
+      :backtest-progress="backtestProgress"
+      :heatmap-data="heatmapData"
+      :heatmap-loading="heatmapLoading"
+      :duo-sort-by="duoSortBy"
+      :sorted-duos="sortedDuos"
+      :hourly24="hourly24"
+      :hour-max-tumor="hourMaxTumor"
+      :week-delta="weekDelta"
+      :evolution-points="evolutionPoints"
+      :evolution-line-points="evolutionLinePoints"
+      :evolution-area-path="evolutionAreaPath"
+      :loading-flavor="loadingFlavor"
+      :summoner="summoner"
+      :ddragon-version="ddragonVersion"
+      :profile-url="profileUrl"
+      @close="closeAnalytics"
+      @reset-filters="analyticsFilters = { champion: '', role: '', result: '', count: 30 }"
+      @load-analytics="loadAnalytics"
+      @run-backtest="runBacktest"
+      @load-heatmap="loadDeathHeatmap"
+      @open-champ-stats="(name: string) => openChampStats(name)"
+      @update-duo-sort="(s: 'combined' | 'games' | 'winrate') => (duoSortBy = s)"
+    />
 
     <!-- Bet modal (crear / created / aceptar) -->
     <BetModal
@@ -1531,11 +1147,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, inject, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, defineAsyncComponent, inject, watch, onMounted, onUnmounted, nextTick } from 'vue'
 // Live game modal: lazy-loaded (#16 code-split). El 95% de sessions no
 // abren live game, así que sale del initial bundle. defineAsyncComponent
 // hace que Vite emita el chunk separado y lo cargue al primer v-if true.
 const LiveGameModal = defineAsyncComponent(() => import('./LiveGameModal.vue'))
+// Analytics modal: misma estrategia (#16 cont). 417 LOC + SVG chart +
+// canvas heatmap + 9 secciones. Sólo lo carga si el user abre Analíticas.
+const AnalyticsModal = defineAsyncComponent(() => import('./AnalyticsModal.vue'))
 import BetModal from './BetModal.vue'
 import BottomNav from './BottomNav.vue'
 import SkeletonCard from './SkeletonCard.vue'
@@ -3180,6 +2799,11 @@ const closeAnalytics = () => {
   showAnalytics.value = false
   analyticsData.value = null
   analyticsError.value = ''
+  // Limpia heatmap al cerrar. Sin esto, en una segunda apertura del modal
+  // el canvas se monta con heatmapData truthy pero drawHeatmap nunca corre
+  // hasta el próximo resize → canvas vacío con headers visibles. Cazado en
+  // la review adversaria (pre-existente, ahora resuelto).
+  heatmapData.value = null
 }
 
 // Rellena las 24 horas con ceros para que el chart sea continuo.
@@ -3312,7 +2936,9 @@ const sortedDuos = computed<DuoStat[]>(() => {
 
 const heatmapData = ref<{ total_deaths: number; matches_processed: number; deaths: Array<{ x: number; y: number }> } | null>(null)
 const heatmapLoading = ref(false)
-const heatmapCanvas = ref<HTMLCanvasElement | null>(null)
+// El canvas vive dentro de AnalyticsModal.vue ahora; el modal lo expone
+// via defineExpose. drawHeatmap() lo lee a través de este template ref.
+const analyticsModalRef = ref<{ heatmapCanvas: HTMLCanvasElement | null } | null>(null)
 
 async function loadDeathHeatmap() {
   if (!summoner.value) return
@@ -3322,8 +2948,13 @@ async function loadDeathHeatmap() {
     const data = await auth.fetchDeathHeatmap(name, tag, 10, 420)
     if (data) {
       heatmapData.value = data
-      // Espera al next tick para que el canvas exista
-      await new Promise(r => setTimeout(r, 50))
+      // El canvas vive dentro de AnalyticsModal. Hace falta esperar el ciclo
+      // del padre → propagación de prop → ciclo del child → template ref bind.
+      // Dos nextTick cubren la cadena padre+child sin recurrir a un setTimeout
+      // mágico. Si en algún device lento aún no estuviera, drawHeatmap
+      // re-early-returns y la próxima resize lo pinta.
+      await nextTick()
+      await nextTick()
       drawHeatmap()
     }
   } finally {
@@ -3332,7 +2963,7 @@ async function loadDeathHeatmap() {
 }
 
 function drawHeatmap() {
-  const canvas = heatmapCanvas.value
+  const canvas = analyticsModalRef.value?.heatmapCanvas ?? null
   if (!canvas || !heatmapData.value) return
   const rect = canvas.getBoundingClientRect()
   canvas.width = rect.width
