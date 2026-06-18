@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, onMounted, defineAsyncComponent } from 'vue';
 import { useVisibilityPoller } from '../composables/useVisibilityPoller';
+import { DAILY_REWARD_AMOUNT } from '../composables/econConfig';
 // Modales lazy: la mayoría de visitas no los abre. Saca ~15KB gzip del bundle inicial.
 const MyBetsModal = defineAsyncComponent(() => import('./MyBetsModal.vue'));
 const SocialModal = defineAsyncComponent(() => import('./SocialModal.vue'));
@@ -160,7 +161,9 @@ const navBgColor = computed(() => {
 const nowTs = ref(Date.now() / 1000)
 useVisibilityPoller(() => { nowTs.value = Date.now() / 1000 }, 60_000)
 
-const dailyAmount = computed(() => auth?.user.value?.daily?.amount ?? 100)
+const dailyAmount = computed(() => auth?.user.value?.daily?.amount ?? DAILY_REWARD_AMOUNT)
+const dailyStreak = computed(() => (auth?.user.value?.daily?.streak ?? 0) as number)
+const dailyStreakAtRisk = computed(() => Boolean(auth?.user.value?.daily?.streak_at_risk))
 const dailyCountdown = computed(() => {
   const next = auth?.user.value?.daily?.next_claim_at
   if (!next) return ''
@@ -225,7 +228,7 @@ const claimDaily = async () => {
       <!-- Hot bets / leaderboards -->
       <button v-if="auth && auth.isLoggedIn.value" @click="socialInitialTab = 'hot'; showSocial = true"
         class="relative px-3 py-2 text-sm rounded-lg border border-white/15 text-white/70 hover:text-yellow-300 hover:border-yellow-500/40 transition font-mono"
-        title="Hot Bets · Leaderboards · Amigos · Salas">
+        v-tooltip="'Hot Bets · Leaderboards · Amigos · Salas'">
         🌐
       </button>
 
@@ -236,7 +239,7 @@ const claimDaily = async () => {
           :class="friendsLiveCount > 0
             ? 'border-red-500/60 text-red-300 bg-red-950/40 hover:bg-red-900/40 animate-pulse'
             : 'border-white/15 text-white/50 hover:text-white/80 hover:border-white/30'"
-          :title="friendsLiveCount > 0 ? `${friendsLiveCount} ${friendsLiveCount === 1 ? 'amigo' : 'amigos'} en partida` : 'Sin amigos en partida'">
+          v-tooltip="friendsLiveCount > 0 ? `${friendsLiveCount} ${friendsLiveCount === 1 ? 'amigo' : 'amigos'} en partida` : 'Sin amigos en partida'">
           <span class="text-base">🟢</span>
           <span v-if="friendsLiveCount > 0" class="text-[10px] font-mono font-bold">{{ friendsLiveCount }}</span>
         </button>
@@ -336,13 +339,28 @@ const claimDaily = async () => {
           :class="auth.user.value.can_claim_daily
             ? 'border border-yellow-500/60 text-yellow-300 bg-yellow-900/20 hover:bg-yellow-900/40 animate-pulse'
             : 'border border-white/15 text-white/40'"
-          :title="auth.user.value.can_claim_daily
-            ? `+${dailyAmount} TC disponible`
-            : `Próximo daily en ${dailyCountdown}`">
+          v-tooltip="auth.user.value.can_claim_daily
+            ? `+${dailyAmount} TC disponible${dailyStreak >= 1 ? ` · 🔥 racha ${dailyStreak}` : ''}`
+            : `Próximo daily en ${dailyCountdown}${dailyStreak >= 1 ? ` · 🔥 racha ${dailyStreak}` : ''}`">
           <span class="text-base leading-none">🎁</span>
           <span v-if="auth.user.value.can_claim_daily" class="font-bold">+{{ dailyAmount }}</span>
           <span v-else class="text-[10px]">{{ dailyCountdown }}</span>
         </button>
+        <!-- #48 Daily-streak flame Duolingo-style. Visible cuando hay racha
+             ≥2 O cuando está at_risk (incluido streak=1 a punto de romperse).
+             at_risk solo o streak<2 con riesgo era invisible al user que MÁS
+             necesita el recordatorio. Bug MEDIUM cazado por review. -->
+        <div v-if="auth.user.value && (dailyStreak >= 2 || dailyStreakAtRisk)"
+          class="text-xs font-mono px-2 py-1.5 rounded-lg border flex items-center gap-1 select-none"
+          :class="dailyStreakAtRisk
+            ? 'border-orange-500/50 text-orange-300 bg-orange-950/30 animate-pulse'
+            : 'border-yellow-500/40 text-yellow-200 bg-yellow-950/20'"
+          v-tooltip="dailyStreakAtRisk
+            ? `Racha de ${dailyStreak} días — reclama hoy o se rompe`
+            : `Racha de ${dailyStreak} días consecutivos reclamando daily`">
+          <span class="text-base leading-none">🔥</span>
+          <span class="font-bold">{{ dailyStreak }}</span>
+        </div>
       </div>
 
       <!-- Login / user menu -->
@@ -394,7 +412,7 @@ const claimDaily = async () => {
       <div class="relative">
         <button @click="showThemes = !showThemes"
           class="w-8 h-8 rounded-full border border-white/20 bg-white/10 hover:bg-white/20 transition flex items-center justify-center text-sm"
-          title="Cambiar tema">
+          v-tooltip="'Cambiar tema'">
           🎨
         </button>
         <Transition name="dropdown">

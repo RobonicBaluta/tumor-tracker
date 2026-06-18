@@ -3270,15 +3270,31 @@ def auth_rso_callback():
     return redirect(f"{_auth.FRONTEND_URL}?token={jwt}")
 
 
+def _client_tz_offset_minutes():
+    """Lee el header X-TZ-Offset (minutos respecto a UTC, positivo al este).
+    El frontend lo envía como `-new Date().getTimezoneOffset()` para que el
+    streak Duolingo (#48) bucketee días en LOCAL del user, no en UTC.
+    Default 0 (UTC) si el header falta o no parsea — retrocompat segura."""
+    raw = request.headers.get("X-TZ-Offset", "")
+    try:
+        v = int(raw)
+        # Clamp razonable: ningún timezone real está fuera de [-720, 840] min.
+        if -720 <= v <= 840:
+            return v
+    except (ValueError, TypeError):
+        pass
+    return 0
+
+
 @app.route('/auth/me', methods=['GET'])
 def auth_me():
     """Devuelve el user actual basado en el JWT."""
     user = _current_user()
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
-    daily = _users.daily_status(user["id"])
+    daily = _users.daily_status(user["id"], tz_offset_minutes=_client_tz_offset_minutes())
     user["can_claim_daily"] = daily["can_claim"]
-    user["daily"] = daily   # {amount, can_claim, next_claim_at, last_claim_at}
+    user["daily"] = daily   # {amount, can_claim, next_claim_at, last_claim_at, streak, streak_at_risk}
     return jsonify(user)
 
 
@@ -3321,7 +3337,7 @@ def currency_balance():
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
     txs = _users.get_recent_transactions(user["id"], limit=20)
-    daily = _users.daily_status(user["id"])
+    daily = _users.daily_status(user["id"], tz_offset_minutes=_client_tz_offset_minutes())
     return jsonify({
         "currency": user["currency"],
         "can_claim_daily": daily["can_claim"],
@@ -3339,7 +3355,7 @@ def currency_daily():
     new_balance = _users.claim_daily(user["id"])
     if new_balance is None:
         return jsonify({"error": "Aún no puedes reclamar el daily reward"}), 429
-    return jsonify({"currency": new_balance, "awarded": awarded, "daily": _users.daily_status(user["id"])})
+    return jsonify({"currency": new_balance, "awarded": awarded, "daily": _users.daily_status(user["id"], tz_offset_minutes=_client_tz_offset_minutes())})
 
 
 # ============================================================================
