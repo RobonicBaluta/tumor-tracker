@@ -448,7 +448,9 @@
         <div v-for="(match, index) in filteredMatches" :key="match.match_id"
           class="group relative bg-black/30 backdrop-blur-sm rounded-xl overflow-hidden border border-white/10 animate-fade hover:border-white/20 transition cursor-pointer"
           :style="{ animationDelay: `${Math.min(index * 55, 550)}ms` }"
-          @click="openMatchDetail(match.match_id)">
+          @click="openMatchDetail(match.match_id)"
+          @mouseenter="onMatchHoverEnter(match, $event)"
+          @mouseleave="onMatchHoverLeave">
 
           <!-- Remake overlay -->
           <div v-if="match.game_duration < 300"
@@ -1017,6 +1019,51 @@
       @open-champ-stats="(name: string) => openChampStats(name)"
       @update-duo-sort="(s: 'combined' | 'games' | 'winrate') => (duoSortBy = s)"
     />
+
+    <!-- #12 — Hover preview de partida. Teleported a body para escapar el
+         overflow del contenedor de matches. Solo desktop (hover:none salta
+         en mobile). Datos del MatchOverview ya cargado — sin fetch. -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="hoverMatch"
+          class="fixed z-[80] pointer-events-none"
+          :style="hoverPreviewStyle">
+          <div class="bg-theme-from/95 backdrop-blur-md border rounded-xl shadow-2xl p-3"
+            :class="hoverMatch.win ? 'border-blue-500/40' : 'border-red-500/40'">
+            <!-- Header: queue + duración + fecha -->
+            <div class="flex items-center justify-between mb-2 pb-1.5 border-b border-white/10">
+              <p class="text-[9px] font-mono tracking-widest text-white/50">
+                {{ hoverMatch.queue_name || 'QUEUE' }} · {{ formatHoverDuration(hoverMatch.game_duration) }}
+              </p>
+              <span :class="hoverMatch.win ? 'text-blue-300' : 'text-red-300'"
+                class="text-[10px] font-mono font-bold">{{ hoverMatch.win ? 'WIN' : 'LOSS' }}</span>
+            </div>
+            <!-- Tu detalle -->
+            <div class="mb-2">
+              <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">TÚ · {{ hoverMatch.my_champion }}</p>
+              <div class="grid grid-cols-4 gap-1.5 text-center text-[10px] font-mono">
+                <div><p class="text-white font-bold">{{ hoverMatch.my_kills }}/{{ hoverMatch.my_deaths }}/{{ hoverMatch.my_assists }}</p><p class="text-white/30 text-[8px]">K/D/A</p></div>
+                <div><p class="text-accent font-bold">{{ hoverMatch.my_kda }}</p><p class="text-white/30 text-[8px]">KDA</p></div>
+                <div><p class="text-white font-bold">{{ hoverMatch.my_cs }}</p><p class="text-white/30 text-[8px]">CS</p></div>
+                <div><p class="text-white font-bold">{{ Math.round(hoverMatch.my_damage / 1000) }}k</p><p class="text-white/30 text-[8px]">DMG</p></div>
+              </div>
+            </div>
+            <!-- Worst player (si existe) -->
+            <div v-if="hoverMatch.worst">
+              <p class="text-orange-300/70 text-[9px] font-mono tracking-widest mb-1">PEOR · {{ hoverMatch.worst.campeon }}</p>
+              <div class="flex items-center justify-between text-[10px] font-mono">
+                <span class="text-white/80 truncate flex-1 mr-2">{{ hoverMatch.worst.nombre }}</span>
+                <span class="text-orange-200">{{ hoverMatch.worst.kills }}/{{ hoverMatch.worst.deaths }}/{{ hoverMatch.worst.assists }}</span>
+              </div>
+            </div>
+            <!-- Footer -->
+            <p class="text-white/30 text-[8px] font-mono mt-2 pt-1.5 border-t border-white/5">
+              {{ formatHoverDate(hoverMatch.game_date) }} · clic para detalle
+            </p>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Bet modal (crear / created / aceptar) -->
     <BetModal
@@ -2298,6 +2345,55 @@ function openChampStats(name?: string | null) {
 const selectedMatchId = ref<string | null>(null)
 const matchDetail = ref<MatchDetail | null>(null)
 const loadingDetail = ref(false)
+
+// #12 — Hover preview de partidas. Hovers de >250ms muestran un popup
+// con stats ampliadas (queue, duración, tu detalle, worst player). Sin
+// fetch — solo usa data ya cargada en MatchOverview. Mobile: no aplica
+// (touch device fija el detalle abierto en lugar de hover).
+const hoverMatch = ref<MatchOverview | null>(null)
+const hoverAnchorRect = ref<{ left: number; top: number; right: number; bottom: number } | null>(null)
+let hoverShowTimer: number | null = null
+const HOVER_DELAY_MS = 250
+function onMatchHoverEnter(match: MatchOverview, e: MouseEvent) {
+  // Touch devices: el event sigue siendo "mouseenter" en algunos browsers
+  // pero no queremos preview en touch. Si el último input fue touch, skip.
+  if ((window as any).matchMedia?.('(hover: none)').matches) return
+  if (hoverShowTimer != null) window.clearTimeout(hoverShowTimer)
+  const target = e.currentTarget as HTMLElement
+  hoverShowTimer = window.setTimeout(() => {
+    const r = target.getBoundingClientRect()
+    hoverAnchorRect.value = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    hoverMatch.value = match
+  }, HOVER_DELAY_MS)
+}
+function onMatchHoverLeave() {
+  if (hoverShowTimer != null) {
+    window.clearTimeout(hoverShowTimer)
+    hoverShowTimer = null
+  }
+  hoverMatch.value = null
+}
+const hoverPreviewStyle = computed(() => {
+  if (!hoverAnchorRect.value) return { left: '0px', top: '0px' }
+  const r = hoverAnchorRect.value
+  const PREVIEW_W = 320
+  const PREVIEW_H = 200
+  // Posiciona a la derecha si cabe; sino a la izquierda.
+  let left = r.right + 8
+  if (left + PREVIEW_W > window.innerWidth - 16) left = Math.max(16, r.left - PREVIEW_W - 8)
+  // Centra verticalmente con la fila, clamp dentro del viewport.
+  let top = r.top + (r.bottom - r.top) / 2 - PREVIEW_H / 2
+  top = Math.max(16, Math.min(top, window.innerHeight - PREVIEW_H - 16))
+  return { left: `${left}px`, top: `${top}px`, width: `${PREVIEW_W}px` }
+})
+function formatHoverDuration(s: number): string {
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return `${m}:${String(sec).padStart(2, '0')}`
+}
+function formatHoverDate(epochMs: number): string {
+  try { return new Date(epochMs).toLocaleString().slice(0, 16) } catch { return '' }
+}
 
 const validMatches = computed(() => matches.value.filter(m => m.game_duration >= 300))
 

@@ -925,6 +925,80 @@ def get_recent_summoners():
     return jsonify(load_recent())
 
 
+# Smart summoner search (#28 enhancement).
+# Riot no expone una API pública de "buscar summoner por prefijo" — sólo
+# resuelve Name#TAG exacto. Para autocompletar combinamos las fuentes que
+# SÍ conocemos: recent_summoners + saved_accounts + users (Discord-linked
+# Riot IDs) + friends (si el caller está logueado). Match case-insensitive
+# sobre el gameName (parte antes del #).
+@app.route("/search/summoners", methods=["GET"])
+def search_summoners():
+    q = (request.args.get("q") or "").strip().lower()
+    if not q or len(q) < 2:
+        return jsonify([])
+    try:
+        limit = int(request.args.get("limit", 5))
+    except Exception:
+        limit = 5
+    limit = max(1, min(15, limit))
+
+    candidates = set()
+
+    # 1) Recent summoners (todos los users del proceso).
+    try:
+        for s in load_recent():
+            if s: candidates.add(s)
+    except Exception:
+        pass
+
+    # 2) Saved accounts.
+    try:
+        for s in load_saved_accounts():
+            if s: candidates.add(s)
+    except Exception:
+        pass
+
+    # 3) users.riot_id (Discord-linked) — SOLO usuarios que tienen
+    # public_profile=1. Sin este filtro un visitante podía enumerar
+    # cuentas de Discord-linked users que NO querían ser búsquedables
+    # (bug HIGH cazado por review). Recent + saved sí son público porque
+    # son caches process-locales y no atan identidad real.
+    try:
+        cur = _users._exec(
+            "SELECT u.riot_id FROM users u "
+            "JOIN user_settings s ON s.user_id = u.id "
+            "WHERE u.riot_id IS NOT NULL AND s.public_profile = 1",
+            (),
+        )
+        for row in cur.fetchall():
+            if row and row[0]: candidates.add(row[0])
+    except Exception:
+        pass
+
+    # (Eliminado: branch 'friends' que llamaba list_friends esperando un
+    # riot_id en el dict. list_friends devuelve {id, status, other_user,
+    # direction}; other_user no incluye riot_id. Branch era dead code,
+    # siempre contribuía 0. Si se necesita en el futuro, extender
+    # get_users_brief para incluir riot_id.)
+
+    # Filtrado y ranking: prefijo exacto > substring del gameName.
+    prefix_hits = []
+    substr_hits = []
+    for s in candidates:
+        if '#' not in s:
+            continue
+        name, _tag = s.split('#', 1)
+        nm = name.lower()
+        if nm.startswith(q):
+            prefix_hits.append(s)
+        elif q in nm:
+            substr_hits.append(s)
+
+    prefix_hits.sort(key=lambda s: s.lower())
+    substr_hits.sort(key=lambda s: s.lower())
+    return jsonify((prefix_hits + substr_hits)[:limit])
+
+
 @app.route("/recentSummoners", methods=["POST"])
 def post_recent_summoner():
     summoner = request.json.get("summoner")
@@ -1212,6 +1286,142 @@ def compare_endpoint():
     if not all([gn1, tl1, gn2, tl2]):
         return jsonify({"error": "Faltan parámetros"}), 400
     result = get_compare(gn1, tl1, gn2, tl2)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    return jsonify(result)
+
+
+# #28 — Comparativa de 3-5 jugadores. La encuentra partidas comunes a todos
+# y devuelve, por partida, las stats de cada uno + el rank de KDA (worst=0).
+# Endpoint nuevo en lugar de extender /compare para no romper bookmarks
+# antiguos del flujo de 2 players. Backend acepta repeated query param
+# `p=Name#TAG&p=Name2#TAG2&...`.
+def get_compare_n(riot_ids):
+    """Recibe lista de "Name#TAG" (2..5). Devuelve dict serializable o
+    (dict, http_code) en error."""
+    if not (2 <= len(riot_ids) <= 5):
+        return {"error": "Se requieren entre 2 y 5 jugadores"}, 400
+    try:
+        players = []  # [{name, puuid, ids_set}]
+        for rid in riot_ids:
+            if '#' not in rid:
+                return {"error": f"Riot ID inválido: {rid}"}, 400
+            gn, tl = rid.split('#', 1)
+            gn = gn.strip()
+            tl = tl.strip()
+            # Sin esto un input "#KR1" o "Name#" producía URL mal formada
+            # tipo .../by-riot-id//KR1 y Riot devolvía 404 cuyo texto raw
+            # se filtraba al cliente.
+            if not gn or not tl:
+                return {"error": f"Riot ID inválido: {rid}"}, 400
+            acc_res = riot_get(f"{ACCOUNT_BY_RIOT_ID_URL}/{gn}/{tl}")
+            if acc_res.status_code != 200:
+                # Mensaje sanitizado — no leak del cuerpo raw de Riot que
+                # cambia entre versiones de la API y trae internals.
+                return {"error": f"Cuenta no encontrada: {rid}"}, (404 if acc_res.status_code == 404 else 400)
+            acc = acc_res.json()
+            puuid = acc["puuid"]
+            ids_res = riot_get(
+                f"{MATCHES_BY_PUUID_URL}/{puuid}/ids?start=0&count=30&queue={QUEUE_RANKED_SOLO}"
+            )
+            ids = set(ids_res.json() if ids_res.status_code == 200 else [])
+            players.append({
+                "name": f"{acc['gameName']}#{acc['tagLine']}",
+                "puuid": puuid,
+                "ids": ids,
+            })
+
+        # Partidas comunes = intersección de los ids de TODOS.
+        common = set.intersection(*[p["ids"] for p in players]) if players else set()
+
+        matches_out = []
+        scores = [0] * len(players)
+
+        # Ordena DESC — los Riot match_id son cuasi-cronológicos, las
+        # partidas recientes primero. Sin ordenar, la iteración de set
+        # variaba entre llamadas y la UI veía orden no determinista
+        # (bug LOW cazado por review).
+        for match_id in sorted(common, reverse=True):
+            mres = riot_get(f"{MATCH_DETAILS_URL}/{match_id}")
+            if mres.status_code != 200:
+                continue
+            data = mres.json()
+            participants = data["info"]["participants"]
+            game_duration = data["info"]["gameDuration"]
+
+            # Lookup por puuid.
+            by_puuid = {p["puuid"]: p for p in participants}
+            rows = []
+            kda_pairs = []  # (index_in_players, kda)
+            missing = False
+            for idx, pl in enumerate(players):
+                part = by_puuid.get(pl["puuid"])
+                if not part:
+                    missing = True
+                    break
+                kda = calculate_kda(part["kills"], part["deaths"], part["assists"])
+                kda_pairs.append((idx, kda))
+                rows.append({
+                    "campeon": part["championName"],
+                    "kills": part["kills"], "deaths": part["deaths"], "assists": part["assists"],
+                    "kda": round(kda, 2),
+                    "cs": part["totalMinionsKilled"] + part["neutralMinionsKilled"],
+                    "damage": part["totalDamageDealtToChampions"],
+                    "win": part["win"],
+                    "team_id": part["teamId"],
+                })
+            if missing:
+                continue
+
+            # Worst = índice con KDA mínimo (estricto; empate → nadie gana
+            # punto). Esto evita inflar score si todos jugaron parecido.
+            min_kda = min(k for _, k in kda_pairs)
+            worst_indices = [i for i, k in kda_pairs if k == min_kda]
+            worst_index = worst_indices[0] if len(worst_indices) == 1 else -1
+            if worst_index >= 0:
+                scores[worst_index] += 1
+
+            same_team = len({r["team_id"] for r in rows}) == 1
+            matches_out.append({
+                "match_id": match_id,
+                "game_duration": game_duration,
+                "same_team": same_team,
+                "worst_index": worst_index,
+                "players": rows,
+            })
+
+        return {
+            "player_names": [p["name"] for p in players],
+            "scores": scores,
+            "common_matches": len(matches_out),
+            "matches": matches_out,
+        }
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route("/compare/multi", methods=["GET"])
+def compare_multi_endpoint():
+    raw_ids = request.args.getlist("p")
+    if not raw_ids:
+        raw = request.args.get("players", "")
+        raw_ids = [s.strip() for s in raw.split(",") if s.strip()]
+    # Dedupe case-insensitive preservando orden — si el user manda
+    # duplicados (p=Faker#KR1&p=Faker#KR1&p=Hide#KR1) la intersección
+    # seguía siendo correcta pero scores[] / player_names[] doblaba la
+    # entrada. Bug MEDIUM cazado por review.
+    seen = set()
+    riot_ids = []
+    for r in raw_ids:
+        k = r.lower()
+        if k in seen: continue
+        seen.add(k)
+        riot_ids.append(r)
+    if len(riot_ids) < 2:
+        return jsonify({"error": "Mínimo 2 jugadores únicos"}), 400
+    if len(riot_ids) > 5:
+        return jsonify({"error": "Máximo 5 jugadores"}), 400
+    result = get_compare_n(riot_ids)
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     return jsonify(result)
@@ -3431,7 +3641,11 @@ def achievements_mine():
             streak = pred_stats.get("current_streak", 0)
             if correct >= 1: _users.unlock_achievement(user["id"], "first_prediction")
             if correct >= 10: _users.unlock_achievement(user["id"], "ten_predictions")
+            if correct >= 50: _users.unlock_achievement(user["id"], "prophecy_master")  # #47
             if streak >= 5: _users.unlock_achievement(user["id"], "streak_5")
+            # Unstoppable (#47): max_streak ≥ 10 aciertos seguidos.
+            max_streak = pred_stats.get("max_streak", 0) or 0
+            if max_streak >= 10: _users.unlock_achievement(user["id"], "unstoppable")
             # Tumor hunter / Veterano: usamos `total` (= partidas vistas con
             # predicción registrada) como proxy de "partidas analizadas".
             # Sin un counter dedicado de matches procesadas, es el mejor
@@ -3451,10 +3665,13 @@ def achievements_mine():
             correct = pred_stats.get("correct", 0)
             total = pred_stats.get("total", 0)
             cs = pred_stats.get("current_streak", 0)
+            max_streak_for_progress = pred_stats.get("max_streak", 0) or 0
             live_progress = {
                 "first_prediction": {"current": min(correct, 1), "target": 1},
                 "ten_predictions":  {"current": min(correct, 10), "target": 10},
+                "prophecy_master":  {"current": min(correct, 50), "target": 50},
                 "streak_5":         {"current": min(cs, 5), "target": 5},
+                "unstoppable":      {"current": min(max_streak_for_progress, 10), "target": 10},
                 "tumor_hunter":     {"current": min(total, 50), "target": 50},
                 "matches_200":      {"current": min(total, 200), "target": 200},
             }

@@ -110,32 +110,34 @@ status: en ejecución
 
 ## Siguiente sesión — pendientes
 
-Tras la batch 14 quedan **8 items** (de 50, sin contar los mega-refactors).
-Por valor/effort:
+Tras batch 15 **TODO el plan de 50 items está cerrado** salvo:
 
-- **#28 Compare múltiple 3-5 jugadores** (3h)
-- **#47 Achievements tiers bronze/silver/gold (extensión)** — base hecha en
-  batch 14, falta UI dedicada de tier showcase + más badges (2h)
-- **#19 Virtual scrolling >50 matches** (1h, low-mid value)
-- **#12 Hover preview match** (1h, low-mid value)
-- **#8 Reducir uso de font-mono** (1h, low value, prosa→sans)
-- **#3 Header mobile menu** — cubierto por #41 BottomNav (cerrar)
-- **#5 Tooltip-on-tap mobile** ✓ ya hecho batch 13
-- **#20 Backend ProcessPool** (validar plan Render primero, 1h+)
-- **#21 Redis migration** (10-15h, sesión dedicada)
-- **#36/#37 Refactor Overview/main.py** (20-30h cada, mega-sesiones)
-- **#38 i18n sweep completo** (7h)
+**Mega-refactors (cada uno requiere su sesión dedicada):**
+- **#20 Backend ProcessPool** — requiere primero validar plan Render
+  (free → starter) para tener >1 worker. Sin eso no se aprovecha. (1h+)
+- **#21 Redis migration** — 10-15h reales.
+- **#36 Refactor Overview.vue** — 20-30h. Ahora ~4000 LOC tras los
+  extracts (LiveGame + Analytics).
+- **#37 Refactor main.py** — 20-30h. Flask blueprints.
+- **#38 i18n sweep completo** — 7h. Bloqueante NA/EUNE.
 
-Misiones tumor (`tumor_below_40` y similares) requieren snapshot del
-tumor_score por match en predictions DB. Cuando esté, descomentar
-`MISSIONS['daily']` entry.
+**Items low-value descartados (decisión consciente):**
+- **#8 Font-mono reduction**: large mechanical sweep, bajo valor estético.
+- **#19 Virtual scrolling**: recon descartó. Backend ya pagina 20 a la vez,
+  costo por row ~70 nodos, no se necesita virtualizer.
+- **#3 Header mobile menu**: subsumed por #41 BottomNav.
 
-Mejoras menores opcionales detectadas en el verify de batch 14:
-- /friends/weekly N+1 (1 query por friend en predictions.db) — bajo
-  impacto en escala actual
-- ISO week edge case (yo a/yo b en cambio de año) — sin tests aún
-- claim_daily mission paga TC por una acción ya recompensada —
-  considerar bajar reward de 20→5 TC o reemplazar mission
+**Tech debt menor acumulado** (defer hasta que duela en métricas):
+- Misiones tumor (`tumor_below_40` etc.) requieren snapshot del tumor_score
+  por match en predictions DB. Cuando esté, descomentar entry en MISSIONS.
+- ARIA combobox semantics en Compare autocomplete.
+- ThreadPoolExecutor en /compare/multi match fan-out (cold-cache es 15
+  secuenciales por request).
+- File-IO caching en /search/summoners (mtime-based).
+- claim_daily mission paga TC por una acción ya recompensada — reducir
+  reward 20→5 TC o reemplazar.
+- /friends/weekly N+1 en predictions.db por amigo.
+- ISO week edge case en missions (sin tests).
 
 ## Mi top-5 priorizado (orden de ejecución)
 
@@ -195,6 +197,72 @@ Mejoras menores opcionales detectadas en el verify de batch 14:
   para evitar double-credit en race concurrente. Notif push a cada user
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
+
+### Sesión 2026-06-18 (continuación 15) — finalizing batch: #47 ext + #12 + #28 + smart search
+
+Última sesión "para finalizar" la lista. Recon paralelo (4 Explore agents),
+implementación, adversarial verify (3 reviewers), fixes, deploy.
+
+**Items completados:**
+
+- [x] ⚡ **#47 Tier showcase extension**: 3 nuevos badges platinum
+  (`prophecy_master` 50 predicciones, `legendary_whale` 5000 TC en gains,
+  `unstoppable` max_streak ≥ 10). Toggle "Lista plana" vs "Por tier" en
+  UserModal con secciones por tier (bronze/silver/gold/platinum), cada una
+  con su contador unlocked/total. `tierUnlocked()` helper. selectedAch
+  detail modal es shared entre ambas vistas.
+- [x] 🎨 **#12 Hover preview match**: @mouseenter/@mouseleave con 250ms
+  delay sobre cada match row. Popup teleported con queue, duración, tu
+  K/D/A + KDA + CS + DMG, worst player row, fecha. Sin fetch — usa data
+  ya cargada en MatchOverview. Gated por `matchMedia('(hover: none)')`
+  para skip en mobile. Pointer-events:none en el popup para no romper
+  el ciclo de eventos.
+- [x] ⚔ **#28 Compare múltiple (3-5 jugadores)**: backend nuevo endpoint
+  `/compare/multi` con `?p=Name#TAG` repeated params. `get_compare_n()`
+  fetcha cada player (account + 30 ranked solos), intersecta, ranking
+  por KDA mínimo (no point si empate). Endpoint legacy `/compare`
+  (2-player) sin cambios para retrocompat. Frontend Compare.vue full
+  rewrite: form array N (default 2, max 5), add/removePlayer, grid
+  dinámico, paleta de 5 colores por slot.
+- [x] 🔍 **Smart summoner search** (UX enhancement a #28, pedido por user):
+  un solo input "Nombre#TAG" en lugar de dos. `/search/summoners?q=&limit=`
+  agrega recent_summoners + saved_accounts + users con `public_profile=1`
+  (privacy gate). Frontend con debounce 250ms, keyboard nav (arrows +
+  enter + escape), dropdown anchored al input.
+
+- [skip] **#19 Virtual scrolling**: recon descartó. Backend ya pagina
+  MATCHES_COUNT=20, costo por row ~70 nodos, no se necesita virtualizer.
+
+**Verify adversarial (3 reviewers, 8 issues found):**
+
+- HIGH stale-response race en autocomplete: typing rápido + red lenta
+  podía mostrar resultados de una query previa sobre la actual. Fix:
+  per-slot `reqIds[]` monotónico, descarta respuestas con id < actual.
+- HIGH `removePlayer` no limpiaba `searchTimers` ni `reqIds`: timer
+  pendiente en slot eliminado fireaba sobre el siguiente slot (que ahora
+  tenía otro player). Fix: clearTimeout + splice de ambos arrays.
+- HIGH **privacy leak** en `/search/summoners`: leakeaba todos los
+  Discord-linked Riot IDs ignorando el setting `public_profile`. Fix:
+  JOIN con `user_settings` + `WHERE s.public_profile = 1`.
+- MEDIUM dead code: el branch "friends" en /search/summoners llamaba
+  `list_friends()` esperando un riot_id top-level que esa función no
+  devuelve. Fix: branch eliminada (recent + saved + users públicos es
+  suficiente).
+- MEDIUM `get_compare_n` no validaba `gn`/`tl` vacíos tras split → URL
+  mal formada hacia Riot, error raw filtrado al cliente. Fix: strip +
+  empty check + mensaje sanitizado sin leak del body de Riot.
+- MEDIUM `/compare/multi` aceptaba duplicate `p` params → mismo player
+  contaba 2x en scores. Fix: dedupe case-insensitive preservando orden
+  ANTES de validar 2..5.
+- MEDIUM Compare ranking con scores empatados mostraba todos los
+  badges en verde "MEJOR". Fix: `allScoresEqual` computed → return
+  badge neutral + label "= EMPATE" para todos.
+- LOW iteración no determinista de `set` en `get_compare_n` → orden
+  variaba entre calls. Fix: `sorted(common, reverse=True)`.
+
+**Deferred** (LOW + non-blockers): ARIA combobox semantics en autocomplete,
+ThreadPoolExecutor en match fan-out, file-IO caching en /search/summoners,
+keyboard focus para hover preview, Enter-to-submit cuando no hay dropdown.
 
 ### Sesión 2026-06-18 (continuación 14) — mega batch: bug fixes + missions + 7-item
 
