@@ -75,7 +75,63 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- #47 — View-by-tier toggle. "Plano" = grid existente. "Por tier"
+                 = 4 secciones agrupadas (bronze→platinum) con su propio
+                 contador unlocked/total. -->
+            <div class="flex items-center gap-1 mb-3">
+              <button @click="achViewMode = 'flat'"
+                :class="achViewMode === 'flat' ? 'bg-accent-15 text-accent border-accent-50' : 'text-white/40 border-white/15 hover:text-white/70'"
+                class="text-[10px] font-mono px-2.5 py-1 rounded border transition">
+                Lista plana
+              </button>
+              <button @click="achViewMode = 'tier'"
+                :class="achViewMode === 'tier' ? 'bg-accent-15 text-accent border-accent-50' : 'text-white/40 border-white/15 hover:text-white/70'"
+                class="text-[10px] font-mono px-2.5 py-1 rounded border transition">
+                Por tier
+              </button>
+            </div>
+
+            <!-- BY-TIER view: 4 secciones colapsables -->
+            <div v-if="achViewMode === 'tier'" class="space-y-4">
+              <section v-for="t in TIER_ORDER" :key="t">
+                <div v-if="achievementsByTier[t]?.length"
+                  class="flex items-center justify-between mb-2">
+                  <p class="text-[10px] font-mono tracking-widest text-white/50 flex items-center gap-2">
+                    <span :class="tierClasses(t).badge" class="text-[8px] font-mono font-black px-1.5 py-px rounded uppercase">{{ t }}</span>
+                    <span>{{ tierUnlocked(t) }} / {{ achievementsByTier[t].length }} desbloqueados</span>
+                  </p>
+                </div>
+                <div v-if="achievementsByTier[t]?.length" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button v-for="a in achievementsByTier[t]" :key="a.badge"
+                    @click="selectedAch = a"
+                    :class="[a.unlocked ? tierClasses(a.tier).unlocked : 'border-white/10 bg-black/20 hover:border-white/30 hover:bg-black/30']"
+                    class="text-left rounded-xl border p-3 flex items-start gap-3 transition cursor-pointer">
+                    <span class="text-3xl shrink-0 transition"
+                      :class="a.unlocked ? '' : 'grayscale opacity-40'">{{ a.icon }}</span>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-mono font-bold truncate"
+                        :class="a.unlocked ? 'text-white' : 'text-white/60'">{{ a.name }}</p>
+                      <p class="text-white/40 text-[11px] font-mono">{{ a.desc }}</p>
+                      <div v-if="!a.unlocked && a.progress" class="mt-1.5">
+                        <div class="flex items-center justify-between text-[9px] font-mono mb-0.5">
+                          <span class="text-white/50">{{ a.progress.current }} / {{ a.progress.target }}</span>
+                          <span class="text-cyan-400">{{ Math.round((a.progress.current / a.progress.target) * 100) }}%</span>
+                        </div>
+                        <div class="h-1 bg-black/40 rounded-full overflow-hidden">
+                          <div class="h-full bg-cyan-500 transition-all"
+                            :style="{ width: `${(a.progress.current / a.progress.target) * 100}%` }"></div>
+                        </div>
+                      </div>
+                      <p v-else-if="a.unlocked" class="text-yellow-400 text-[10px] font-mono mt-1">✓ {{ $t('user.unlocked') }}</p>
+                      <p v-else class="text-white/30 text-[10px] font-mono mt-1">🔒 {{ $t('user.locked') }}</p>
+                    </div>
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <!-- FLAT view (default) -->
+            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button v-for="a in achievements" :key="a.badge"
                 @click="selectedAch = a"
                 :class="[
@@ -359,6 +415,21 @@ const achievements = ref<any[]>([])
 const achievementsLoading = ref(false)
 const achievementsError = ref('')
 const selectedAch = ref<any | null>(null)
+// #47 — Toggle entre lista plana y agrupado por tier.
+const achViewMode = ref<'flat' | 'tier'>('flat')
+const TIER_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const
+const achievementsByTier = computed<Record<string, any[]>>(() => {
+  const out: Record<string, any[]> = { bronze: [], silver: [], gold: [], platinum: [] }
+  for (const a of achievements.value) {
+    const t = (a.tier || 'bronze').toLowerCase()
+    if (out[t]) out[t].push(a)
+    else out.bronze.push(a)  // fallback para badges sin tier (no debería pasar)
+  }
+  return out
+})
+function tierUnlocked(tier: string): number {
+  return (achievementsByTier.value[tier] || []).filter((a: any) => a.unlocked).length
+}
 
 // Tier visual mapping para el revamp de trofeos. Bronze/silver/gold/platinum
 // con colores de marca progresivamente más calientes. El frontend solo lo

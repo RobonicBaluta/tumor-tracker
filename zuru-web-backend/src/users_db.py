@@ -2219,6 +2219,10 @@ ACHIEVEMENT_DEFS = {
     # --- Daily streak (#48) ---
     "daily_streak_7":   {"icon": "🔥", "name": "Hábito Semanal", "desc": "7 días seguidos reclamando daily", "tier": "silver"},
     "daily_streak_30":  {"icon": "🔥", "name": "Inquebrantable", "desc": "30 días seguidos reclamando daily", "tier": "platinum"},
+    # --- Platinum aspirational (#47 extension) ---
+    "prophecy_master":  {"icon": "🔮", "name": "Profeta Mayor", "desc": "50 predicciones acertadas en total", "tier": "platinum"},
+    "legendary_whale":  {"icon": "🐋", "name": "Legendary Whale", "desc": "Acumula 5000 TC en algún momento", "tier": "platinum"},
+    "unstoppable":      {"icon": "⚡", "name": "Imparable", "desc": "10 predicciones acertadas seguidas (max streak)", "tier": "platinum"},
     # --- Social ---
     "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos", "tier": "bronze"},
     "friend_link":      {"icon": "🤝", "name": "Red Tóxica", "desc": "Añade 10 amigos", "tier": "silver"},
@@ -2297,6 +2301,17 @@ def _achievement_progress(user_id):
             curr = user.get("currency", 0)
             progress["richie_rich"] = {"current": min(curr, 1000), "target": 1000}
 
+        # Legendary Whale (#47): suma de gains acumulados (proxy de "max
+        # balance histórico"). Si alguna vez la suma de positivos llega a
+        # 5000 → unlock. Walk de currency_transactions con índice ya
+        # existente (user_id, reason).
+        cur = _exec(
+            "SELECT COALESCE(SUM(delta), 0) FROM currency_transactions WHERE user_id=? AND delta > 0",
+            (user_id,),
+        )
+        total_gains = int(cur.fetchone()[0] or 0)
+        progress["legendary_whale"] = {"current": min(total_gains, 5000), "target": 5000}
+
         # Daily streak (consume el helper #48). 0 si nunca reclamó.
         try:
             ds = daily_streak(user_id)
@@ -2365,6 +2380,14 @@ def evaluate_achievements(user_id):
     # Currency milestones
     if user["currency"] >= 1000:
         unlock_achievement(user_id, "richie_rich")
+
+    # Legendary Whale (#47): 5000 TC en gains acumulados.
+    cur = _exec(
+        "SELECT COALESCE(SUM(delta), 0) FROM currency_transactions WHERE user_id=? AND delta > 0",
+        (user_id,),
+    )
+    if (cur.fetchone()[0] or 0) >= 5000:
+        unlock_achievement(user_id, "legendary_whale")
 
     # Bets stats
     cur = _exec(
