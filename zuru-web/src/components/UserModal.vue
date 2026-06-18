@@ -49,6 +49,16 @@
               </button>
             </div>
             <template v-else>
+            <!-- Empty state cuando el endpoint respondió 200 pero con []
+                 (e.g. backend a medio deployar, schema sin trofeos, etc.).
+                 Sin esto el global bar mostraba "0/0 desbloqueados NaN%". -->
+            <div v-if="achievements.length === 0" class="text-white/40 font-mono text-sm text-center py-10">
+              No hay trofeos disponibles todavía.
+              <button @click="loadActive" class="block mx-auto mt-3 text-xs font-mono px-3 py-1 rounded border border-white/15 hover:border-white/30 transition">
+                Recargar
+              </button>
+            </div>
+            <template v-else>
             <!-- Progreso global con barra -->
             <div class="mb-4 bg-gradient-to-r from-yellow-900/20 via-black/30 to-black/30 border border-yellow-500/30 rounded-xl p-3">
               <div class="flex items-center justify-between mb-1.5">
@@ -56,12 +66,12 @@
                   🏆 {{ $t('user.unlocked_count', { count: unlockedCount, total: achievements.length }) }}
                 </p>
                 <p class="text-yellow-300 text-xs font-mono font-bold">
-                  {{ Math.round((unlockedCount / achievements.length) * 100) }}%
+                  {{ achievements.length ? Math.round((unlockedCount / achievements.length) * 100) : 0 }}%
                 </p>
               </div>
               <div class="h-2 bg-black/40 rounded-full overflow-hidden">
                 <div class="h-full bg-gradient-to-r from-yellow-500 to-yellow-300 transition-all"
-                  :style="{ width: `${(unlockedCount / achievements.length) * 100}%` }"></div>
+                  :style="{ width: achievements.length ? `${(unlockedCount / achievements.length) * 100}%` : '0%' }"></div>
               </div>
             </div>
 
@@ -152,7 +162,8 @@
                 </div>
               </Transition>
             </Teleport>
-            </template>
+            </template><!-- /achievements.length > 0 -->
+            </template><!-- /v-else (no loading + no error) -->
           </div>
 
           <!-- HISTORY -->
@@ -317,7 +328,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, watch, inject, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -458,6 +469,17 @@ const publicProfileUrl = computed(() => {
   return `${window.location.origin}${window.location.pathname}#/u/${encodeURIComponent(rid.replace('#', '-'))}`
 })
 
+// Navbar monta este modal con `v-if="showUserModal"` + `:show="true"`,
+// así que cuando el modal aparece `props.show` arranca en true y el watch
+// nunca dispara su primera transición. Fix: load en onMounted además.
+// (Mismo bug que MissionsModal — sin esto el tab activo queda vacío.)
+onMounted(() => {
+  if (props.show) {
+    if (props.initialTab) active.value = props.initialTab as TabKey
+    loadActive()
+  }
+})
+
 watch(() => props.show, async v => {
   if (v) {
     if (props.initialTab) active.value = props.initialTab as TabKey
@@ -477,7 +499,9 @@ async function loadActive() {
     try {
       const res = await auth.fetchAchievements()
       achievements.value = res
-      if (!res.length) achievementsError.value = 'No se pudieron cargar los trofeos. Reintenta.'
+      // Empty array es estado legítimo (backend a medio deployar, schema
+      // sin trofeos, etc.). Ya NO lo tratamos como error — el empty state
+      // del template lo cubre con su propio mensaje + recarga.
     } catch (e: any) {
       achievementsError.value = e?.message || 'Error cargando trofeos.'
     } finally {
