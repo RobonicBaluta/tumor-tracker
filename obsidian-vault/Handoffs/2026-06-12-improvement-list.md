@@ -167,6 +167,32 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 8) — themes deep + champ picker + history DB
+
+- [x] 🎨 Themes propagation Phase 1 — `--theme-accent` ahora se respeta en
+  modal borders (5 modales), tab selections (3 modales), focus rings (4
+  componentes). Nuevas utility classes en `style.css`: `text-accent`,
+  `bg-accent-{10,15,20}`, `border-accent-{20..60}`, `hover:*`, `focus:*`.
+  Pendiente Phase 2: decorative dividers, drawer accents, hardcoded gold
+  en UserModal/SocialModal.
+- [x] 🎨 ChampionPicker.vue — custom dropdown que reemplaza al `<select>`
+  nativo. Muestra icono del champion + nombre + search + click-outside
+  + Escape. Wired al filtro principal de Overview. v2: aplicar al
+  analytics filter + BetModal player picker.
+- [x] 🚀 viewer_match_history DB — tabla persistente per-viewer-per-match
+  con PK (match_id, viewer_puuid) + 2 indexes. Helper
+  `viewer_match_history_add` con INSERT OR IGNORE + skip si gameCreation=0
+  (anti-epoch-1970). Wired en /getOverview en ambos paths (ranked + non-
+  ranked). Nuevo endpoint `/championHistory` con agregaciones lifetime
+  (total_games, wins, winrate, avg_kda, avg_tumor, avg_cs/damage/vision)
+  + recent_matches ORDER BY game_date DESC. 5 tests pasan.
+- [x] 🚀 ChampionStatsModal lifetime panel — fetch `/championHistory` al
+  abrir + grid 4 stats. Race protection con request id contador
+  (rápido switching A→B→A no muestra data stale). Error UI suprimido
+  durante reload.
+- [x] /getOverview ahora devuelve `viewer_puuid` para que el frontend
+  pueda llamar a /championHistory sin re-resolver con Riot.
+
 ### Sesión 2026-06-18 (continuación 7) — champion stats modal
 
 - [x] 🚀 #31 Champion stats modal — `ChampionStatsModal.vue` mostrando

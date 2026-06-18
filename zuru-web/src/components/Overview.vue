@@ -95,13 +95,13 @@
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Nombre del Invocador</label>
               <input v-model="formData.gameName" type="text" placeholder="GameName"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-[#c89b3c] transition" required />
+                class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition" required />
             </div>
             <div>
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Tag</label>
               <input v-model="formData.tagLine" type="text" placeholder="EUW"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                class="w-32 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-[#c89b3c] transition" required />
+                class="w-32 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition" required />
             </div>
             <button type="submit" :disabled="loading"
               class="w-full bg-[#c89b3c] hover:bg-[#e0b84e] disabled:opacity-40 disabled:cursor-not-allowed text-black font-bold py-3 rounded-lg transition transform hover:scale-105 font-mono">
@@ -369,12 +369,13 @@
           </button>
         </div>
 
-        <!-- Champion filter -->
-        <select v-model="filterChampion"
-          class="px-3 py-1.5 bg-black/30 border border-white/10 rounded-lg text-white/70 text-xs font-mono focus:outline-none focus:border-white/30 transition">
-          <option value="">Todos los campeones</option>
-          <option v-for="champ in availableChampions" :key="champ" :value="champ">{{ champ }}</option>
-        </select>
+        <!-- Champion filter: custom dropdown con icono por champion + search. -->
+        <ChampionPicker
+          v-model="filterChampion"
+          :items="availableChampions"
+          :ddragon-version="ddragonVersion"
+          all-label="Todos los campeones"
+          placeholder="Champion…" />
 
         <!-- Days filter -->
         <div class="flex rounded-lg overflow-hidden border border-white/10 bg-black/20">
@@ -1754,7 +1755,7 @@
               <div>
                 <p class="text-white/40 text-[10px] font-mono tracking-widest mb-1.5">STAKE TC</p>
                 <input type="number" v-model.number="playerBetState.amount" :min="10" :max="auth?.user?.value?.currency ?? 0"
-                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-lg focus:border-yellow-500/60 focus:outline-none" />
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-lg focus:border-accent-60 focus:outline-none" />
                 <div class="flex gap-1.5 mt-2">
                   <button v-for="preset in [25, 50, 100, 250]" :key="preset"
                     @click="playerBetState.amount = preset"
@@ -1833,6 +1834,7 @@
       :ddragon-version="ddragonVersion"
       :champion-pool="(analyticsData?.champion_pool as any[]) || []"
       :matches="(matches as any[])"
+      :viewer-puuid="viewerPuuid"
       @close="champStatsOpen = false" />
 
   </div>
@@ -1845,6 +1847,7 @@ import BottomNav from './BottomNav.vue'
 import SkeletonCard from './SkeletonCard.vue'
 import TumorScoreCounter from './TumorScoreCounter.vue'
 import ChampionStatsModal from './ChampionStatsModal.vue'
+import ChampionPicker from './ChampionPicker.vue'
 import { usePullToRefresh } from '../composables/usePullToRefresh'
 import {
   SCAN_MESSAGES, LOADING_FLAVORS,
@@ -2033,6 +2036,7 @@ if (cachedDDragon) {
 
 const formData = ref({ gameName: '', tagLine: '' })
 const summoner = ref('')
+const viewerPuuid = ref<string | null>(null)
 const tier = ref('')
 const division = ref('')
 // Queue selector — persiste en localStorage. 'soloq' (default) | 'flex' | '450' (ARAM) | '1700' (Arena) | 'all'
@@ -2929,6 +2933,7 @@ const login = async () => {
     division.value = data.division ?? ''
     tierIconFailed.value = false
     matches.value = data.matches
+    viewerPuuid.value = data.viewer_puuid ?? null
     hasMore.value = data.has_more ?? false
     currentStart.value = data.matches.length
     alerts.value = data.alerts ?? []

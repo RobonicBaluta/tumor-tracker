@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   championIconUrl,
   championSplashUrl,
@@ -7,6 +7,7 @@ import {
   tumorColor,
   tumorLabel,
 } from '../composables/overviewConstants'
+import { API_BASE } from '../composables/useApi'
 
 // Modal de stats por champion: input es el nombre del champion + 2 arrays
 // (champion_pool del backend con games/wins/winrate/avg_tumor agregados, y
@@ -40,6 +41,10 @@ const props = defineProps<{
   ddragonVersion: string
   championPool: ChampionPoolEntry[]
   matches: MatchLite[]
+  /** puuid del viewer cuyas stats se muestran. Si está disponible,
+   *  fetcheamos /championHistory para mostrar el panel lifetime
+   *  (histórico persistido, no limitado a las últimas 20 partidas). */
+  viewerPuuid?: string | null
 }>()
 
 const emit = defineEmits<{ close: [] }>()
@@ -102,6 +107,81 @@ const kdaColor = computed(() => {
   return 'text-yellow-300'
 })
 
+// === Lifetime stats (persistidos en backend) ===
+// Cuando el modal se abre con un viewerPuuid + championName conocidos,
+// fetcheamos /championHistory para mostrar el panel "LIFETIME" con totales
+// reales (no limitados al window de 20 partidas del overview en memoria).
+interface LifetimeStats {
+  total_games: number
+  total_wins: number
+  lifetime_winrate: number | null
+  avg_kda: number | null
+  avg_tumor: number | null
+  avg_cs: number | null
+  avg_damage: number | null
+  avg_vision: number | null
+  recent_matches: Array<{
+    match_id: string
+    game_date: number
+    win: boolean
+    kills: number
+    deaths: number
+    assists: number
+    kda: number
+    cs: number
+    damage: number
+    vision: number
+    tumor_score: number | null
+    lane: string | null
+    queue_id: number | null
+    game_duration: number | null
+  }>
+}
+const lifetime = ref<LifetimeStats | null>(null)
+const lifetimeLoading = ref(false)
+const lifetimeError = ref<string | null>(null)
+// Contador monotónico de requests. Si el user clickea rápido entre champions
+// (A → B → A), evitamos que el response de A llegue después del de B y
+// sobreescriba la UI con data stale. Cualquier callback con un id != al
+// vigente al momento de resolver, se descarta.
+let _lifetimeReqId = 0
+
+async function loadLifetime() {
+  if (!props.viewerPuuid || !props.championName) {
+    lifetime.value = null
+    return
+  }
+  const reqId = ++_lifetimeReqId
+  lifetimeLoading.value = true
+  lifetimeError.value = null
+  try {
+    const url = `${API_BASE}/championHistory?viewer_puuid=${encodeURIComponent(props.viewerPuuid)}&champion=${encodeURIComponent(props.championName)}&limit=30`
+    const res = await fetch(url)
+    if (reqId !== _lifetimeReqId) return // stale → descarta sin tocar state
+    if (!res.ok) {
+      lifetime.value = null
+      lifetimeError.value = 'No se pudo cargar histórico'
+    } else {
+      lifetime.value = await res.json() as LifetimeStats
+    }
+  } catch {
+    if (reqId !== _lifetimeReqId) return
+    lifetime.value = null
+    lifetimeError.value = 'Error de red'
+  } finally {
+    if (reqId === _lifetimeReqId) lifetimeLoading.value = false
+  }
+}
+
+// Re-fetchea cada vez que el modal se abre con un nuevo champion (o vuelve
+// a abrirse después de cerrarse). Eso garantiza data fresca tras un refresh
+// del Overview que hubiera insertado nuevas partidas.
+watch(
+  () => [props.show, props.championName],
+  ([show]) => { if (show) loadLifetime() },
+  { immediate: true },
+)
+
 // Cierre con Escape — mounteo/desmonteo dinámico vía watch para no instalar
 // el listener si el modal nunca se abre en la sesión.
 function onEsc(e: KeyboardEvent) {
@@ -131,7 +211,7 @@ function timeFmt(s?: number) {
         class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
         @click.self="emit('close')">
         <div
-          class="bg-[#0d1b2a] border border-yellow-500/30 shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col
+          class="bg-[#0d1b2a] border border-accent-30 shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col
                  rounded-t-2xl rounded-b-none sm:rounded-2xl"
           style="padding-bottom: env(safe-area-inset-bottom);">
           <!-- Drag handle mobile -->
@@ -186,6 +266,56 @@ function timeFmt(s?: number) {
                 {{ tumorLabel(stats.avg_tumor) }}
               </p>
             </div>
+          </div>
+
+          <!-- Lifetime panel: histórico real persistido en backend. Solo si
+               viewerPuuid disponible y hay rows en /championHistory. Va antes
+               del recent matches strip para que el user vea el contexto
+               "macro" (lifetime) antes del "micro" (últimas partidas). -->
+          <div v-if="viewerPuuid && (lifetimeLoading || (lifetime && lifetime.total_games > 0))"
+            class="px-5 py-3 border-t border-white/10 bg-black/20">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-accent text-[10px] font-mono tracking-widest font-bold">
+                📊 LIFETIME · TODO EL HISTÓRICO
+              </p>
+              <span v-if="lifetimeLoading" class="text-white/30 text-[9px] font-mono animate-pulse">cargando…</span>
+            </div>
+            <div v-if="lifetime && lifetime.total_games > 0"
+              class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="bg-black/30 border border-white/10 rounded-lg p-2 text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">TOTAL</p>
+                <p class="text-white text-lg font-mono font-bold leading-none">{{ lifetime.total_games }}</p>
+                <p class="text-white/30 text-[9px] font-mono mt-0.5">
+                  {{ lifetime.total_wins }}W / {{ lifetime.total_games - lifetime.total_wins }}L
+                </p>
+              </div>
+              <div class="bg-black/30 border border-white/10 rounded-lg p-2 text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">WR</p>
+                <p :class="(lifetime.lifetime_winrate ?? 0) >= 55 ? 'text-green-400' : (lifetime.lifetime_winrate ?? 0) < 45 ? 'text-red-400' : 'text-yellow-300'"
+                  class="text-lg font-mono font-bold leading-none">
+                  {{ lifetime.lifetime_winrate ?? 0 }}%
+                </p>
+              </div>
+              <div class="bg-black/30 border border-white/10 rounded-lg p-2 text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">KDA</p>
+                <p v-if="lifetime.avg_kda != null"
+                  :class="lifetime.avg_kda >= 3 ? 'text-green-400' : lifetime.avg_kda < 1.5 ? 'text-red-400' : 'text-yellow-300'"
+                  class="text-lg font-mono font-bold leading-none">{{ lifetime.avg_kda }}</p>
+                <p v-else class="text-white/30 text-lg font-mono font-bold leading-none">—</p>
+              </div>
+              <div class="bg-black/30 border border-white/10 rounded-lg p-2 text-center">
+                <p class="text-white/40 text-[9px] font-mono tracking-widest mb-1">TUMOR</p>
+                <p v-if="lifetime.avg_tumor != null"
+                  :class="tumorColor(lifetime.avg_tumor)"
+                  class="text-lg font-mono font-bold leading-none">{{ lifetime.avg_tumor }}</p>
+                <p v-else class="text-white/30 text-lg font-mono font-bold leading-none">—</p>
+              </div>
+            </div>
+            <!-- Solo mostramos el error si NO estamos cargando otro request
+                 (evita el "⚠ Error" + "cargando…" simultáneos al re-intentar). -->
+            <p v-if="lifetimeError && !lifetimeLoading" class="text-red-400/70 text-[10px] font-mono mt-1.5">
+              ⚠ {{ lifetimeError }}
+            </p>
           </div>
 
           <!-- Empty state -->

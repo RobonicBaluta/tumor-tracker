@@ -8,7 +8,7 @@
            pb con safe-area-inset para escapar el home indicator iOS.
            En sm+: modal centrado clásico. -->
       <div
-        class="bg-[#0d1b2a] border border-yellow-500/30 shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col
+        class="bg-[#0d1b2a] border border-accent-30 shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col
                rounded-t-2xl rounded-b-none sm:rounded-2xl"
         style="padding-bottom: env(safe-area-inset-bottom);">
         <!-- Drag handle visual mobile-only (no interactivo): hint de que esto
@@ -27,7 +27,7 @@
         <div class="flex gap-1 px-5 py-2 border-b border-white/10">
           <button v-for="tab in tabs" :key="tab.key" @click="active = tab.key"
             :class="active === tab.key
-              ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50'
+              ? 'bg-accent-15 text-accent border-accent-50'
               : 'text-white/40 border-transparent hover:text-white/70'"
             class="text-xs font-mono px-3 py-1.5 rounded border transition">
             {{ tab.label }}
@@ -183,12 +183,12 @@
                 <p class="text-white/30 text-[10px] font-mono tracking-widest mb-3">{{ $t('user.language').toUpperCase() }}</p>
                 <div class="flex gap-2">
                   <button @click="changeLocale('es')"
-                    :class="locale === 'es' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50' : 'text-white/50 border-white/10 hover:text-white/80'"
+                    :class="locale === 'es' ? 'bg-accent-15 text-accent border-accent-50' : 'text-white/50 border-white/10 hover:text-white/80'"
                     class="text-xs font-mono px-3 py-1.5 rounded border transition flex-1">
                     🇪🇸 {{ $t('user.spanish') }}
                   </button>
                   <button @click="changeLocale('en')"
-                    :class="locale === 'en' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-500/50' : 'text-white/50 border-white/10 hover:text-white/80'"
+                    :class="locale === 'en' ? 'bg-accent-15 text-accent border-accent-50' : 'text-white/50 border-white/10 hover:text-white/80'"
                     class="text-xs font-mono px-3 py-1.5 rounded border transition flex-1">
                     🇬🇧 {{ $t('user.english') }}
                   </button>
@@ -214,11 +214,11 @@
                   <div class="flex gap-1.5 items-center">
                     <input v-model="linkGameName" :placeholder="$t('user.game_name')"
                       autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                      class="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                      class="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-accent-60 focus:outline-none" />
                     <span class="text-white/30 text-sm font-mono">#</span>
                     <input v-model="linkTagLine" :placeholder="$t('user.tag_line')" maxlength="5"
                       autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                      class="w-16 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-yellow-500/60 focus:outline-none" />
+                      class="w-16 bg-black/40 border border-white/15 rounded px-2 py-1 text-white font-mono text-xs focus:border-accent-60 focus:outline-none" />
                     <button @click="onLinkRiot" :disabled="linking || !linkGameName.trim() || !linkTagLine.trim()"
                       class="text-[10px] font-mono px-2.5 py-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-900/40 disabled:text-white/30 text-black font-bold rounded transition">
                       {{ linking ? $t('user.linking') : $t('user.link_btn') }}

@@ -3,7 +3,7 @@
   <Transition name="modal">
     <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[10vh] sm:pt-4"
       @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/40 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-md">
+      <div class="bg-[#0d1b2a] border border-accent-40 rounded-2xl shadow-2xl shadow-yellow-900/30 w-full max-w-md">
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
             <span>☢</span>
@@ -74,7 +74,7 @@
             <div>
               <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">JUGADOR</p>
               <select v-model="targetPuuid"
-                class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none">
+                class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-accent-60 focus:outline-none">
                 <option value="">— Elige —</option>
                 <option v-for="p in (participants || [])" :key="p.puuid" :value="p.puuid"
                   :class="p.teamId === 100 ? 'text-blue-300' : 'text-red-300'">
@@ -86,7 +86,7 @@
               <div>
                 <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">STAT</p>
                 <select v-model="statType"
-                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none">
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-accent-60 focus:outline-none">
                   <option value="kills">🗡 Kills</option>
                   <option value="deaths">💀 Deaths</option>
                   <option value="assists">🤝 Assists</option>
@@ -97,7 +97,7 @@
               <div>
                 <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">UMBRAL</p>
                 <input type="number" v-model.number="threshold" :step="statType === 'kda' ? 0.5 : 1" :min="0"
-                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-yellow-500/60 focus:outline-none" />
+                  class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-accent-60 focus:outline-none" />
               </div>
             </div>
             <div>
@@ -124,7 +124,7 @@
           <div>
             <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">{{ $t('bets.amount').toUpperCase() }} ({{ $t('bets.max') }} {{ balance }} TC)</p>
             <input type="number" v-model.number="amount" :min="10" :max="balance"
-              class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-lg focus:border-yellow-500/60 focus:outline-none" />
+              class="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-white font-mono text-lg focus:border-accent-60 focus:outline-none" />
             <div class="flex gap-2 mt-2">
               <button v-for="preset in [25, 50, 100, 250]" :key="preset"
                 @click="amount = Math.min(balance, preset)"
