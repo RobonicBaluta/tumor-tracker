@@ -167,6 +167,20 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 7) — champion stats modal
+
+- [x] 🚀 #31 Champion stats modal — `ChampionStatsModal.vue` mostrando
+  partidas/WR/KDA medio/tumor avg para el campeón seleccionado +
+  strip horizontal con las últimas 10 partidas con ese champion. Data
+  100% client-side (champion_pool del analytics endpoint + filter de
+  matches por my_champion). Sin nuevo endpoint backend en v1.
+- [x] Wire en 4 sitios de la sección Analytics: champion_pool grid,
+  best_teammates icons, worst_nemesis icons, duos icons. Match card
+  icons deferred a v2 (conflicto con openMatchDetail).
+- [x] Bottom-sheet en mobile (items-end + rounded-t-2xl + safe-area).
+  Splash blureado en el header como pattern visual. Cierre por ✕,
+  click fuera, Escape.
+
 ### Sesión 2026-06-18 (continuación 6) — themes revamp + #24 verified
 
 - [x] 🎨 #11 Themes revamp completo — fuera los 6 themes basados en rol
