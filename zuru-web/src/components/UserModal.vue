@@ -1,9 +1,21 @@
 <template>
   <Teleport to="body">
   <Transition name="modal">
-    <div v-if="show" class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
+    <div v-if="show"
+      class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center overflow-y-auto p-0 pt-0 sm:p-4 sm:pt-4"
       @click.self="emit('close')">
-      <div class="bg-[#0d1b2a] border border-yellow-500/30 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col">
+      <!-- En <sm: bottom-sheet anclado al borde inferior, sin radius bajo y
+           pb con safe-area-inset para escapar el home indicator iOS.
+           En sm+: modal centrado clásico. -->
+      <div
+        class="bg-[#0d1b2a] border border-yellow-500/30 shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col
+               rounded-t-2xl rounded-b-none sm:rounded-2xl"
+        style="padding-bottom: env(safe-area-inset-bottom);">
+        <!-- Drag handle visual mobile-only (no interactivo): hint de que esto
+             es un sheet y se cierra con tap fuera/✕. -->
+        <div class="sm:hidden flex justify-center pt-2 pb-1">
+          <span class="block w-10 h-1 bg-white/20 rounded-full"></span>
+        </div>
         <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
             <span>{{ activeIcon }}</span>
