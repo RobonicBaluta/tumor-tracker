@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, provide, onMounted, defineAsyncComponent } from 'vue';
+import { ref, computed, provide, onMounted, watchEffect, defineAsyncComponent } from 'vue';
 import Navbar from './components/Navbar.vue';
 import OnboardingTour from './components/OnboardingTour.vue';
 import ConfirmDialog from './components/ConfirmDialog.vue';
@@ -102,6 +102,20 @@ const setTheme = (key: string) => {
   themeKey.value = key
   localStorage.setItem('zuruweb-theme', key)
 }
+
+// Propagar las CSS vars del theme a document.documentElement (:root) para
+// que TODOS los elementos las hereden — incluso los Teleported a body
+// (modales, dropdowns, BottomNav, ChampionPicker). El style inline en App.vue
+// y Overview.vue NO alcanza a los Teleported (DOM parent es body, no App).
+// :root sí los cubre por inheritance natural de CSS custom properties.
+watchEffect(() => {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  const t = theme.value as any
+  root.style.setProperty('--theme-accent', t.accent || '#c89b3c')
+  root.style.setProperty('--theme-from', t.from || '#0d1b2a')
+  root.style.setProperty('--theme-to', t.to || '#1b2838')
+})
 
 provide('theme', theme)
 provide('themeKey', themeKey)

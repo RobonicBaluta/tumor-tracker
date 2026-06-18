@@ -211,7 +211,7 @@ function timeFmt(s?: number) {
         class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
         @click.self="emit('close')">
         <div
-          class="bg-[#0d1b2a] border border-accent-30 shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col
+          class="bg-theme-from border border-accent-30 shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col
                  rounded-t-2xl rounded-b-none sm:rounded-2xl"
           style="padding-bottom: env(safe-area-inset-bottom);">
           <!-- Drag handle mobile -->

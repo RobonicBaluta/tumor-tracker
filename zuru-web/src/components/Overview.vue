@@ -628,7 +628,7 @@
                 <p class="text-white/50 text-xs font-mono">{{ topTumores[0].campeon }}</p>
               </div>
             </div>
-            <div class="bg-[#0d1b2a] p-3">
+            <div class="bg-theme-from p-3">
               <div class="grid grid-cols-3 gap-2 text-center mb-2">
                 <div>
                   <p class="text-green-400 text-base font-bold">{{ topTumores[0].total_kills }}</p>
@@ -710,7 +710,7 @@
     <Transition name="modal">
       <div v-if="selectedMatchId" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeMatchDetail">
-        <div class="bg-[#0d1b2a] border border-accent-30 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-theme-from border border-accent-30 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 
           <!-- Modal header -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
@@ -845,7 +845,7 @@
     <Transition name="modal">
       <div v-if="showLiveGame" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[6vh] sm:pt-4"
         @click.self="closeLiveGame">
-        <div class="bg-[#0d1b2a] border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
+        <div class="bg-theme-from border border-red-500/30 rounded-2xl shadow-2xl shadow-red-900/30 w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
           <div class="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div class="flex items-center gap-3">
               <span class="inline-block w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></span>
@@ -1227,7 +1227,7 @@
 
     <!-- Notifications sidebar -->
     <Transition name="modal">
-      <div v-if="showNotifications" class="fixed top-0 right-0 bottom-0 w-80 z-[55] bg-[#0d1b2a]/95 backdrop-blur-md border-l border-white/10 shadow-2xl flex flex-col">
+      <div v-if="showNotifications" class="fixed top-0 right-0 bottom-0 w-80 z-[55] bg-theme-from/95 backdrop-blur-md border-l border-white/10 shadow-2xl flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <p class="text-white/80 font-mono text-sm font-bold">🔔 Notificaciones</p>
           <div class="flex items-center gap-2">
@@ -1300,8 +1300,8 @@
     <Transition name="modal">
       <div v-if="showAnalytics" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 pt-[8vh] sm:pt-4"
         @click.self="closeAnalytics">
-        <div class="bg-[#0d1b2a] border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
-          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-[#0d1b2a]/95 backdrop-blur z-10">
+        <div class="bg-theme-from border border-purple-500/30 rounded-2xl shadow-2xl shadow-purple-900/30 w-full max-w-5xl max-h-[92vh] overflow-y-auto">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 sticky top-0 bg-theme-from/95 backdrop-blur z-10">
             <p class="text-white font-mono font-bold">📊 Analíticas · {{ summoner }}</p>
             <button @click="closeAnalytics" class="text-white/40 hover:text-white text-xl transition">✕</button>
           </div>
@@ -1733,7 +1733,7 @@
       <Transition name="modal">
         <div v-if="playerBetState" class="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
           @click.self="closePlayerBet">
-          <div class="bg-[#0d1b2a] border border-yellow-500/40 rounded-2xl shadow-2xl w-full max-w-sm">
+          <div class="bg-theme-from border border-yellow-500/40 rounded-2xl shadow-2xl w-full max-w-sm">
             <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <p class="text-yellow-200 font-mono font-bold flex items-center gap-2">
                 <span>🎯</span><span>Apostar al tumor</span>

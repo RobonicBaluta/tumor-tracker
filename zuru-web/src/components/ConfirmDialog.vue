@@ -4,7 +4,7 @@
       <div v-if="show"
         class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
         @click.self="onCancel">
-        <div class="bg-[#0d1b2a]/95 border-2 rounded-xl p-5 max-w-sm w-full shadow-2xl"
+        <div class="bg-theme-from/95 border-2 rounded-xl p-5 max-w-sm w-full shadow-2xl"
           :style="{ borderColor: accentColor + 'aa', boxShadow: `0 0 30px -8px ${accentColor}` }"
           @click.stop>
           <p v-if="title"

@@ -31,6 +31,13 @@
   .hover\:border-accent-50:hover    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 50%, transparent); }
 
   .focus\:border-accent-60:focus    { border-color: color-mix(in srgb, var(--theme-accent, #c89b3c) 60%, transparent); }
+
+  /* Theme surface bg: usado en TODOS los popups/modales/dropdowns/drawers
+     para que su masa de color (no solo el border) cambie con el theme.
+     Fallback al brand navy si --theme-from no está seteado. */
+  .bg-theme-from { background-color: var(--theme-from, #0d1b2a); }
+  .bg-theme-from\/95 { background-color: color-mix(in srgb, var(--theme-from, #0d1b2a) 95%, transparent); }
+  .bg-theme-from\/90 { background-color: color-mix(in srgb, var(--theme-from, #0d1b2a) 90%, transparent); }
 }
 
 /*

@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
            container para quedar siempre sobre los 4 slots. -->
       <Transition name="bn-drawer">
         <div v-if="drawerOpen"
-          class="pointer-events-auto bg-[#0d1b2a]/95 backdrop-blur-md border-t border-accent-40 shadow-2xl mb-px">
+          class="pointer-events-auto bg-theme-from/95 backdrop-blur-md border-t border-accent-40 shadow-2xl mb-px">
           <div class="px-3 py-2 grid grid-cols-2 gap-1.5">
             <button @click="emit('refresh'); closeDrawer()" :disabled="loading"
               class="flex items-center gap-2 h-11 px-3 text-xs text-white/80 border border-white/15 rounded-lg disabled:opacity-30 font-mono">
@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
       <!-- 4 slots primarios. Cada uno full-height (~58px) para targets táctiles
            cómodos (~50px efectivos sin contar borders). -->
       <nav
-        class="pointer-events-auto bg-[#0d1b2a]/95 backdrop-blur-md border-t border-accent-30 grid grid-cols-4">
+        class="pointer-events-auto bg-theme-from/95 backdrop-blur-md border-t border-accent-30 grid grid-cols-4">
         <button @click="emit('live'); closeDrawer()" :disabled="liveLoading"
           class="flex flex-col items-center justify-center py-2 gap-0.5 text-red-300 hover:bg-red-950/30 active:bg-red-950/50 disabled:opacity-30 transition">
           <span class="relative">

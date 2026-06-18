@@ -157,7 +157,7 @@ watch(() => props.modelValue, () => { searchQuery.value = '' })
     <Teleport to="body">
       <Transition name="cp-fade">
         <div v-if="open" ref="popoverRef"
-          class="z-[70] bg-[#0d1b2a] border border-accent-40 rounded-lg shadow-2xl backdrop-blur overflow-hidden"
+          class="z-[70] bg-theme-from border border-accent-40 rounded-lg shadow-2xl backdrop-blur overflow-hidden"
           :style="popoverStyle">
           <!-- Search -->
           <div class="p-2 border-b border-white/10">
