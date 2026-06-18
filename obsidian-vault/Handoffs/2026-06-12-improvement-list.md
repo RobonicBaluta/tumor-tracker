@@ -167,6 +167,48 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 12) — #16 code-split AnalyticsModal
+
+- [x] ⚡ #16 (cont) Extraído `AnalyticsModal.vue` de Overview.vue (lines 985-1401,
+  ~417 LOC). Mismo patrón template-only que `LiveGameModal`: state,
+  refs, watchers, fetch handlers (loadAnalytics, runBacktest,
+  loadDeathHeatmap, drawHeatmap, backtestPoller, resize listener) se
+  quedan en Overview. Modal recibe ~20 props + emite 6 events.
+- Chunk lazy `AnalyticsModal-*.js`: 24.18 KB raw / **6.73 KB gz** + 0.24 KB
+  gz CSS. Initial bundle baja en torno a ese tamaño. Overview.vue cae a
+  ~3935 líneas (de 4350).
+- Bridge canvas: el `<canvas ref="heatmapCanvas">` del heatmap vive en
+  el modal, pero `drawHeatmap()` corre en el padre (porque la lógica de
+  fetch+pintado vive ahí). Solución: el modal hace
+  `defineExpose({ heatmapCanvas })`, el padre lo lee como
+  `analyticsModalRef.value?.heatmapCanvas` (Vue 3 auto-desempaqueta refs
+  expuestos via defineExpose, así que el padre obtiene el
+  `HTMLCanvasElement` directamente). Contrato documentado en ambos lados
+  para evitar refactors futuros que lo rompan.
+- v-model:filters: el padre tiene `analyticsFilters` ref, el modal lo
+  recibe como prop, y cada `<select @change>` emite `update:filters` con
+  un nuevo objeto inmutable. Cascada de emits sincrónica:
+  `update:filters` → reasigna `analyticsFilters.value` → `load-analytics`
+  → corre `loadAnalytics()` con los nuevos params.
+- Adversarial verify (3 reviewers paralelos: boundary, canvas bridge,
+  visual regression) cazó **1 HIGH** y varios LOW:
+  - **HIGH (regresión visual)**: `<Transition name="modal">` no animaba
+    en la PRIMERA apertura porque el wrapper se monta dentro del chunk
+    lazy con `show=true` ya activo → Vue lo trata como render inicial,
+    sin enter animation. Fix: añadido `appear` al `<Transition>` tanto
+    en AnalyticsModal como en LiveGameModal (mismo bug latente que
+    salió por el mismo patrón). Ahora la primera apertura fade-in
+    correctamente.
+  - **LOW (pre-existente, ahora resuelto)**: `closeAnalytics()` no
+    limpiaba `heatmapData`. En segunda apertura, el canvas se montaba
+    pero `drawHeatmap` no corría hasta la siguiente resize → canvas en
+    blanco con header visible. Fix: `heatmapData.value = null` en
+    `closeAnalytics()`.
+  - **LOW (cleanup)**: el `setTimeout(50ms)` antes de `drawHeatmap`
+    (heurística pre-extracción) se reemplaza por `await nextTick();
+    await nextTick();` — cubre el ciclo padre + child sin recurrir a un
+    wall-clock arbitrario.
+
 ### Sesión 2026-06-18 (continuación 11) — #15 GIF share
 
 - [x] 🎨 #15 Share como GIF animado. Tumor counter 0 → finalTumor en
