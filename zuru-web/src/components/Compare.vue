@@ -28,22 +28,33 @@
                 @input="onInput(i)"
                 @focus="activeSlot = i"
                 @blur="closeSuggestions(i)"
-                @keydown.down.prevent="moveSuggestion(i, 1)"
-                @keydown.up.prevent="moveSuggestion(i, -1)"
-                @keydown.enter.prevent="acceptSuggestion(i)"
+                @keydown.down="onArrow(i, 1, $event)"
+                @keydown.up="onArrow(i, -1, $event)"
+                @keydown.enter="onEnter(i, $event)"
                 @keydown.escape="closeSuggestions(i)"
                 type="text"
                 placeholder="Nombre#TAG · ej. Faker#KR1"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
+                role="combobox"
+                :aria-expanded="activeSlot === i && suggestions[i]?.length > 0"
+                :aria-controls="`compare-suggest-${i}`"
+                :aria-activedescendant="(activeSlot === i && suggestions[i]?.length) ? `compare-suggest-${i}-${suggestionCursor[i] || 0}` : undefined"
+                aria-autocomplete="list"
                 class="w-full px-4 py-3 bg-white/5 border rounded-lg text-white placeholder-white/20 focus:outline-none transition font-mono"
                 :style="{ borderColor: playerBorder(i) }" />
 
               <!-- Autocomplete dropdown — sólo cuando hay sugerencias
-                   y el slot está activo (input enfocado). -->
+                   y el slot está activo (input enfocado). ARIA listbox
+                   para que screen readers lo anuncien correctamente. -->
               <div v-if="activeSlot === i && suggestions[i]?.length"
+                :id="`compare-suggest-${i}`"
+                role="listbox"
                 class="absolute z-20 left-0 right-0 mt-1 bg-[#0d0d1a] border border-white/15 rounded-lg shadow-2xl overflow-hidden">
-                <button v-for="(s, idx) in suggestions[i]" :key="s"
+                <button v-for="(s, idx) in suggestions[i]" :key="`${i}-${s}`"
+                  :id="`compare-suggest-${i}-${idx}`"
                   type="button"
+                  role="option"
+                  :aria-selected="suggestionCursor[i] === idx"
                   @mousedown.prevent="pickSuggestion(i, s)"
                   :class="suggestionCursor[i] === idx ? 'bg-white/10' : 'hover:bg-white/5'"
                   class="w-full text-left px-3 py-2 text-sm text-white font-mono flex items-center justify-between transition">
@@ -260,6 +271,30 @@ function acceptSuggestion(i: number) {
   const list = suggestions.value[i] || []
   if (!list.length) return
   pickSuggestion(i, list[suggestionCursor.value[i] || 0])
+}
+
+// Sólo prevent default cuando el dropdown está visible — sin esto las
+// flechas se "comían" para usar input con caret normal y Enter no podía
+// disparar la búsqueda cuando el user ya tenía Name#TAG completos.
+function onArrow(i: number, dir: 1 | -1, e: KeyboardEvent) {
+  const list = suggestions.value[i] || []
+  if (!list.length) return  // sin dropdown, deja el browser mover el caret
+  e.preventDefault()
+  moveSuggestion(i, dir)
+}
+
+function onEnter(i: number, e: KeyboardEvent) {
+  const list = suggestions.value[i] || []
+  if (list.length) {
+    e.preventDefault()
+    acceptSuggestion(i)
+  } else {
+    // Sin sugerencias visibles → submit del form como atajo. Sólo si
+    // todos los slots tienen Nombre#TAG ya escrito; si no, search() pinta
+    // el error correspondiente.
+    e.preventDefault()
+    search()
+  }
 }
 
 function pickSuggestion(i: number, full: string) {
