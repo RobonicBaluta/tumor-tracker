@@ -2507,6 +2507,51 @@ def refund_bravery_lock(lid, reason="expired"):
     return get_bravery_lock_by_id(lid)
 
 
+def refund_room_bravery_locks(room_id, reason="room toggle off"):
+    """Refund todos los locks pending de una sala. Llamado cuando el host hace
+    toggle off de Bravery — los locks quedaban huérfanos sin pool válido de
+    lanes. Idempotente: locks ya en status != 'pending' se ignoran.
+
+    Devuelve dict {refunded_count, total_stake, affected_users: {user_id: stake}}.
+    El caller decide si emitir notifs basado en este resumen.
+
+    Concurrencia: usamos optimistic locking en la UPDATE
+    (`WHERE id=? AND status='pending'`) + cur.rowcount para que dos requests
+    concurrentes (ej. doble click del host) no acrediten currency dos veces.
+    El segundo encuentra rowcount=0 y salta el add_currency.
+    """
+    room = get_room_by_id(room_id)
+    if not room or not room.get("code"):
+        return {"refunded_count": 0, "total_stake": 0, "affected_users": {}}
+    cur = _exec(
+        "SELECT id, user_id, stake FROM bravery_locks WHERE room_code=? AND status='pending'",
+        (room["code"],),
+    )
+    locks = cur.fetchall()
+    affected = {}
+    total = 0
+    refunded = 0
+    for lid, user_id, stake in locks:
+        upd = _exec(
+            "UPDATE bravery_locks SET status='refunded', payout=?, resolved_at=? "
+            "WHERE id=? AND status='pending'",
+            (stake, time.time(), lid),
+        )
+        # rowcount == 0 → otra request ya refundó este lock entre nuestro
+        # SELECT y nuestro UPDATE. Skip el add_currency para no double-credit.
+        if getattr(upd, "rowcount", 1) == 0:
+            continue
+        add_currency(user_id, stake, f"bravery refund ({reason}) · #{lid}")
+        affected[user_id] = affected.get(user_id, 0) + stake
+        total += stake
+        refunded += 1
+    return {
+        "refunded_count": refunded,
+        "total_stake": total,
+        "affected_users": affected,
+    }
+
+
 def user_has_pending_bravery(user_id):
     cur = _exec(
         "SELECT id FROM bravery_locks WHERE user_id=? AND status='pending' LIMIT 1",
