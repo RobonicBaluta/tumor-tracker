@@ -167,6 +167,24 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 6) — themes revamp + #24 verified
+
+- [x] 🎨 #11 Themes revamp completo — fuera los 6 themes basados en rol
+  (Naval/Jungla/Support/Mid/ADC/Top), entran 8 themes especiales:
+  Demacia Royal 🏰 · Void Sovereign 🔮 · K/DA Neon 💫 · Worlds Gold 🏆 ·
+  Inferno Ascent 🔥 · Pentakill Metal 🎸 · Star Guardian ✨ · Shadow
+  Assassin ⚔️. Cada theme: {from, to, accent, label}. Default `royal`.
+  Accent expuesto como CSS var `--theme-accent` en el root de App + Overview.
+  Migration on-boot limpia localStorage de keys legacy O desconocidas
+  (cubre legacy/jungla/etc. y values inyectados). Theme picker en Navbar
+  con swatch preview (mini gradient + accent dot) + max-h-[70vh] +
+  overflow para forward-compat con más themes.
+- [x] 🐛 #24 daily next_claim_at re-fetch verificado: el fix cb9cd9f sigue
+  funcionando — claimDaily await fetchMe(), Navbar.dailyCountdown lee
+  user.daily.next_claim_at, backend daily_status computa next_claim_at
+  fresh en cada request. Único gap menor: si fetchMe falla con error de
+  red, el countdown queda stale hasta próximo /me — acceptable.
+
 ### Sesión 2026-06-18 (continuación 5) — clusters + bravery
 
 - [x] 🧬 Clusters: archetype overlap fix — orden por tamaño DESC + tracking de

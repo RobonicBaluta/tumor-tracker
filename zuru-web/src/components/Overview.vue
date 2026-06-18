@@ -1,6 +1,9 @@
 <template>
   <div ref="scrollContainerRef" class="flex-1 flex flex-col overflow-y-auto relative"
-    :style="{ background: `linear-gradient(to bottom right, ${theme.from}, ${theme.to})` }">
+    :style="{
+      background: `linear-gradient(to bottom right, ${theme.from}, ${theme.to})`,
+      ['--theme-accent' as any]: (theme as any).accent || '#c89b3c',
+    }">
 
     <!-- Pull-to-refresh indicator (mobile-only por la composable, que sólo
          escucha touch). Aparece colgando del top con altura proporcional al
