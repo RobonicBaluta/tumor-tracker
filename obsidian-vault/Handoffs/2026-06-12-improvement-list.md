@@ -167,6 +167,27 @@ status: en ejecución
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
 
+### Sesión 2026-06-18 (continuación 10) — #16 code-split LiveGameModal
+
+- [x] ⚡ #16 (parcial) Extraído `LiveGameModal.vue` de Overview.vue. Lazy-loaded
+  vía `defineAsyncComponent(() => import('./LiveGameModal.vue'))`. Estrategia:
+  TEMPLATE ONLY — todo el state, refs, watchers, async handlers (closeLiveGame,
+  resolveLivePrediction, searchLiveGame, checkExistingPlayerBet watcher) viven
+  en Overview. El componente nuevo es 100% rendering: recibe props (~22) y
+  emite events (close, openCreateBet, openPlayerBet, toggleBlacklist,
+  resolveLivePrediction, retryRefresh). Riesgo bajo, sin async race ni
+  stale refs.
+- Bonus: refactor del bloque blue/red team duplicado en 1 `v-for` sobre
+  SIDES const (~90 LOC menos).
+- Bonus: el `border/bg-[#c89b3c]` del is_me highlight pasa a `border-accent-50
+  bg-accent-10` → ahora respeta theme también dentro del modal.
+- Bundle stats: Overview **169KB → 146KB / 46KB → 41KB gz** (–5KB inicial),
+  LiveGameModal chunk separado **19KB / 6KB gz** que solo se baja cuando el
+  user abre "En directo".
+- Verify: 1 fix real aplicado (SIDES const extraída del template inline para
+  estabilizar v-for keys). Falsa alarma sobre kebab/camel event names —
+  Vue 3 los normaliza automáticamente.
+
 ### Sesión 2026-06-18 (continuación 9) — perf items 16-24
 
 Status del bloque que el user pidió:
