@@ -237,18 +237,26 @@
             <span>{{ shareCopied ? '✓' : '🔗' }}</span>
             <span class="hidden md:inline text-[10px] uppercase tracking-wide">{{ shareCopied ? 'Copiado' : 'Compartir' }}</span>
           </button>
-          <!-- Card: dropdown PNG/GIF. Click directo dispara PNG (acción más
-               frecuente). Click sobre el ▾ abre menu para elegir formato. -->
-          <div ref="cardMenuRef" class="relative">
+          <!-- Card: split pill PNG/GIF. UN solo wrapper con border + hover
+               (no dos botones pegados con borders propios). Divisor 1px
+               entre las zonas. El hover del wrapper colorea la pill entera. -->
+          <div ref="cardMenuRef"
+            :class="[
+              'relative inline-flex h-9 rounded-lg border transition font-mono overflow-hidden',
+              exportingImage ? 'border-white/15 opacity-60' : 'border-white/20 hover:border-accent-40',
+            ]">
             <button @click="exportStatsImage" :disabled="exportingImage"
-              class="h-9 pl-2.5 pr-1.5 text-sm text-white/60 hover:text-accent border border-white/20 hover:border-accent-40 rounded-l-lg transition font-mono disabled:opacity-30 flex items-center gap-1.5"
+              class="pl-2.5 pr-1.5 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center gap-1.5 transition disabled:cursor-not-allowed"
               :title="exportingImage ? (gifProgress > 0 ? `Generando GIF ${gifProgress}%` : 'Generando...') : 'Descargar card PNG'">
               <span v-if="!exportingImage">🖼</span>
               <span v-else class="text-[10px]">{{ gifProgress > 0 ? gifProgress + '%' : '⏳' }}</span>
               <span class="hidden md:inline text-[10px] uppercase tracking-wide">Card</span>
             </button>
+            <!-- Divisor 1px de la misma tonalidad que el border. self-stretch
+                 hace que cubra toda la altura del pill. -->
+            <span class="w-px self-stretch bg-white/15"></span>
             <button @click="cardMenuOpen = !cardMenuOpen" :disabled="exportingImage"
-              class="h-9 px-1.5 text-sm text-white/60 hover:text-accent border border-l-0 border-white/20 hover:border-accent-40 rounded-r-lg transition font-mono disabled:opacity-30 flex items-center"
+              class="px-2 text-sm text-white/60 hover:text-accent hover:bg-white/5 flex items-center transition disabled:cursor-not-allowed"
               :title="cardMenuOpen ? 'Cerrar' : 'Más formatos'">
               <span class="text-[9px]">{{ cardMenuOpen ? '▴' : '▾' }}</span>
             </button>
