@@ -9,7 +9,7 @@ const { canPrompt, isIos, triggerPrompt, dismiss } = usePwaInstall()
        distintos (no spam en first visit), respeta cooldown de 14 días tras
        dismiss y desaparece para siempre si el user instala. -->
   <Transition name="modal">
-    <div v-if="canPrompt"
+    <div v-if="canPrompt" data-pwa-install-banner
       class="fixed left-1/2 -translate-x-1/2 z-[105] max-w-sm w-[calc(100%-2rem)]
              bg-theme-from/95 backdrop-blur-md border border-accent-40 rounded-xl shadow-2xl
              px-4 py-3 flex items-start gap-3"

@@ -2,10 +2,12 @@
 import { computed, inject, ref, onMounted, defineAsyncComponent } from 'vue';
 import { useVisibilityPoller } from '../composables/useVisibilityPoller';
 import { DAILY_REWARD_AMOUNT } from '../composables/econConfig';
+import { sfx } from '../composables/useSfx';
 // Modales lazy: la mayoría de visitas no los abre. Saca ~15KB gzip del bundle inicial.
 const MyBetsModal = defineAsyncComponent(() => import('./MyBetsModal.vue'));
 const SocialModal = defineAsyncComponent(() => import('./SocialModal.vue'));
 const UserModal = defineAsyncComponent(() => import('./UserModal.vue'));
+const MissionsModal = defineAsyncComponent(() => import('./MissionsModal.vue'));
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{
@@ -27,6 +29,7 @@ const claimingDaily = ref(false)
 const dailyResult = ref<{ awarded: number } | null>(null)
 const showMyBets = ref(false)
 const showSocial = ref(false)
+const showMissions = ref(false)
 const socialInitialTab = ref<string | undefined>(undefined)
 const showUserModal = ref(false)
 const userModalTab = ref<string | undefined>(undefined)
@@ -180,7 +183,10 @@ const claimDaily = async () => {
   claimingDaily.value = true
   dailyResult.value = null
   const result = await auth.claimDaily()
-  if (result) dailyResult.value = result
+  if (result) {
+    dailyResult.value = result
+    sfx.chime() // #50 — daily claim feel-good chime, no-op si opt-in está off.
+  }
   claimingDaily.value = false
   setTimeout(() => { dailyResult.value = null }, 3000)
 }
@@ -226,6 +232,14 @@ const claimDaily = async () => {
       <div class="flex-1"></div>
 
       <!-- Hot bets / leaderboards -->
+      <!-- #49 — Missions diarias/semanales. Trigger compacto al lado del
+           Social. Lazy modal, sin coste en initial bundle. -->
+      <button v-if="auth && auth.isLoggedIn.value" @click="showMissions = true"
+        class="relative px-3 py-2 text-sm rounded-lg border border-white/15 text-white/70 hover:text-purple-300 hover:border-purple-500/40 transition font-mono"
+        v-tooltip="'Misiones diarias y semanales'">
+        🎯
+      </button>
+
       <button v-if="auth && auth.isLoggedIn.value" @click="socialInitialTab = 'hot'; showSocial = true"
         class="relative px-3 py-2 text-sm rounded-lg border border-white/15 text-white/70 hover:text-yellow-300 hover:border-yellow-500/40 transition font-mono"
         v-tooltip="'Hot Bets · Leaderboards · Amigos · Salas'">
@@ -454,6 +468,7 @@ const claimDaily = async () => {
     <MyBetsModal v-if="showMyBets" :show="true" @close="showMyBets = false" />
     <SocialModal v-if="showSocial" :show="true" :initial-tab="socialInitialTab" @close="showSocial = false" />
     <UserModal v-if="showUserModal" :show="true" :initial-tab="userModalTab" @close="showUserModal = false" />
+    <MissionsModal v-if="showMissions" :show="true" @close="showMissions = false" />
   </nav>
 </template>
 

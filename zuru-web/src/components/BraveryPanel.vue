@@ -153,11 +153,22 @@
         📍 En sala: lane se asigna random al lockear · {{ lanesRemaining }}/5 disponibles
       </p>
 
-      <div class="grid grid-cols-2 gap-2 mb-2">
+      <div class="grid grid-cols-3 gap-2 mb-2">
         <button @click="onRoll" :disabled="rolling || !ddragonReady || lockBlocked"
           class="bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 disabled:opacity-40 text-white font-mono font-bold text-xs px-3 py-2 rounded">
           {{ rolling ? '🎲...' : '🎲 Aleatorio' }}
         </button>
+        <!-- #34 Reroll: solo visible si ya hay un roll local (lastRoll).
+             Coste fijo en TC, descontado en server. Si saldo < cost, el
+             botón se ve disabled. -->
+        <button v-if="lastRoll" @click="onFullReroll" :disabled="rolling || !ddragonReady || lockBlocked || !canAffordReroll"
+          class="border border-yellow-500/40 text-yellow-200 hover:bg-yellow-900/30 disabled:opacity-40 text-xs font-mono px-2 py-2 rounded flex items-center justify-center gap-1"
+          :title="canAffordReroll ? `Re-roll por ${REROLL_COST} TC` : `Necesitas ${REROLL_COST} TC`">
+          <span>🔁</span>
+          <span class="hidden sm:inline">{{ REROLL_COST }}</span>
+          <span class="text-[9px] opacity-70">TC</span>
+        </button>
+        <div v-else></div>
         <div class="text-[10px] font-mono text-white/50 self-center text-right">
           Multi:
           <span class="font-bold"
@@ -399,11 +410,38 @@ async function onRoll() {
     })
     if (r) {
       lastRoll.value = r
-      // En solo no llega lane desde backend; pickeamos una random local para
-      // que el user pueda jugar SR pretendiendo este lane. En sala lastRoll.lane
-      // ya viene asignado por el server al lockear.
       if (!props.roomCode) pickSoloLane()
     } else error.value = 'No se pudo aleatorizar'
+  } finally {
+    rolling.value = false
+  }
+}
+
+// #34 — Reroll de pago. Mismo flow que onRoll pero llama al endpoint
+// con coste. Si el server responde error (saldo insuficiente, 503, etc.)
+// lo mostramos en `error` para que el user sepa por qué nada cambió.
+// (No confundir con `onReroll(lid)` abajo, que es el reroll de ITEMS
+// de un Bravery YA lockeado — esto es full reroll del pack inicial.)
+const REROLL_COST = 25
+const canAffordReroll = computed(() => (auth?.user?.value?.currency ?? 0) >= REROLL_COST)
+async function onFullReroll() {
+  if (!canAffordReroll.value) return
+  rolling.value = true
+  error.value = ''
+  try {
+    const r = await auth.braveryFullReroll({
+      dimensions: dims.value,
+      room_code: props.roomCode || null,
+      item_count: 5,
+    })
+    if (r?.error) {
+      error.value = r.error
+      return
+    }
+    if (r) {
+      lastRoll.value = r
+      if (!props.roomCode) pickSoloLane()
+    }
   } finally {
     rolling.value = false
   }

@@ -105,6 +105,18 @@ def _init_sqlite(conn):
     # filtran por (user_id, reason) sobre currency_transactions; sin índice
     # cada /auth/me hace full scan.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_currency_tx_user_reason ON currency_transactions(user_id, reason, created_at DESC)")
+    # #49 — Missions diarias/semanales. Solo guardamos CLAIMS; el progreso
+    # se computa on-the-fly en missions_engine.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_mission_claims (
+            user_id INTEGER NOT NULL,
+            mission_key TEXT NOT NULL,
+            period TEXT NOT NULL,
+            claimed_at REAL NOT NULL,
+            PRIMARY KEY (user_id, mission_key, period)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mission_claims_user_period ON user_mission_claims(user_id, period)")
     # Notificaciones por usuario (servidor → cliente, polled).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
@@ -372,6 +384,17 @@ def _init_pg(conn):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_bets_status_created ON bets(status, created_at)")
     # #48 — mismo motivo que en sqlite init: (user_id, reason) hot path.
     cur.execute("CREATE INDEX IF NOT EXISTS idx_currency_tx_user_reason ON currency_transactions(user_id, reason, created_at DESC)")
+    # #49 — Mission claims.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_mission_claims (
+            user_id INTEGER NOT NULL,
+            mission_key TEXT NOT NULL,
+            period TEXT NOT NULL,
+            claimed_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (user_id, mission_key, period)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_mission_claims_user_period ON user_mission_claims(user_id, period)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_notifications (
             id SERIAL PRIMARY KEY,
@@ -2174,28 +2197,40 @@ def delete_room(room_id, owner_user_id):
 # ---------------------------------------------------------------------------
 
 ACHIEVEMENT_DEFS = {
-    "first_login":      {"icon": "🎉", "name": "Bienvenido al hospital", "desc": "Primer login"},
-    "first_bet":        {"icon": "🎲", "name": "First Blood Apostada", "desc": "Crea tu primera apuesta"},
-    "first_bet_won":    {"icon": "💰", "name": "Apostador Iniciado", "desc": "Gana tu primera apuesta"},
-    "ten_bets_won":     {"icon": "🏆", "name": "Bookie", "desc": "Gana 10 apuestas"},
-    "fifty_bets_won":   {"icon": "👑", "name": "Casa de Apuestas", "desc": "Gana 50 apuestas"},
-    "first_prediction": {"icon": "🔮", "name": "Vidente", "desc": "Primera predicción acertada"},
-    "ten_predictions":  {"icon": "🎯", "name": "Predictor", "desc": "10 predicciones acertadas"},
-    "streak_5":         {"icon": "🔥", "name": "Racha de Fuego", "desc": "5 predicciones acertadas seguidas"},
-    "tumor_hunter":     {"icon": "☢", "name": "Cazador de Tumores", "desc": "Detecta 50 worst players"},
-    "richie_rich":      {"icon": "💎", "name": "Richie Rich", "desc": "Acumula 1000 TC"},
-    "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos"},
-    "all_in":           {"icon": "🎰", "name": "All In", "desc": "Apuesta todo tu balance en una sola"},
-    "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Recuperar de 0 a 500 TC"},
+    # --- Onboarding ---
+    "first_login":      {"icon": "🎉", "name": "Bienvenido al hospital", "desc": "Primer login", "tier": "bronze"},
+    # --- Bets P2P (tier-stack) ---
+    "first_bet":        {"icon": "🎲", "name": "First Blood Apostada", "desc": "Crea tu primera apuesta", "tier": "bronze"},
+    "first_bet_won":    {"icon": "💰", "name": "Apostador Iniciado", "desc": "Gana tu primera apuesta", "tier": "bronze"},
+    "ten_bets_won":     {"icon": "🏆", "name": "Bookie", "desc": "Gana 10 apuestas", "tier": "silver"},
+    "fifty_bets_won":   {"icon": "👑", "name": "Casa de Apuestas", "desc": "Gana 50 apuestas", "tier": "gold"},
+    "bet_master":       {"icon": "💸", "name": "Bet Master", "desc": "Gana 100 apuestas", "tier": "platinum"},
+    "all_in":           {"icon": "🎰", "name": "All In", "desc": "Apuesta un stake ≥ 500 TC en una sola", "tier": "silver"},
+    "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Stake ≥500 TC en una apuesta ganada", "tier": "silver"},
+    # --- Predicciones (tier-stack, cross-db: predictions.db) ---
+    "first_prediction": {"icon": "🔮", "name": "Vidente", "desc": "Primera predicción acertada", "tier": "bronze"},
+    "ten_predictions":  {"icon": "🎯", "name": "Predictor", "desc": "10 predicciones acertadas", "tier": "silver"},
+    "streak_5":         {"icon": "🔥", "name": "Racha de Fuego", "desc": "5 predicciones acertadas seguidas", "tier": "gold"},
+    # --- Tumor / matches (cross-db: matches.db) ---
+    "tumor_hunter":     {"icon": "☢", "name": "Cazador de Tumores", "desc": "50 partidas analizadas", "tier": "silver"},
+    "matches_200":      {"icon": "🎮", "name": "Veterano del SoloQ", "desc": "200 partidas analizadas", "tier": "gold"},
+    # --- Currency ---
+    "richie_rich":      {"icon": "💎", "name": "Richie Rich", "desc": "Acumula 1000 TC", "tier": "silver"},
+    # --- Daily streak (#48) ---
+    "daily_streak_7":   {"icon": "🔥", "name": "Hábito Semanal", "desc": "7 días seguidos reclamando daily", "tier": "silver"},
+    "daily_streak_30":  {"icon": "🔥", "name": "Inquebrantable", "desc": "30 días seguidos reclamando daily", "tier": "platinum"},
+    # --- Social ---
+    "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos", "tier": "bronze"},
+    "friend_link":      {"icon": "🤝", "name": "Red Tóxica", "desc": "Añade 10 amigos", "tier": "silver"},
     # --- Bravery ---
-    "first_bravery":    {"icon": "🎲", "name": "Bravo de Iniciación", "desc": "Lockea tu primer Bravery"},
-    "bravery_winner":   {"icon": "⚡", "name": "Bravo Triunfal", "desc": "Gana TC en un Bravery"},
-    "bravery_triple":   {"icon": "🎭", "name": "Triple Riesgo", "desc": "Lockea un Bravery con champ + lane + items"},
+    "first_bravery":    {"icon": "🎲", "name": "Bravo de Iniciación", "desc": "Lockea tu primer Bravery", "tier": "bronze"},
+    "bravery_winner":   {"icon": "⚡", "name": "Bravo Triunfal", "desc": "Gana TC en un Bravery", "tier": "silver"},
+    "bravery_triple":   {"icon": "🎭", "name": "Triple Riesgo", "desc": "Lockea un Bravery con champ + lane + items", "tier": "gold"},
     # --- Challenges 1v1 ---
-    "first_challenge_won": {"icon": "⚔", "name": "Duelista", "desc": "Gana tu primer challenge 1v1"},
-    "streak_winner":    {"icon": "🌟", "name": "Win Streaker", "desc": "Gana un challenge de Win Streak"},
+    "first_challenge_won": {"icon": "⚔", "name": "Duelista", "desc": "Gana tu primer challenge 1v1", "tier": "bronze"},
+    "streak_winner":    {"icon": "🌟", "name": "Win Streaker", "desc": "Gana un challenge de Win Streak", "tier": "silver"},
     # --- Rooms ---
-    "first_room":       {"icon": "🏠", "name": "Anfitrión", "desc": "Crea tu primera sala"},
+    "first_room":       {"icon": "🏠", "name": "Anfitrión", "desc": "Crea tu primera sala", "tier": "bronze"},
 }
 
 
@@ -2245,6 +2280,7 @@ def _achievement_progress(user_id):
         won = cur.fetchone()[0] or 0
         progress["ten_bets_won"] = {"current": min(won, 10), "target": 10}
         progress["fifty_bets_won"] = {"current": min(won, 50), "target": 50}
+        progress["bet_master"] = {"current": min(won, 100), "target": 100}
 
         # Friends
         cur = _exec(
@@ -2253,12 +2289,42 @@ def _achievement_progress(user_id):
         )
         friends = cur.fetchone()[0] or 0
         progress["social"] = {"current": min(friends, 3), "target": 3}
+        progress["friend_link"] = {"current": min(friends, 10), "target": 10}
 
         # Currency
         user = get_user_by_id(user_id)
         if user:
             curr = user.get("currency", 0)
             progress["richie_rich"] = {"current": min(curr, 1000), "target": 1000}
+
+        # Daily streak (consume el helper #48). 0 si nunca reclamó.
+        try:
+            ds = daily_streak(user_id)
+            cs = ds.get("current", 0) or 0
+            progress["daily_streak_7"] = {"current": min(cs, 7), "target": 7}
+            progress["daily_streak_30"] = {"current": min(cs, 30), "target": 30}
+        except Exception:
+            pass
+
+        # All-in: máximo stake apostado. Una vez ≥ 500 está desbloqueado.
+        cur = _exec(
+            "SELECT COALESCE(MAX(amount), 0) FROM bets WHERE creator_user_id=? OR taker_user_id=?",
+            (user_id, user_id),
+        )
+        max_stake = cur.fetchone()[0] or 0
+        progress["all_in"] = {"current": min(int(max_stake), 500), "target": 500}
+
+        # Comeback Kid: mayor ganancia en una sola apuesta (payout - stake del lado ganador).
+        cur = _exec(
+            """SELECT COALESCE(MAX(amount), 0) FROM bets
+               WHERE status='resolved' AND winner_side IS NOT NULL
+               AND ((creator_user_id=? AND creator_side=winner_side)
+                    OR (taker_user_id=? AND creator_side<>winner_side))""",
+            (user_id, user_id),
+        )
+        max_win_stake = cur.fetchone()[0] or 0
+        # Stake equivale aproximadamente a la ganancia (x2 al ganar 1v1 igual stake).
+        progress["comeback_kid"] = {"current": min(int(max_win_stake), 500), "target": 500}
     except Exception:
         pass
     return progress
@@ -2314,6 +2380,28 @@ def evaluate_achievements(user_id):
     if won >= 1: unlock_achievement(user_id, "first_bet_won")
     if won >= 10: unlock_achievement(user_id, "ten_bets_won")
     if won >= 50: unlock_achievement(user_id, "fifty_bets_won")
+    if won >= 100: unlock_achievement(user_id, "bet_master")
+
+    # All In: máximo stake apostado ≥ 500 TC.
+    cur = _exec(
+        "SELECT COALESCE(MAX(amount), 0) FROM bets WHERE creator_user_id=? OR taker_user_id=?",
+        (user_id, user_id),
+    )
+    if (cur.fetchone()[0] or 0) >= 500:
+        unlock_achievement(user_id, "all_in")
+
+    # Comeback Kid: máximo stake en una bet ganada ≥ 500 TC. Aproximación
+    # razonable de "ganaste 500 TC en una sola apuesta" sin tracking de
+    # payout exacto en la tabla.
+    cur = _exec(
+        """SELECT COALESCE(MAX(amount), 0) FROM bets
+           WHERE status='resolved' AND winner_side IS NOT NULL
+           AND ((creator_user_id=? AND creator_side=winner_side)
+                OR (taker_user_id=? AND creator_side<>winner_side))""",
+        (user_id, user_id),
+    )
+    if (cur.fetchone()[0] or 0) >= 500:
+        unlock_achievement(user_id, "comeback_kid")
 
     # Bet count
     cur = _exec("SELECT COUNT(*) FROM bets WHERE creator_user_id=?", (user_id,))
@@ -2325,8 +2413,19 @@ def evaluate_achievements(user_id):
         "SELECT COUNT(*) FROM friendships WHERE status='accepted' AND (requester_id=? OR target_id=?)",
         (user_id, user_id),
     )
-    if (cur.fetchone()[0] or 0) >= 3:
+    friends_n = cur.fetchone()[0] or 0
+    if friends_n >= 3:
         unlock_achievement(user_id, "social")
+    if friends_n >= 10:
+        unlock_achievement(user_id, "friend_link")
+
+    # Daily streak — el helper #48 lo calcula on-the-fly desde transacciones.
+    try:
+        cs = daily_streak(user_id).get("current", 0) or 0
+        if cs >= 7: unlock_achievement(user_id, "daily_streak_7")
+        if cs >= 30: unlock_achievement(user_id, "daily_streak_30")
+    except Exception:
+        pass
 
     # Bravery: si tiene algún lock pending o resuelto, primer Bravery desbloqueado
     cur = _exec(

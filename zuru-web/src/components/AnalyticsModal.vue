@@ -9,12 +9,13 @@
 // Bonus: el canvas del heatmap se expone via defineExpose para que el
 // padre pueda seguir llamando a drawHeatmap sobre el mismo canvas DOM.
 
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import {
   championIconUrl,
   championIconFallback,
   tumorColor,
 } from '../composables/overviewConstants'
+import { tierBenchmark } from '../composables/tierBenchmarks'
 
 // Tipos LAXOS — el parent tiene interfaces estrictas, aquí Record<string,any>
 // para evitar TS contravariance (igual que con LivePlayer en LiveGameModal).
@@ -27,7 +28,9 @@ interface AnalyticsFilters {
   count: number
 }
 
-defineProps<{
+const props = defineProps<{
+  /** #33: tier del user para los benchmarks (DIAMOND, GOLD, etc.). */
+  tier?: string | null
   show: boolean
   analyticsData: AnyObj | null
   analyticsLoading: boolean
@@ -79,6 +82,26 @@ const emit = defineEmits<{
 // cambia y drawHeatmap del padre se rompe.
 const heatmapCanvas = ref<HTMLCanvasElement | null>(null)
 defineExpose({ heatmapCanvas })
+
+// #33 — Comparativa lane_diff vs benchmark del tier. El campo CS de op.gg
+// es CS/min absoluto del user, pero analyticsData.lane_diff.avg_cs_diff es
+// el DELTA vs su laner. Aproximamos: si el user gana o iguala el matchup
+// (delta >= 0), está "≥ avg del tier"; si pierde lane, "< avg". El
+// indicador es solo orientativo, no es scientific.
+const laneDiffVsTier = computed(() => {
+  const ld = props.analyticsData?.lane_diff
+  const bm = tierBenchmark(props.tier || null)
+  if (!ld) return { csOk: false, csText: '?', kdaOk: false, kdaText: '?' }
+  const csDiff = Number(ld.avg_cs_diff || 0)
+  const kdaDiff = Number(ld.avg_kda_diff || 0)
+  return {
+    csOk: csDiff >= 0,
+    csText: csDiff >= 0 ? `+${csDiff.toFixed(1)}` : `${csDiff.toFixed(1)}`,
+    kdaOk: kdaDiff >= 0,
+    kdaText: kdaDiff >= 0 ? `+${kdaDiff.toFixed(2)}` : `${kdaDiff.toFixed(2)}`,
+    benchmark: bm,
+  }
+})
 
 // Helper: emit update:filters cambiando un solo field. Usado por cada
 // <select> en el filter bar. Crea un nuevo objeto en lugar de mutar la
@@ -226,6 +249,19 @@ function updateFilter<K extends keyof AnalyticsFilters>(
               <p class="text-white/30 text-[9px] font-mono mt-3 text-center">
                 Promedio sobre {{ analyticsData.lane_diff.games }} partidas comparando contigo y tu rival directo en la misma posición.
               </p>
+              <!-- #33 — Comparación vs benchmark del tier (estimación
+                   trackeada de op.gg/u.gg). Bandera para que el user sepa
+                   si su lane diff está por encima/debajo del avg del tier. -->
+              <div v-if="tier && analyticsData.lane_diff" class="mt-2 pt-2 border-t border-white/10 flex items-center justify-center gap-2 text-[9px] font-mono">
+                <span class="text-white/40 uppercase tracking-widest">vs {{ tier }} avg</span>
+                <span :class="laneDiffVsTier.csOk ? 'text-green-300' : 'text-yellow-300'">
+                  CS {{ laneDiffVsTier.csText }}
+                </span>
+                <span class="text-white/20">·</span>
+                <span :class="laneDiffVsTier.kdaOk ? 'text-green-300' : 'text-yellow-300'">
+                  KDA {{ laneDiffVsTier.kdaText }}
+                </span>
+              </div>
             </div>
           </section>
 

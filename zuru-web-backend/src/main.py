@@ -25,6 +25,7 @@ from tumor_engine import (
 import auth as _auth
 import users_db as _users
 import bravery_engine as _bravery
+import missions_engine as _missions
 from flask import redirect
 
 
@@ -3419,30 +3420,248 @@ def achievements_mine():
     if not user:
         return jsonify({"error": "Login requerido"}), 401
 
-    # Si tiene riot_puuid, verificar streak_5 desde predictions.db (cross-db,
-    # users_db no lo puede hacer por su cuenta) y unlock si llega a 5.
+    # Cross-db unlocks: predictions.db. Estos badges no se pueden evaluar
+    # dentro de users_db porque viven en otra base.
+    pred_stats = None
     if user.get("riot_puuid"):
         try:
-            streak = predictions_aggregate_stats(user["riot_puuid"])["current_streak"]
-            if streak >= 5:
-                _users.unlock_achievement(user["id"], "streak_5")
+            pred_stats = predictions_aggregate_stats(user["riot_puuid"])
+            correct = pred_stats.get("correct", 0)
+            total = pred_stats.get("total", 0)
+            streak = pred_stats.get("current_streak", 0)
+            if correct >= 1: _users.unlock_achievement(user["id"], "first_prediction")
+            if correct >= 10: _users.unlock_achievement(user["id"], "ten_predictions")
+            if streak >= 5: _users.unlock_achievement(user["id"], "streak_5")
+            # Tumor hunter / Veterano: usamos `total` (= partidas vistas con
+            # predicción registrada) como proxy de "partidas analizadas".
+            # Sin un counter dedicado de matches procesadas, es el mejor
+            # disponible y se incrementa naturalmente con uso.
+            if total >= 50: _users.unlock_achievement(user["id"], "tumor_hunter")
+            if total >= 200: _users.unlock_achievement(user["id"], "matches_200")
         except Exception:
             pass
 
     _users.evaluate_achievements(user["id"])
     achievements = _users.list_achievements(user["id"])
 
-    # Augmentar streak_5 con progress live (current_streak / 5)
-    if user.get("riot_puuid"):
+    # Augmentar progreso live de los cross-db badges para que el frontend
+    # pueda mostrar barras "8/10" mientras todavía está locked.
+    if pred_stats is not None:
         try:
-            cs = predictions_aggregate_stats(user["riot_puuid"])["current_streak"]
+            correct = pred_stats.get("correct", 0)
+            total = pred_stats.get("total", 0)
+            cs = pred_stats.get("current_streak", 0)
+            live_progress = {
+                "first_prediction": {"current": min(correct, 1), "target": 1},
+                "ten_predictions":  {"current": min(correct, 10), "target": 10},
+                "streak_5":         {"current": min(cs, 5), "target": 5},
+                "tumor_hunter":     {"current": min(total, 50), "target": 50},
+                "matches_200":      {"current": min(total, 200), "target": 200},
+            }
             for a in achievements:
-                if a["badge"] == "streak_5" and not a["unlocked"]:
-                    a["progress"] = {"current": min(cs, 5), "target": 5}
+                if not a["unlocked"] and a["badge"] in live_progress:
+                    a["progress"] = live_progress[a["badge"]]
         except Exception:
             pass
 
     return jsonify(achievements)
+
+
+# ============================================================================
+# MISSIONS (#49) — daily/weekly mission system
+# ============================================================================
+
+def _missions_pred_helper(viewer_puuid):
+    """Devuelve un callback que computa metrics de predictions.db por período.
+    El missions_engine pasa (op_name, start, end, [extra_arg]) y obtiene int."""
+    if not viewer_puuid:
+        return None
+    def helper(op, start, end, *args):
+        try:
+            db = _pred_db()
+            if op == 'predictions_count_in_period':
+                cur = db.execute(
+                    "SELECT COUNT(*) FROM predictions WHERE viewer_puuid=? AND created_at>=? AND created_at<?",
+                    (viewer_puuid, start, end),
+                )
+                return int((cur.fetchone() or [0])[0] or 0)
+            if op == 'correct_count_in_period':
+                cur = db.execute(
+                    """SELECT COUNT(*) FROM predictions
+                       WHERE viewer_puuid=? AND created_at>=? AND created_at<?
+                       AND resolved=1 AND predicted_winner = actual_winner""",
+                    (viewer_puuid, start, end),
+                )
+                return int((cur.fetchone() or [0])[0] or 0)
+            if op == 'low_tumor_matches_in_period':
+                # `args[0]` = tumor threshold (e.g. 40). Necesitamos saber
+                # qué team era el del user. predictions log no almacena el
+                # tumor del lado del user directamente. Aproximación: usamos
+                # avg_tumor_score del lado del user_team si existe en JSON.
+                # Sin esa info, devolvemos 0 (mission no resoluble — el
+                # frontend lo verá como progress=0 y no será reclamable).
+                return 0
+            if op == 'max_streak_in_period':
+                # Walk de predictions del período, encuentra la racha máxima
+                # de aciertos consecutivos.
+                cur = db.execute(
+                    """SELECT predicted_winner, actual_winner, resolved
+                       FROM predictions
+                       WHERE viewer_puuid=? AND created_at>=? AND created_at<?
+                       ORDER BY created_at ASC""",
+                    (viewer_puuid, start, end),
+                )
+                max_run = 0
+                cur_run = 0
+                for r in cur.fetchall():
+                    pred, actual, resolved = r[0], r[1], r[2]
+                    if not resolved or pred is None or actual is None:
+                        cur_run = 0
+                        continue
+                    if pred == actual:
+                        cur_run += 1
+                        if cur_run > max_run:
+                            max_run = cur_run
+                    else:
+                        cur_run = 0
+                return max_run
+        except Exception:
+            return 0
+        return 0
+    return helper
+
+
+def _mission_with_progress(user_id, m, kind, period, db_helper, pred_helper, claimed_map):
+    """Empaqueta una mission con progress + claimable + claimed.
+    `claimed_map` es un dict {mission_key: claimed_at} pre-cargado por el
+    caller — sin esto el endpoint hacía 1 query extra por mission (N+1)."""
+    progress = _missions.compute_progress(
+        user_id=user_id,
+        mission_key=m['key'],
+        kind=kind,
+        period=period,
+        conn_helper=db_helper,
+        pred_db_helper=pred_helper,
+    )
+    target = int(m.get('target', 1))
+    progress = max(0, min(progress, target))
+    claimed_at = claimed_map.get(m['key'])
+    return {
+        **m,
+        'progress': progress,
+        'target': target,
+        'period': period,
+        'kind': m.get('kind', 'meta'),
+        'claimable': progress >= target and not claimed_at,
+        'claimed': bool(claimed_at),
+        'claimed_at': claimed_at,
+    }
+
+
+@app.route('/missions', methods=['GET'])
+def missions_mine():
+    """Lista las misiones activas del user en el período actual con su
+    progreso, distinguiendo `claimable` (lista para reclamar) y `claimed`
+    (ya reclamada en este período)."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+
+    tz_off = _client_tz_offset_minutes()
+    active = _missions.active_missions(user["id"], tz_offset_minutes=tz_off)
+    pred_helper = _missions_pred_helper(user.get("riot_puuid"))
+    db_helper = lambda sql, params: _users._exec(sql, params)
+
+    # Hoist el SELECT de claims OUT del loop — antes era N+1 por GET. Una
+    # única query trae todos los claims de ambos períodos en juego.
+    periods = [active['daily']['period'], active['weekly']['period']]
+    cur = _users._exec(
+        f"SELECT mission_key, period, claimed_at FROM user_mission_claims "
+        f"WHERE user_id=? AND period IN ({','.join('?' * len(periods))})",
+        (user["id"], *periods),
+    )
+    claims_by_period = {p: {} for p in periods}
+    for row in cur.fetchall():
+        mk, period, claimed_at = row[0], row[1], row[2]
+        if period in claims_by_period:
+            claims_by_period[period][mk] = float(claimed_at) if claimed_at else None
+
+    out = {}
+    for kind in ('daily', 'weekly'):
+        period = active[kind]['period']
+        claimed_map = claims_by_period.get(period, {})
+        out[kind] = {
+            'period': period,
+            'missions': [
+                _mission_with_progress(user["id"], m, kind, period, db_helper, pred_helper, claimed_map)
+                for m in active[kind]['missions']
+            ],
+        }
+    return jsonify(out)
+
+
+@app.route('/missions/claim', methods=['POST'])
+def missions_claim():
+    """Reclama una mission completada. Verifica progreso server-side antes
+    de acreditar TC (sin esto el frontend podría enviar claims falsos)."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    data = request.get_json() or {}
+    key = (data.get('mission_key') or '').strip()
+    kind = (data.get('kind') or '').strip()
+    if kind not in ('daily', 'weekly'):
+        return jsonify({"error": "kind debe ser 'daily' o 'weekly'"}), 400
+
+    pool = _missions.MISSIONS.get(kind, [])
+    mission = next((m for m in pool if m['key'] == key), None)
+    if not mission:
+        return jsonify({"error": "mission_key inválida"}), 400
+
+    tz_off = _client_tz_offset_minutes()
+    period = _missions.daily_period(tz_off) if kind == 'daily' else _missions.weekly_period(tz_off)
+
+    # ¿Esta mission está en el subset activo del user para este período?
+    # Sin esto, un user podría claim missions que no le tocaban (cheating).
+    active = _missions.active_missions(user["id"], tz_offset_minutes=tz_off)
+    active_keys = {m['key'] for m in active[kind]['missions']}
+    if key not in active_keys:
+        return jsonify({"error": "Esta mission no está activa para tu rotación"}), 400
+
+    # Verifica progreso real (defensa server-side, evita claims falsos).
+    pred_helper = _missions_pred_helper(user.get("riot_puuid"))
+    db_helper = lambda sql, params: _users._exec(sql, params)
+    progress = _missions.compute_progress(
+        user_id=user["id"], mission_key=key, kind=kind, period=period,
+        conn_helper=db_helper, pred_db_helper=pred_helper,
+    )
+    target = int(mission.get('target', 1))
+    if progress < target:
+        return jsonify({"error": f"Progreso insuficiente ({progress}/{target})"}), 400
+
+    # Insert claim atómico — ON CONFLICT DO NOTHING funciona tanto en
+    # SQLite (>=3.24) como en Postgres. rowcount=0 si la fila ya existía.
+    # Sin esto, dos claims simultáneos podían pasar el SELECT separados y
+    # disparar 500 por PK constraint en el segundo INSERT. (Bug MEDIUM
+    # cazado por la review.)
+    now = time.time()
+    cur = _users._exec(
+        "INSERT INTO user_mission_claims (user_id, mission_key, period, claimed_at) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        (user["id"], key, period, now),
+    )
+    if cur.rowcount == 0:
+        return jsonify({"error": "Ya reclamaste esta mission este período"}), 409
+
+    reward = int(mission.get('reward', 0))
+    new_balance = _users.add_currency(user["id"], reward, f"mission: {key}")
+    return jsonify({
+        'mission_key': key,
+        'kind': kind,
+        'period': period,
+        'reward': reward,
+        'new_balance': new_balance,
+    })
 
 
 # ============================================================================
@@ -3492,25 +3711,92 @@ def public_profile(riot_id):
 # ============================================================================
 
 def _detect_smurf_signals(player):
-    """Heurística simple para detectar smurfs/cuentas raras en live game.
-    Devuelve lista de razones (vacía si nada raro)."""
+    """Heurística para detectar smurfs/cuentas raras en live game (#32).
+    Devuelve lista de razones (vacía si nada raro). Cada signal es un
+    indicio independiente; con ≥2 simultáneos la sospecha es muy alta."""
     signals = []
     tier = (player.get("tier") or "").upper()
     avg = player.get("avg_tumor_score") or 50
-    games = player.get("estimated_games") or 0
     mp = player.get("mastery_points") or 0
     sample = player.get("champion_total_sample") or 0
+    champ_wr = player.get("champion_winrate") or 0
+    summ_level = player.get("summoner_level") or 0
+    recent_wins = player.get("recent_wins") or 0
 
-    # Tumor muy bajo en elo bajo
+    # Original: tumor muy bajo en elo bajo
     if tier in ("IRON", "BRONZE", "SILVER") and avg <= 15 and sample >= 3:
         signals.append("🥷 stats demasiado buenas para su elo")
-    # Cuenta nueva (poca mastery total) jugando ranked solo
+    # Original: cuenta nueva en elo alto
     if mp < 5000 and tier in ("GOLD", "PLATINUM", "EMERALD", "DIAMOND") and sample >= 3:
         signals.append("🆕 cuenta muy nueva en su elo")
-    # Streak ganadora muy alta
-    if (player.get("recent_wins") or 0) >= 7 and avg <= 25:
+    # Original: win streak + buen tumor
+    if recent_wins >= 7 and avg <= 25:
         signals.append("📈 winstreak +7 con stats sólidas")
+    # NUEVO: summoner level bajo + tier alto = nueva cuenta empujada
+    if summ_level and summ_level < 80 and tier in ("EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"):
+        signals.append(f"🆕 nivel {summ_level} en {tier.title()}")
+    # NUEVO: champion winrate >70% con muestra significativa = above-elo en este champ
+    if sample >= 5 and champ_wr >= 70:
+        signals.append(f"🎯 {int(champ_wr)}% WR en este champ con {sample} partidas")
+    # NUEVO: one-trick especialista: muchas mastery points concentradas
+    # en 1 champ (proxy: mp ≥ 200k en champ activo) con tier bajo.
+    if mp >= 200_000 and tier in ("IRON", "BRONZE", "SILVER"):
+        signals.append("☝️ one-trick con +200k mastery en este champ")
     return signals
+
+
+# ============================================================================
+# DAILY SUMMARY (#30) — resumen del día anterior, in-app banner
+# ============================================================================
+
+@app.route('/daily-summary', methods=['GET'])
+def daily_summary():
+    """Resumen del día ANTERIOR (local del user) usando predictions.db.
+    Devuelve count + wins + acierto del día. Pensado para banner una vez
+    al día. El frontend gestiona "ya mostrado hoy" via localStorage."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if not user.get("riot_puuid"):
+        return jsonify({"ok": True, "has_data": False})
+
+    import datetime as _dt
+    tz_off = _client_tz_offset_minutes()
+    offset_seconds = tz_off * 60
+    now = _dt.datetime.fromtimestamp(time.time() + offset_seconds, tz=_dt.timezone.utc)
+    yesterday = now.date() - _dt.timedelta(days=1)
+    y_start = _dt.datetime.combine(yesterday, _dt.time.min, tzinfo=_dt.timezone.utc).timestamp() - offset_seconds
+    y_end = y_start + 24 * 3600
+
+    try:
+        db = _pred_db()
+        cur = db.execute(
+            """SELECT
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN resolved=1 AND predicted_winner = actual_winner THEN 1 ELSE 0 END) AS correct,
+                 SUM(CASE WHEN resolved=1 THEN 1 ELSE 0 END) AS resolved
+               FROM predictions
+               WHERE viewer_puuid=? AND created_at>=? AND created_at<?""",
+            (user["riot_puuid"], y_start, y_end),
+        )
+        row = cur.fetchone()
+        total = int(row[0] or 0) if row else 0
+        correct = int(row[1] or 0) if row else 0
+        resolved = int(row[2] or 0) if row else 0
+        if total == 0:
+            return jsonify({"ok": True, "has_data": False, "date": yesterday.isoformat()})
+        accuracy = round((correct / resolved) * 100, 1) if resolved else None
+        return jsonify({
+            "ok": True,
+            "has_data": True,
+            "date": yesterday.isoformat(),
+            "matches_predicted": total,
+            "resolved": resolved,
+            "correct": correct,
+            "accuracy_pct": accuracy,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # ============================================================================
@@ -3572,7 +3858,121 @@ def leaderboards(kind):
             })
         result.sort(key=lambda x: (x["accuracy"], x["total"]), reverse=True)
         return jsonify(result[:20])
-    return jsonify({"error": "Tipo desconocido. Usa: currency | bets | accuracy"}), 400
+    if kind == "bravery":
+        # #46 — Top users por Bravery wins (locks resueltos con payout>stake).
+        rows = _users._exec("""
+            SELECT u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency, u.riot_id,
+                   COUNT(b.id) AS bravery_count,
+                   SUM(CASE WHEN b.payout > b.stake THEN 1 ELSE 0 END) AS wins,
+                   COALESCE(SUM(b.payout - b.stake), 0) AS net_tc
+            FROM bravery_locks b
+            JOIN users u ON u.id = b.user_id
+            WHERE b.status = 'resolved'
+            GROUP BY u.id, u.discord_id, u.discord_username, u.discord_avatar, u.currency, u.riot_id
+            HAVING COUNT(b.id) >= 1
+            ORDER BY wins DESC, net_tc DESC
+            LIMIT 20
+        """, ()).fetchall()
+        return jsonify([
+            {
+                "user_id": r[0], "discord_id": r[1], "username": r[2], "avatar": r[3],
+                "currency": r[4], "riot_id": r[5],
+                "bravery_count": int(r[6] or 0),
+                "wins": int(r[7] or 0),
+                "net_tc": int(r[8] or 0),
+            } for r in rows
+        ])
+    return jsonify({"error": "Tipo desconocido. Usa: currency | bets | accuracy | bravery"}), 400
+
+
+# #29 — Weekly friend ranking. Reuse del ISO-week computado en missions.
+@app.route('/friends/weekly', methods=['GET'])
+def friends_weekly():
+    """Ranking semanal entre TUS amigos. Devuelve top 10 por:
+    - bets_won: apuestas P2P ganadas en la semana ISO actual
+    - predictions_correct: aciertos de live prediction en la semana
+    El user actual está incluido para que se vea dónde está él."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+
+    tz_off = _client_tz_offset_minutes()
+    start_ts, end_ts = _missions._period_start_end_utc(
+        _missions.weekly_period(tz_off), 'weekly',
+    )
+
+    # Lista de IDs: tú + tus amigos accepted.
+    friend_ids = [user["id"]]
+    cur = _users._exec(
+        """SELECT CASE WHEN requester_id=? THEN target_id ELSE requester_id END
+           FROM friendships
+           WHERE status='accepted' AND (requester_id=? OR target_id=?)""",
+        (user["id"], user["id"], user["id"]),
+    )
+    for r in cur.fetchall():
+        if r and r[0]: friend_ids.append(int(r[0]))
+
+    # Bets ganadas this week por user_id.
+    if not friend_ids:
+        return jsonify({"bets_won": [], "predictions_correct": []})
+    placeholders = ",".join("?" * len(friend_ids))
+    bets_rows = _users._exec(f"""
+        SELECT u.id, u.discord_username, u.discord_avatar,
+               COUNT(b.id) AS won
+        FROM bets b
+        JOIN users u ON u.id = COALESCE(
+            CASE WHEN b.creator_user_id IN ({placeholders}) AND b.creator_side = b.winner_side
+                 THEN b.creator_user_id END,
+            CASE WHEN b.taker_user_id IN ({placeholders}) AND b.creator_side <> b.winner_side
+                 THEN b.taker_user_id END
+        )
+        WHERE b.status='resolved' AND b.winner_side IS NOT NULL
+        AND b.resolved_at >= ? AND b.resolved_at < ?
+        GROUP BY u.id, u.discord_username, u.discord_avatar
+        ORDER BY won DESC
+        LIMIT 10
+    """, (*friend_ids, *friend_ids, start_ts, end_ts)).fetchall()
+    bets_won = [
+        {"user_id": r[0], "username": r[1], "avatar": r[2], "won": int(r[3] or 0), "is_me": r[0] == user["id"]}
+        for r in bets_rows
+    ]
+
+    # Predictions correct (cross-db). Necesitamos riot_puuid de cada friend.
+    puuid_map = {}
+    cur = _users._exec(
+        f"SELECT id, riot_puuid FROM users WHERE id IN ({placeholders}) AND riot_puuid IS NOT NULL",
+        tuple(friend_ids),
+    )
+    for r in cur.fetchall():
+        if r[1]: puuid_map[int(r[0])] = r[1]
+
+    preds = []
+    if puuid_map:
+        for uid, puuid in puuid_map.items():
+            try:
+                pred_row = _pred_db().execute(
+                    """SELECT COUNT(*) FROM predictions
+                       WHERE viewer_puuid=? AND created_at>=? AND created_at<?
+                       AND resolved=1 AND predicted_winner = actual_winner""",
+                    (puuid, start_ts, end_ts),
+                ).fetchone()
+                correct = int(pred_row[0] or 0) if pred_row else 0
+                if correct == 0:
+                    continue
+                u_row = _users._exec(
+                    "SELECT discord_username, discord_avatar FROM users WHERE id=?", (uid,),
+                ).fetchone()
+                if not u_row:
+                    continue
+                preds.append({
+                    "user_id": uid, "username": u_row[0], "avatar": u_row[1],
+                    "correct": correct, "is_me": uid == user["id"],
+                })
+            except Exception:
+                continue
+    preds.sort(key=lambda x: x["correct"], reverse=True)
+
+    return jsonify({"bets_won": bets_won, "predictions_correct": preds[:10]})
 
 
 # ============================================================================
@@ -5920,6 +6320,46 @@ def bravery_roll():
     rolled = _bravery.roll(dims, item_count=item_count)
     if not rolled:
         return jsonify({"error": "Data Dragon no disponible"}), 503
+    return jsonify(rolled)
+
+
+# #34 — Bravery reroll con coste TC. Engagement loop: si no te gusta el
+# roll inicial puedes pagar 25 TC y tirar otra vez. Infinito mientras
+# tengas saldo.
+BRAVERY_REROLL_COST = 25
+
+
+@app.route('/bravery/reroll', methods=['POST'])
+def bravery_reroll():
+    """Mismo formato que /bravery/roll, pero descuenta BRAVERY_REROLL_COST
+    TC al user. Si no tiene saldo, 402 Payment Required."""
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "Login requerido"}), 401
+    if (user.get("currency") or 0) < BRAVERY_REROLL_COST:
+        return jsonify({"error": f"Necesitas {BRAVERY_REROLL_COST} TC para re-rolllear"}), 402
+
+    data = request.get_json() or {}
+    dims = list(data.get("dimensions") or ["champion"])
+    if "champion" not in dims:
+        dims = ["champion"] + dims
+    room_code = data.get("room_code")
+    if "lane" in dims and not room_code:
+        dims = [d for d in dims if d != "lane"]
+    try:
+        item_count = int(data.get("item_count", 5))
+    except Exception:
+        item_count = 5
+    item_count = max(3, min(6, item_count))
+
+    rolled = _bravery.roll(dims, item_count=item_count)
+    if not rolled:
+        return jsonify({"error": "Data Dragon no disponible"}), 503
+
+    # Charge ONLY si el roll tuvo éxito (no le cobramos por error 503).
+    new_balance = _users.add_currency(user["id"], -BRAVERY_REROLL_COST, "bravery reroll")
+    rolled["new_balance"] = new_balance
+    rolled["reroll_cost"] = BRAVERY_REROLL_COST
     return jsonify(rolled)
 
 

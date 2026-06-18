@@ -110,21 +110,32 @@ status: en ejecución
 
 ## Siguiente sesión — pendientes
 
-Tras la batch 13 quedan ~19 items (de 50). Por valor/effort:
+Tras la batch 14 quedan **8 items** (de 50, sin contar los mega-refactors).
+Por valor/effort:
 
-- **#34 Bravery rerolls con coste TC** (1.5h, engagement)
-- **#50 Sound effects** (2h, personality polish)
 - **#28 Compare múltiple 3-5 jugadores** (3h)
-- **#32 Smurf detector con mastery progression** (2h)
-- **#33 Comparar vs promedio del tier** (4h)
-- **#29 Ranking semanal entre amigos** (3h)
-- **#30 Notif resumen diario** (4h)
-- **#46 Bravery leaderboard** (4h)
-- **#47 Achievements tiers bronze/silver/gold** (3h)
-- **#48 Weekly mission con reward 100 TC** (4h)
-- Skip / deferred: #20 ProcessPool (validar plan Render primero),
-  #21 Redis migration (10-15h, sesión dedicada), #36/#37/#38 mega-refactors,
-  #3 ya cubierto por #41, #8/#12/#19 bajo valor
+- **#47 Achievements tiers bronze/silver/gold (extensión)** — base hecha en
+  batch 14, falta UI dedicada de tier showcase + más badges (2h)
+- **#19 Virtual scrolling >50 matches** (1h, low-mid value)
+- **#12 Hover preview match** (1h, low-mid value)
+- **#8 Reducir uso de font-mono** (1h, low value, prosa→sans)
+- **#3 Header mobile menu** — cubierto por #41 BottomNav (cerrar)
+- **#5 Tooltip-on-tap mobile** ✓ ya hecho batch 13
+- **#20 Backend ProcessPool** (validar plan Render primero, 1h+)
+- **#21 Redis migration** (10-15h, sesión dedicada)
+- **#36/#37 Refactor Overview/main.py** (20-30h cada, mega-sesiones)
+- **#38 i18n sweep completo** (7h)
+
+Misiones tumor (`tumor_below_40` y similares) requieren snapshot del
+tumor_score por match en predictions DB. Cuando esté, descomentar
+`MISSIONS['daily']` entry.
+
+Mejoras menores opcionales detectadas en el verify de batch 14:
+- /friends/weekly N+1 (1 query por friend en predictions.db) — bajo
+  impacto en escala actual
+- ISO week edge case (yo a/yo b en cambio de año) — sin tests aún
+- claim_daily mission paga TC por una acción ya recompensada —
+  considerar bajar reward de 20→5 TC o reemplazar mission
 
 ## Mi top-5 priorizado (orden de ejecución)
 
@@ -184,6 +195,106 @@ Tras la batch 13 quedan ~19 items (de 50). Por valor/effort:
   para evitar double-credit en race concurrente. Notif push a cada user
   afectado. 6 tests cubriendo happy path, idempotencia, concurrencia,
   multi-lock-per-user, cross-room aislamiento.
+
+### Sesión 2026-06-18 (continuación 14) — mega batch: bug fixes + missions + 7-item
+
+Cuatro tareas explícitas del user + 7 items pendientes en un solo deploy
+(con verify adversarial 3-reviewer y fixes pre-commit).
+
+**Bug fixes pedidos por el user:**
+
+- [x] 🐛 **GIF dropdown roto**: `<div ref="cardMenuRef">` tenía `overflow-hidden`
+  y clipeaba al `<div absolute right-0 top-10>` del menu. Split en dos divs:
+  outer `.relative` como anchor, inner `.rounded-lg.overflow-hidden` para el
+  pill, dropdown sibling del pill.
+- [x] 🐛 **Trofeos deshabilitados + no clickeables**: el agente Explore
+  detectó **5 trofeos sin lógica de unlock** (first_prediction, ten_predictions,
+  tumor_hunter, all_in, comeback_kid) y **NO existía click handler** — los
+  cards eran read-only display. Fixes:
+  - Unlock logic añadido para los 5 (all_in/comeback_kid en `evaluate_achievements`
+    via MAX(stake); first_prediction/ten_predictions/tumor_hunter/matches_200
+    cross-db en `achievements_mine` via `predictions_aggregate_stats`).
+  - Click handler nuevo: cards ahora son `<button>` → abre Teleport modal con
+    detalle (icon grande, tier badge, fecha de unlock o progreso, reward TC).
+  - Loading + error + reintentar state (antes silencioso, dejaba grid vacío).
+- [x] 🎨 **App icon nuevo**: `public/icon.svg` 512×512 maskable con biohazard
+  + fondo navy + glow dorado. Safe-area respetada (corner ☣ decorativo
+  eliminado tras review — quedaba fuera del 80% maskable). Favicon
+  simplificado para 16-32px. Manifest apunta a estos.
+
+**Revamp trofeos (no solo bugs):**
+
+- [x] **Tier system** añadido: bronze/silver/gold/platinum por badge.
+  Frontend muestra colored borders + tier chip en badge unlocked.
+- [x] 5 trofeos nuevos: `bet_master` (100 bets ganadas, platinum),
+  `friend_link` (10 amigos), `daily_streak_7`, `daily_streak_30`,
+  `matches_200`. Progreso live en cada uno.
+
+**Missions (#49) — sistema nuevo completo:**
+
+- [x] Backend `missions_engine.py`: catálogo MISSIONS (5 daily + 4 weekly),
+  rotación determinista por user vía SHA256(user_id|period|kind).
+  `compute_progress` lee de bets/daily_rewards/predictions on-demand
+  (sin contadores propios — sin hooks invasivos en flujos existentes).
+- [x] Tabla nueva `user_mission_claims` (SQLite + PG, idx por
+  (user_id, period)). Solo guarda CLAIMS, no progreso.
+- [x] Endpoints: `GET /missions` (period actual con progress + claimable
+  + claimed), `POST /missions/claim` con verify server-side del progreso
+  antes de acreditar TC. Race-safe via `ON CONFLICT DO NOTHING` + rowcount.
+- [x] N+1 corregido en /missions: una sola SELECT trae todos los claims
+  de ambos periodos (antes 1 query por mission).
+- [x] Frontend `MissionsModal.vue` (lazy chunk 2.78 KB gz), botón 🎯 en Navbar,
+  banner top con TC total reclamable.
+
+**7-item batch:**
+
+- [x] **#34 Bravery full-reroll TC-cost**: nuevo endpoint `/bravery/reroll`
+  cobra 25 TC (`BRAVERY_REROLL_COST`), valida saldo server-side (402 si
+  falta). Frontend `braveryFullReroll` helper (renombrado para no colisionar
+  con el item-reroll existente) + botón 🔁 en `BraveryPanel` entre Roll
+  y multi-label, disabled si saldo < 25.
+- [x] **#50 Sound effects opt-in**: `useSfx.ts` sintetiza tonos vía Web
+  Audio (cero bundle de audio), opt-in via LS, click/chime/success/fail.
+  Hooks: claimDaily → chime; missions claim → success. Toggle 🔊 en
+  UserModal settings.
+- [x] **#46 Bravery leaderboard**: `/leaderboards/bravery` top 20 por
+  wins + net_tc. Nueva tab 🎲 Bravery en SocialModal.
+- [x] **#29 Weekly friend ranking**: `/friends/weekly` top 10 entre amigos
+  por bets ganadas + predicciones correctas en la semana ISO. Banner
+  colapsable en SocialModal Friends tab, fila is_me destacada.
+- [x] **#33 vs tier average**: `tierBenchmarks.ts` constantes por tier
+  (KDA/CS/min/DMG/vision/WR). AnalyticsModal recibe prop `tier`, computa
+  `laneDiffVsTier` y lo muestra debajo de lane_diff.
+- [x] **#32 Smurf detector heuristic**: `_detect_smurf_signals` extendido
+  con 3 nuevas señales: summoner level bajo en tier alto, champion winrate
+  ≥70% con muestra ≥5, one-trick (mastery >200k) en IRON/BRONZE/SILVER.
+- [x] **#30 Daily summary in-app banner**: `/daily-summary` agrega ayer
+  desde predictions.db (count, correct, accuracy). `DailySummaryBanner.vue`
+  montado en App.vue, gated por localStorage 1 vez/día, marca seen incluso
+  cuando has_data=false. Stack-aware con PwaInstallBanner (mira atributo
+  `data-pwa-install-banner` y se desplaza 12.5rem en vez de 6.5rem si está).
+
+**Verify adversarial (3 reviewers, 12 issues encontrados):**
+
+- HIGH `v-html` en mission names → cambiado a `{{ }}`, eliminada entidad
+  `&lt;` del catalog. Defensa en profundidad XSS.
+- HIGH `tumor_below_40` unreachable (helper devolvía 0) → eliminada del
+  pool hasta que haya fuente de datos real.
+- HIGH PwaInstallBanner + DailySummaryBanner se solapaban en mismo bottom
+  → stack-aware via `data-pwa-install-banner` attr.
+- MEDIUM N+1 en /missions → batch claims query.
+- MEDIUM Race en /missions/claim → ON CONFLICT DO NOTHING (portable
+  SQLite+PG) + rowcount check.
+- MEDIUM Icon corner ☣ outside maskable safe area → eliminado.
+- MEDIUM DailySummaryBanner no escribía lastSeen en show (solo en
+  dismiss) → re-fetcheaba cada reload. Fix: write on both paths.
+- MEDIUM SocialModal LB tabs overflow mobile con 4 entries → `flex-wrap`.
+- MEDIUM comeback_kid desc mismatch con query → desc actualizada a
+  "Stake ≥500 TC en una apuesta ganada".
+
+Deferred (LOW + non-issues): UserModal err vs empty conflation,
+setTimeout cleanup (ya hecho), /friends/weekly N+1, ISO week edge cases,
+SVG filter complexity (acepta degradación), catalog drift docs.
 
 ### Sesión 2026-06-18 (continuación 13) — batch #39 + #5 + #44 + #48
 
