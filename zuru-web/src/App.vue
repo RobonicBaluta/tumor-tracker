@@ -66,17 +66,37 @@ window.addEventListener('hashchange', () => {
   currentPage.value = pageFromHash(window.location.hash || '')
 })
 
+// THEMES re-revisión 2026-06-18: salimos del role-based (Naval/Jungla/Mid/etc.)
+// y vamos a algo "más especial" pedido por el user. Cada theme ahora tiene
+// un identidad propia inspirada en lore/eventos de LoL: from/to definen el
+// gradiente del fondo, accent es el color de realce que se propaga via
+// CSS var --theme-accent (focus rings, hover borders sutiles).
+// Default cambia a 'royal' (azul demaciano profundo + dorado) — sigue
+// siendo azul para no romper la identidad visual de la app pero ya no es
+// la "Naval" plana original.
 const THEMES = {
-  default: { from: '#0d1b2a', to: '#1b2838', label: 'Naval 🌊' },
-  jungla:  { from: '#0a1f0a', to: '#162a16', label: 'Jungla 🌿' },
-  support: { from: '#081c28', to: '#0c2535', label: 'Support 💎' },
-  mid:     { from: '#1a1400', to: '#2a2000', label: 'Mid ⚡' },
-  adc:     { from: '#200808', to: '#2e1010', label: 'ADC 🎯' },
-  top:     { from: '#100a20', to: '#1a1032', label: 'Top 🗡️' },
+  royal:    { from: '#0a1a3a', to: '#142a52', accent: '#d4af37', label: 'Demacia Royal 🏰' },
+  void:     { from: '#1a0d2e', to: '#2d1b4e', accent: '#b08cff', label: 'Void Sovereign 🔮' },
+  kda:      { from: '#190a1f', to: '#2a0f3a', accent: '#ff2e88', label: 'K/DA Neon 💫' },
+  worlds:   { from: '#2a1f0a', to: '#3d2f14', accent: '#ffd700', label: 'Worlds Gold 🏆' },
+  inferno:  { from: '#330000', to: '#5c1a1a', accent: '#ff6b3a', label: 'Inferno Ascent 🔥' },
+  pentakill:{ from: '#0a0a0a', to: '#1f1815', accent: '#c9102e', label: 'Pentakill Metal 🎸' },
+  guardian: { from: '#1f0f2e', to: '#341a4f', accent: '#ff8fc7', label: 'Star Guardian ✨' },
+  shadow:   { from: '#050505', to: '#1a1a2e', accent: '#00ff88', label: 'Shadow Assassin ⚔️' },
 }
 
-const themeKey = ref(localStorage.getItem('zuruweb-theme') || 'default')
-const theme = computed(() => THEMES[themeKey.value as keyof typeof THEMES] ?? THEMES.default)
+// localStorage migration: cualquier key que no esté en THEMES (legacy
+// 'default'/'jungla'/..., typos, residuos de otros deploys, valores
+// inyectados via XSS) se reescribe a 'royal' on-boot para no dejar el
+// storage sucio acumulando keys desconocidas en cada sesión.
+const storedKey = localStorage.getItem('zuruweb-theme') || ''
+const isValidKey = storedKey && Object.prototype.hasOwnProperty.call(THEMES, storedKey)
+const initialKey = isValidKey ? storedKey : 'royal'
+if (storedKey && !isValidKey) {
+  localStorage.setItem('zuruweb-theme', 'royal')
+}
+const themeKey = ref(initialKey)
+const theme = computed(() => THEMES[themeKey.value as keyof typeof THEMES] ?? THEMES.royal)
 
 const setTheme = (key: string) => {
   themeKey.value = key
@@ -90,7 +110,11 @@ provide('THEMES', THEMES)
 </script>
 
 <template>
-  <div class="h-screen flex flex-col">
+  <!-- CSS var --theme-accent expuesta a TODA la app desde el root. Componentes
+       que quieran realce temático lo pintan con var(--theme-accent). Si el
+       theme no define accent (themes legacy), fallback al gold de marca. -->
+  <div class="h-screen flex flex-col"
+    :style="{ ['--theme-accent' as any]: theme.accent || '#c89b3c' }">
     <Navbar :current-page="currentPage" @navigate="navigateTo($event as PageKey)" />
 
     <DiagnosisForm v-if="currentPage === 'oncologico'" />

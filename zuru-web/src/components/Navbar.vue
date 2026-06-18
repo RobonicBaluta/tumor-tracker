@@ -17,7 +17,7 @@ const emit = defineEmits<{
 
 const themeKey = inject<ReturnType<typeof ref>>('themeKey')!
 const setTheme = inject<(k: string) => void>('setTheme')!
-const THEMES = inject<Record<string, { from: string; to: string; label: string }>>('THEMES')!
+const THEMES = inject<Record<string, { from: string; to: string; accent: string; label: string }>>('THEMES')!
 const auth = inject<any>('auth')
 
 const showThemes = ref(false)
@@ -393,14 +393,24 @@ const claimDaily = async () => {
           🎨
         </button>
         <Transition name="dropdown">
-          <div v-if="showThemes" class="absolute right-0 top-10 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl p-2 min-w-[140px] z-50">
+          <div v-if="showThemes" class="absolute right-0 top-10 bg-[#0d1b2a] border border-white/20 rounded-xl shadow-2xl p-2 min-w-[200px] max-h-[70vh] overflow-y-auto z-50">
             <p class="text-white/30 text-[9px] font-mono tracking-widest px-2 pb-2">TEMA</p>
             <button v-for="(t, key) in THEMES" :key="key"
               @click="setTheme(key); showThemes = false"
               :class="themeKey === key ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10 hover:text-white'"
-              class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono transition flex items-center justify-between">
-              {{ t.label }}
-              <span v-if="themeKey === key" class="text-[10px]">✓</span>
+              class="w-full text-left px-3 py-1.5 rounded-lg text-xs font-mono transition flex items-center justify-between gap-2">
+              <span class="flex items-center gap-2 min-w-0">
+                <!-- Swatch preview: mini gradient + accent dot. Da pista visual
+                     antes de aplicar el theme. -->
+                <span class="relative w-6 h-3.5 rounded shrink-0 border border-white/10"
+                  :style="{ background: `linear-gradient(135deg, ${t.from}, ${t.to})` }">
+                  <span v-if="t.accent"
+                    class="absolute -right-0.5 -top-0.5 w-1.5 h-1.5 rounded-full border border-black/30"
+                    :style="{ background: t.accent }"></span>
+                </span>
+                <span class="truncate">{{ t.label }}</span>
+              </span>
+              <span v-if="themeKey === key" class="text-[10px] shrink-0">✓</span>
             </button>
           </div>
         </Transition>
