@@ -6330,9 +6330,14 @@ BRAVERY_REROLL_COST = 25
 
 
 @app.route('/bravery/reroll', methods=['POST'])
-def bravery_reroll():
+def bravery_full_reroll():
     """Mismo formato que /bravery/roll, pero descuenta BRAVERY_REROLL_COST
-    TC al user. Si no tiene saldo, 402 Payment Required."""
+    TC al user. Si no tiene saldo, 402 Payment Required.
+
+    NOTA: el nombre de la función NO puede colisionar con `bravery_reroll`
+    (que sirve /bravery/[lid]/reroll, el reroll de items de un lock
+    existente). Flask usa el nombre como endpoint key y rechaza duplicados,
+    colgando el arranque entero del app."""
     user = _current_user()
     if not user:
         return jsonify({"error": "Login requerido"}), 401
