@@ -129,10 +129,20 @@
                   :aria-selected="searchCursor === idx"
                   @mousedown.prevent="pickSearchSuggestion(s)"
                   :class="searchCursor === idx ? 'bg-white/10' : 'hover:bg-white/5'"
-                  class="w-full text-left px-3 py-2 text-sm text-white font-mono flex items-center justify-between transition">
-                  <span class="truncate">{{ s.split('#')[0] }}</span>
-                  <span class="text-white/40 text-[10px] shrink-0 ml-2">#{{ s.split('#')[1] }}</span>
+                  class="w-full text-left px-3 py-2 text-sm font-mono flex items-center justify-between transition gap-2"
+                  :title="knownSuggestions.has(s.toLowerCase()) ? 'Encontrado en caché' : 'Probar en esta región'">
+                  <span class="flex items-center gap-1.5 min-w-0">
+                    <!-- Conocido = check verde. Guess regional = ícono globo. -->
+                    <span v-if="knownSuggestions.has(s.toLowerCase())" class="text-green-400/70 text-[10px]">✓</span>
+                    <span v-else class="text-cyan-400/70 text-[10px]">🌐</span>
+                    <span :class="knownSuggestions.has(s.toLowerCase()) ? 'text-white' : 'text-white/80'"
+                      class="truncate">{{ s.split('#')[0] }}</span>
+                  </span>
+                  <span class="text-white/40 text-[10px] shrink-0">#{{ s.split('#')[1] }}</span>
                 </button>
+                <p class="text-white/30 text-[9px] font-mono px-3 py-1.5 border-t border-white/5 bg-black/20">
+                  ✓ ya buscado · 🌐 probar región
+                </p>
               </div>
               <p v-if="searchInput && !searchInput.includes('#')"
                 class="text-yellow-400/70 text-[10px] font-mono mt-1.5">
@@ -1480,9 +1490,17 @@ function onSearchInput() {
   searchTimer = setTimeout(fetchSearchSuggestions, 250)
 }
 
+// Regiones más comunes en orden de probabilidad para users hispanohablantes.
+// Cuando el local cache no devuelve matches Y el user aún no tecleó el #,
+// rellenamos la sugerencia con Name#<region> para que pueda buscar a CUALQUIER
+// invocador sin tener que recordar el tag — basta con elegir la región.
+// Riot no expone un search por prefijo, así que esto es lo más cerca que se
+// puede de "search universal".
+const COMMON_TAGS = ['EUW', 'NA1', 'KR1', 'EUNE', 'BR1', 'JP1'] as const
+const knownSuggestions = ref<Set<string>>(new Set())
+
 async function fetchSearchSuggestions() {
   const raw = searchInput.value
-  // Si ya tecleó "#TAG" no hace falta sugerir más.
   if (raw.includes('#') && raw.split('#')[1]?.length > 0) {
     searchSuggestions.value = []
     return
@@ -1496,13 +1514,26 @@ async function fetchSearchSuggestions() {
   try {
     const res = await fetch(`${API_BASE}/search/summoners?q=${encodeURIComponent(q)}&limit=5`)
     if (myReq !== searchReqId) return
-    if (!res.ok) { searchSuggestions.value = []; return }
-    const data: string[] = await res.json()
+    let data: string[] = res.ok ? await res.json() : []
     if (myReq !== searchReqId) return
+    // Marca como "conocidos" los que vienen del backend (recent + saved
+    // + Discord-linked public). Lo demás que añadamos son guesses.
+    knownSuggestions.value = new Set(data.map(s => s.toLowerCase()))
+    // Fallback: completamos con Name#<region> para los tags comunes —
+    // así CUALQUIER summoner es accesible aunque nadie lo haya buscado
+    // antes en el sistema. Riot no expone search por prefijo, esto es lo
+    // más cerca que se puede.
+    const existing = new Set(data.map(s => s.toLowerCase()))
+    for (const tag of COMMON_TAGS) {
+      const candidate = `${q}#${tag}`
+      if (!existing.has(candidate.toLowerCase())) data.push(candidate)
+      if (data.length >= 8) break
+    }
     searchSuggestions.value = data
   } catch {
     if (myReq !== searchReqId) return
-    searchSuggestions.value = []
+    knownSuggestions.value = new Set()
+    searchSuggestions.value = COMMON_TAGS.map(t => `${q}#${t}`)
   }
 }
 
@@ -2470,6 +2501,20 @@ const sidebarTab = ref<'top5' | 'global'>('top5')
 const filterResult = ref<'all' | 'win' | 'loss'>('all')
 const filterChampion = ref('')
 const filterDays = ref(0)
+
+// Reset de filtros al cambiar de PERFIL. Sin esto, si el user filtraba
+// "solo wins · últimos 7 días · Yasuo" sobre el perfil A y luego cargaba
+// el perfil B, los filtros se quedaban pegados y B parecía vacío. Solo
+// disparamos cuando había un summoner previo distinto del nuevo (no en
+// el primer load) para evitar el reset al boot.
+// `selectedQueue` NO se resetea: es preferencia del user persistida en LS.
+watch(summoner, (next, prev) => {
+  if (prev && next && prev !== next) {
+    filterResult.value = 'all'
+    filterChampion.value = ''
+    filterDays.value = 0
+  }
+})
 
 // Champion stats modal: se abre al click en un champion icon de la sección
 // Analytics. Data 100% client-side (champion_pool + matches ya cargados).
