@@ -100,9 +100,10 @@
                  con public_profile). Igual patrón que Compare.vue. -->
             <div class="relative">
               <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Invocador</label>
-              <input v-model="searchInput"
+              <input ref="searchInputEl"
+                v-model="searchInput"
                 @input="onSearchInput"
-                @focus="searchActive = true"
+                @focus="onSearchFocus"
                 @blur="onSearchBlur"
                 @keydown.down="onSearchArrow(1, $event)"
                 @keydown.up="onSearchArrow(-1, $event)"
@@ -118,10 +119,24 @@
                 aria-autocomplete="list"
                 class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition"
                 required />
+              <p v-if="searchInput && !searchInput.includes('#')"
+                class="text-yellow-400/70 text-[10px] font-mono mt-1.5">
+                Necesitas el TAG (después del #) — escríbelo o elige una sugerencia.
+              </p>
+            </div>
+
+            <!-- Dropdown TELEPORTED a body. Antes vivía dentro del form
+                 con `z-20` y se quedaba atrapado en su stacking context —
+                 cualquier elemento posterior se le ponía por encima.
+                 Además usaba `bg-[#0d0d1a]` hardcoded, sin respetar el
+                 theme. Ahora: z-[150] sobre body, bg-theme-from,
+                 border-accent. Posición calculada con el rect del input. -->
+            <Teleport to="body">
               <div v-if="searchActive && searchSuggestions.length"
                 id="overview-search-suggest"
                 role="listbox"
-                class="absolute z-20 left-0 right-0 mt-1 bg-[#0d0d1a] border border-white/15 rounded-lg shadow-2xl overflow-hidden">
+                class="fixed z-[150] bg-theme-from border border-accent-40 rounded-lg shadow-2xl overflow-hidden"
+                :style="searchDropdownStyle">
                 <button v-for="(s, idx) in searchSuggestions" :key="`search-${s}`"
                   :id="`overview-search-suggest-${idx}`"
                   type="button"
@@ -132,7 +147,6 @@
                   class="w-full text-left px-3 py-2 text-sm font-mono flex items-center justify-between transition gap-2"
                   :title="knownSuggestions.has(s.toLowerCase()) ? 'Encontrado en caché' : 'Probar en esta región'">
                   <span class="flex items-center gap-1.5 min-w-0">
-                    <!-- Conocido = check verde. Guess regional = ícono globo. -->
                     <span v-if="knownSuggestions.has(s.toLowerCase())" class="text-green-400/70 text-[10px]">✓</span>
                     <span v-else class="text-cyan-400/70 text-[10px]">🌐</span>
                     <span :class="knownSuggestions.has(s.toLowerCase()) ? 'text-white' : 'text-white/80'"
@@ -140,15 +154,11 @@
                   </span>
                   <span class="text-white/40 text-[10px] shrink-0">#{{ s.split('#')[1] }}</span>
                 </button>
-                <p class="text-white/30 text-[9px] font-mono px-3 py-1.5 border-t border-white/5 bg-black/20">
+                <p class="text-white/30 text-[9px] font-mono px-3 py-1.5 border-t border-white/10 bg-black/30">
                   ✓ ya buscado · 🌐 probar región
                 </p>
               </div>
-              <p v-if="searchInput && !searchInput.includes('#')"
-                class="text-yellow-400/70 text-[10px] font-mono mt-1.5">
-                Necesitas el TAG (después del #) — escríbelo o elige una sugerencia.
-              </p>
-            </div>
+            </Teleport>
             <button type="submit" :disabled="loading"
               class="w-full bg-[#c89b3c] hover:bg-[#e0b84e] disabled:opacity-40 disabled:cursor-not-allowed text-black font-bold py-3 rounded-lg transition transform hover:scale-105 font-mono">
               Escanear tumores ☢️
@@ -1475,11 +1485,46 @@ const formData = ref({ gameName: '', tagLine: '' })
 // callers existentes que leen .gameName / .tagLine (recover hash route,
 // loadRecent del listado de cuentas guardadas, etc.).
 const searchInput = ref('')
+const searchInputEl = ref<HTMLInputElement | null>(null)
 const searchSuggestions = ref<string[]>([])
 const searchCursor = ref(0)
 const searchActive = ref(false)
+// Anchor para posicionar el dropdown Teleported. Se refresca en focus +
+// resize. Sin esto el Teleport renderiza en la esquina de body.
+const searchAnchorRect = ref<{ left: number; top: number; bottom: number; width: number } | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchReqId = 0
+
+const searchDropdownStyle = computed(() => {
+  const r = searchAnchorRect.value
+  if (!r) return { left: '0px', top: '0px', width: '0px' }
+  return { left: `${r.left}px`, top: `${r.bottom + 4}px`, width: `${r.width}px` }
+})
+
+function updateSearchAnchor() {
+  if (!searchInputEl.value) return
+  const r = searchInputEl.value.getBoundingClientRect()
+  searchAnchorRect.value = { left: r.left, top: r.top, bottom: r.bottom, width: r.width }
+}
+
+function onSearchFocus() {
+  searchActive.value = true
+  updateSearchAnchor()
+}
+
+// Refresca posición al hacer scroll / resize mientras el dropdown está
+// visible — sin esto se queda flotando donde el input estaba al focus.
+const _onSearchAnchorMove = () => { if (searchActive.value) updateSearchAnchor() }
+onMounted(() => {
+  if (typeof window === 'undefined') return
+  window.addEventListener('scroll', _onSearchAnchorMove, { passive: true, capture: true })
+  window.addEventListener('resize', _onSearchAnchorMove)
+})
+onUnmounted(() => {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('scroll', _onSearchAnchorMove, { capture: true } as any)
+  window.removeEventListener('resize', _onSearchAnchorMove)
+})
 
 function onSearchInput() {
   searchActive.value = true
