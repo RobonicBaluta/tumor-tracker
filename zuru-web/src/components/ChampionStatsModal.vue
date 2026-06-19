@@ -196,11 +196,94 @@ onBeforeUnmount(() => {
   if (typeof document !== 'undefined') document.removeEventListener('keydown', onEsc)
 })
 
-function timeFmt(s?: number) {
+function timeFmt(s?: number | null) {
   if (!s) return ''
   const m = Math.floor(s / 60)
   const ss = Math.floor(s % 60).toString().padStart(2, '0')
   return `${m}:${ss}`
+}
+
+// Unified shape para la grid de últimas partidas. Cuando hay lifetime
+// fetcheado del backend, sus rows traen CS / DMG / vision / tumor / lane /
+// queue / game_date — riqueza que no está en el MatchLite local. Sin
+// lifetime, fallback al recentMatches local con info mínima.
+interface DisplayMatch {
+  match_id: string
+  win: boolean
+  kills: number
+  deaths: number
+  assists: number
+  kda: number
+  cs: number | null
+  damage: number | null
+  vision: number | null
+  tumor: number | null
+  lane: string | null
+  game_duration: number | null
+  game_date: number | null
+  worst_is_me: boolean
+}
+
+const displayMatches = computed<DisplayMatch[]>(() => {
+  // Preferir lifetime.recent_matches (rico) si está cargado.
+  if (lifetime.value?.recent_matches?.length) {
+    return lifetime.value.recent_matches.slice(0, 10).map(m => ({
+      match_id: m.match_id,
+      win: m.win,
+      kills: m.kills,
+      deaths: m.deaths,
+      assists: m.assists,
+      kda: m.kda,
+      cs: m.cs,
+      damage: m.damage,
+      vision: m.vision,
+      tumor: m.tumor_score,
+      lane: m.lane,
+      game_duration: m.game_duration,
+      game_date: m.game_date,
+      worst_is_me: false,  // no lo trae la API lifetime
+    }))
+  }
+  // Fallback al local — la data es más pobre.
+  return recentMatches.value.map(m => ({
+    match_id: m.match_id,
+    win: m.win,
+    kills: m.my_kills,
+    deaths: m.my_deaths,
+    assists: m.my_assists,
+    kda: m.my_kda,
+    cs: null, damage: null, vision: null, tumor: null,
+    lane: null,
+    game_duration: m.game_duration ?? null,
+    game_date: (m as any).game_date ?? null,
+    worst_is_me: !!m.worst_is_me,
+  }))
+})
+
+function formatDmgK(d: number | null): string {
+  if (d == null) return '—'
+  return d >= 1000 ? `${(d / 1000).toFixed(1)}k` : String(d)
+}
+
+function formatDateShort(epoch: number | null): string {
+  if (!epoch) return ''
+  try {
+    const d = new Date(epoch)
+    // dd/mm sin año.
+    return `${d.getDate()}/${d.getMonth() + 1}`
+  } catch { return '' }
+}
+
+function laneShort(lane: string | null): string {
+  if (!lane) return ''
+  const u = lane.toUpperCase()
+  // Normalización: Riot a veces da "BOTTOM" / "UTILITY" / "JUNGLE".
+  if (u === 'BOTTOM' || u === 'ADC') return 'ADC'
+  if (u === 'UTILITY' || u === 'SUPPORT') return 'SUP'
+  if (u === 'JUNGLE') return 'JG'
+  if (u === 'MIDDLE' || u === 'MID') return 'MID'
+  if (u === 'TOP') return 'TOP'
+  return u.slice(0, 3)
 }
 </script>
 
@@ -211,7 +294,7 @@ function timeFmt(s?: number) {
         class="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
         @click.self="emit('close')">
         <div
-          class="bg-theme-from border border-accent-30 shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col
+          class="bg-theme-from border border-accent-30 shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-y-auto
                  rounded-t-2xl rounded-b-none sm:rounded-2xl"
           style="padding-bottom: env(safe-area-inset-bottom);">
           <!-- Drag handle mobile -->
@@ -328,27 +411,54 @@ function timeFmt(s?: number) {
             </p>
           </div>
 
-          <!-- Recent matches strip -->
-          <div v-if="recentMatches.length" class="px-5 py-3 border-t border-white/10 overflow-y-auto">
+          <!-- Recent matches GRID (era un strip horizontal con scroll, el
+               user pedía vista más amplia con más info). Usa data rica de
+               lifetime.recent_matches cuando está disponible (CS, DMG,
+               vision, tumor, lane, fecha) y cae al local cuando no.
+               5 columnas en desktop / 2 en mobile → cabe sin scrollbar. -->
+          <div v-if="displayMatches.length" class="px-5 py-3 border-t border-white/10">
             <p class="text-white/40 text-[10px] font-mono tracking-widest mb-2">
-              ÚLTIMAS {{ recentMatches.length }} PARTIDAS
+              ÚLTIMAS {{ displayMatches.length }} PARTIDAS
             </p>
-            <div class="flex gap-2 overflow-x-auto pb-1">
-              <div v-for="m in recentMatches" :key="m.match_id"
-                class="shrink-0 flex flex-col items-center gap-1 p-2 rounded-lg border min-w-[64px]"
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              <div v-for="m in displayMatches" :key="m.match_id"
+                class="flex flex-col gap-1 p-2 rounded-lg border"
                 :class="m.win
                   ? 'bg-blue-950/30 border-blue-500/30'
                   : 'bg-red-950/30 border-red-500/30'">
-                <span :class="m.win ? 'bg-blue-500' : 'bg-red-500'"
-                  class="w-7 h-7 rounded-full flex items-center justify-center text-white font-mono text-xs font-bold">
-                  {{ m.win ? 'W' : 'L' }}
-                </span>
-                <p class="text-white text-[10px] font-mono font-bold">
-                  {{ m.my_kills }}/{{ m.my_deaths }}/{{ m.my_assists }}
+                <!-- Top row: W/L badge + lane + fecha -->
+                <div class="flex items-center justify-between">
+                  <span :class="m.win ? 'bg-blue-500' : 'bg-red-500'"
+                    class="w-6 h-6 rounded-full flex items-center justify-center text-white font-mono text-[10px] font-bold">
+                    {{ m.win ? 'W' : 'L' }}
+                  </span>
+                  <div class="flex items-center gap-1 text-white/40 text-[9px] font-mono">
+                    <span v-if="m.lane">{{ laneShort(m.lane) }}</span>
+                    <span v-if="m.lane && m.game_date">·</span>
+                    <span v-if="m.game_date">{{ formatDateShort(m.game_date) }}</span>
+                  </div>
+                </div>
+                <!-- K/D/A grande -->
+                <p class="text-white text-sm font-mono font-bold leading-tight">
+                  {{ m.kills }}/{{ m.deaths }}/{{ m.assists }}
                 </p>
-                <p class="text-white/40 text-[9px] font-mono">{{ m.my_kda }} KDA</p>
-                <p v-if="m.worst_is_me" class="text-red-300 text-[10px]" title="Fuiste el peor de tu equipo">☢️</p>
-                <p v-if="m.game_duration" class="text-white/30 text-[9px] font-mono">{{ timeFmt(m.game_duration) }}</p>
+                <p :class="m.kda >= 3 ? 'text-green-300' : m.kda < 1.5 ? 'text-red-300' : 'text-yellow-300'"
+                  class="text-[10px] font-mono font-bold leading-none">{{ m.kda }} KDA</p>
+                <!-- Stat rows: CS / DMG / Vision / Tumor -->
+                <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[9px] font-mono mt-0.5">
+                  <p v-if="m.cs != null" class="text-white/60"><span class="text-white/30">CS</span> {{ m.cs }}</p>
+                  <p v-if="m.damage != null" class="text-white/60"><span class="text-white/30">DMG</span> {{ formatDmgK(m.damage) }}</p>
+                  <p v-if="m.vision != null" class="text-white/60"><span class="text-white/30">VIS</span> {{ m.vision }}</p>
+                  <p v-if="m.tumor != null" :class="tumorColor(m.tumor)">
+                    <span class="text-white/30">TUM</span> {{ m.tumor }}
+                  </p>
+                </div>
+                <!-- Bottom row: duración + worst-is-me badge -->
+                <div class="flex items-center justify-between mt-auto pt-0.5">
+                  <span v-if="m.game_duration" class="text-white/30 text-[9px] font-mono">{{ timeFmt(m.game_duration) }}</span>
+                  <span v-else></span>
+                  <span v-if="m.worst_is_me" class="text-red-300 text-[11px] leading-none" title="Fuiste el peor de tu equipo">☢️</span>
+                </div>
               </div>
             </div>
           </div>
