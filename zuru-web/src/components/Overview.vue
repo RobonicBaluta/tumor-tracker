@@ -94,18 +94,50 @@
 
         <div class="bg-black/30 backdrop-blur-md p-8 rounded-2xl shadow-2xl animate-fade">
           <p v-if="!auth?.isLoggedIn?.value" class="text-[#c89b3c]/60 text-[10px] font-mono tracking-widest mb-3">PASO 2 · ESCANEAR</p>
-          <form @submit.prevent="login" class="space-y-5">
-            <div>
-              <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Nombre del Invocador</label>
-              <input v-model="formData.gameName" type="text" placeholder="GameName"
+          <form @submit.prevent="onSearchSubmit" class="space-y-5">
+            <!-- Search unificado: un solo input "Nombre#TAG" con autocomplete
+                 contra /search/summoners (recent + saved + Discord-linked
+                 con public_profile). Igual patrón que Compare.vue. -->
+            <div class="relative">
+              <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Invocador</label>
+              <input v-model="searchInput"
+                @input="onSearchInput"
+                @focus="searchActive = true"
+                @blur="onSearchBlur"
+                @keydown.down="onSearchArrow(1, $event)"
+                @keydown.up="onSearchArrow(-1, $event)"
+                @keydown.enter="onSearchEnter($event)"
+                @keydown.escape="searchActive = false"
+                type="text"
+                placeholder="Nombre#TAG · ej. Faker#KR1"
                 autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition" required />
-            </div>
-            <div>
-              <label class="block text-[#c89b3c] text-sm font-semibold mb-2 font-mono">Tag</label>
-              <input v-model="formData.tagLine" type="text" placeholder="EUW"
-                autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"
-                class="w-32 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition" required />
+                role="combobox"
+                :aria-expanded="searchActive && searchSuggestions.length > 0"
+                aria-controls="overview-search-suggest"
+                :aria-activedescendant="searchActive && searchSuggestions.length ? `overview-search-suggest-${searchCursor}` : undefined"
+                aria-autocomplete="list"
+                class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-accent-60 transition"
+                required />
+              <div v-if="searchActive && searchSuggestions.length"
+                id="overview-search-suggest"
+                role="listbox"
+                class="absolute z-20 left-0 right-0 mt-1 bg-[#0d0d1a] border border-white/15 rounded-lg shadow-2xl overflow-hidden">
+                <button v-for="(s, idx) in searchSuggestions" :key="`search-${s}`"
+                  :id="`overview-search-suggest-${idx}`"
+                  type="button"
+                  role="option"
+                  :aria-selected="searchCursor === idx"
+                  @mousedown.prevent="pickSearchSuggestion(s)"
+                  :class="searchCursor === idx ? 'bg-white/10' : 'hover:bg-white/5'"
+                  class="w-full text-left px-3 py-2 text-sm text-white font-mono flex items-center justify-between transition">
+                  <span class="truncate">{{ s.split('#')[0] }}</span>
+                  <span class="text-white/40 text-[10px] shrink-0 ml-2">#{{ s.split('#')[1] }}</span>
+                </button>
+              </div>
+              <p v-if="searchInput && !searchInput.includes('#')"
+                class="text-yellow-400/70 text-[10px] font-mono mt-1.5">
+                Necesitas el TAG (después del #) — escríbelo o elige una sugerencia.
+              </p>
             </div>
             <button type="submit" :disabled="loading"
               class="w-full bg-[#c89b3c] hover:bg-[#e0b84e] disabled:opacity-40 disabled:cursor-not-allowed text-black font-bold py-3 rounded-lg transition transform hover:scale-105 font-mono">
@@ -1427,6 +1459,109 @@ if (cachedDDragon) {
 }
 
 const formData = ref({ gameName: '', tagLine: '' })
+
+// Search unificado (un solo input "Nombre#TAG" con autocomplete). El
+// formData del legacy login flow se rellena en submit para no romper a
+// callers existentes que leen .gameName / .tagLine (recover hash route,
+// loadRecent del listado de cuentas guardadas, etc.).
+const searchInput = ref('')
+const searchSuggestions = ref<string[]>([])
+const searchCursor = ref(0)
+const searchActive = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+let searchReqId = 0
+
+function onSearchInput() {
+  searchActive.value = true
+  searchCursor.value = 0
+  // Bump reqId YA para descartar fetches en vuelo (mismo patrón #28).
+  searchReqId++
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(fetchSearchSuggestions, 250)
+}
+
+async function fetchSearchSuggestions() {
+  const raw = searchInput.value
+  // Si ya tecleó "#TAG" no hace falta sugerir más.
+  if (raw.includes('#') && raw.split('#')[1]?.length > 0) {
+    searchSuggestions.value = []
+    return
+  }
+  const q = raw.trim()
+  if (q.length < 2) {
+    searchSuggestions.value = []
+    return
+  }
+  const myReq = ++searchReqId
+  try {
+    const res = await fetch(`${API_BASE}/search/summoners?q=${encodeURIComponent(q)}&limit=5`)
+    if (myReq !== searchReqId) return
+    if (!res.ok) { searchSuggestions.value = []; return }
+    const data: string[] = await res.json()
+    if (myReq !== searchReqId) return
+    searchSuggestions.value = data
+  } catch {
+    if (myReq !== searchReqId) return
+    searchSuggestions.value = []
+  }
+}
+
+function onSearchArrow(dir: 1 | -1, e: KeyboardEvent) {
+  if (!searchSuggestions.value.length) return  // deja el caret moverse normal
+  e.preventDefault()
+  const n = searchSuggestions.value.length
+  searchCursor.value = (searchCursor.value + dir + n) % n
+}
+
+function onSearchEnter(e: KeyboardEvent) {
+  // Si hay dropdown activo, aceptar la sugerencia. Si no, submit del form
+  // (que ya tiene su propio @submit.prevent="onSearchSubmit").
+  if (searchActive.value && searchSuggestions.value.length) {
+    e.preventDefault()
+    pickSearchSuggestion(searchSuggestions.value[searchCursor.value])
+  }
+  // Sin else: dejamos que el submit del form maneje el enter naturalmente.
+}
+
+function pickSearchSuggestion(full: string) {
+  searchInput.value = full
+  searchSuggestions.value = []
+  searchActive.value = false
+}
+
+function onSearchBlur() {
+  // Pequeño delay para que el @mousedown.prevent del item gane la carrera
+  // contra blur (mismo patrón que Compare).
+  setTimeout(() => { searchActive.value = false }, 150)
+}
+
+function onSearchSubmit() {
+  // Parse el input unificado en el formData de toda la vida y dispara login.
+  const raw = searchInput.value.trim()
+  if (!raw.includes('#')) {
+    error.value = 'Formato: Nombre#TAG'
+    return
+  }
+  const [gn, tl] = raw.split('#', 2)
+  if (!gn?.trim() || !tl?.trim()) {
+    error.value = 'Formato: Nombre#TAG'
+    return
+  }
+  formData.value = { gameName: gn.trim(), tagLine: tl.trim() }
+  searchActive.value = false
+  login()
+}
+
+// Sync searchInput cuando formData lo asignan OTROS code paths
+// (loadRecent del listado de cuentas guardadas, parseHashAndLoad del URL
+// con /summoner/, reset en logout). Sin esto el input mostraba "" tras
+// click en una saved account o navegar al perfil de un user.
+watch(formData, (v) => {
+  if (!v) return
+  const next = v.gameName && v.tagLine ? `${v.gameName}#${v.tagLine}` : ''
+  if (next !== searchInput.value) searchInput.value = next
+}, { deep: true })
+
 const summoner = ref('')
 const viewerPuuid = ref<string | null>(null)
 const tier = ref('')
