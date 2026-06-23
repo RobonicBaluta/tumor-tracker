@@ -3693,6 +3693,39 @@ def ml_info():
 # ACHIEVEMENTS
 # ============================================================================
 
+def _evaluate_prediction_achievements(user_id, viewer_puuid):
+    """Cross-db unlock pass para los badges cuyo criterio vive en
+    predictions.db. Llamado desde dos sitios:
+      1. /achievements (lazy, cuando el user abre el tab)
+      2. /predictions/resolve (eager, al resolver una predicción) — sin
+         esto el user resolvía una predicción acertada y no le saltaba el
+         logro hasta que abriera el tab. Reportado por el user.
+
+    Devuelve el dict de pred_stats (o None si no hay puuid / error) para
+    que el caller pueda usarlo (e.g. live_progress en achievements_mine).
+    """
+    if not viewer_puuid:
+        return None
+    try:
+        pred_stats = predictions_aggregate_stats(viewer_puuid)
+        correct = pred_stats.get("correct", 0)
+        total = pred_stats.get("total", 0)
+        streak = pred_stats.get("current_streak", 0)
+        max_streak = pred_stats.get("max_streak", 0) or 0
+        if correct >= 1: _users.unlock_achievement(user_id, "first_prediction")
+        if correct >= 10: _users.unlock_achievement(user_id, "ten_predictions")
+        if correct >= 50: _users.unlock_achievement(user_id, "prophecy_master")
+        if streak >= 5: _users.unlock_achievement(user_id, "streak_5")
+        if max_streak >= 10: _users.unlock_achievement(user_id, "unstoppable")
+        # Tumor hunter / Veterano: `total` (= partidas vistas con predicción
+        # registrada) como proxy de "partidas analizadas".
+        if total >= 50: _users.unlock_achievement(user_id, "tumor_hunter")
+        if total >= 200: _users.unlock_achievement(user_id, "matches_200")
+        return pred_stats
+    except Exception:
+        return None
+
+
 @app.route('/achievements', methods=['GET'])
 def achievements_mine():
     user = _current_user()
@@ -3701,28 +3734,7 @@ def achievements_mine():
 
     # Cross-db unlocks: predictions.db. Estos badges no se pueden evaluar
     # dentro de users_db porque viven en otra base.
-    pred_stats = None
-    if user.get("riot_puuid"):
-        try:
-            pred_stats = predictions_aggregate_stats(user["riot_puuid"])
-            correct = pred_stats.get("correct", 0)
-            total = pred_stats.get("total", 0)
-            streak = pred_stats.get("current_streak", 0)
-            if correct >= 1: _users.unlock_achievement(user["id"], "first_prediction")
-            if correct >= 10: _users.unlock_achievement(user["id"], "ten_predictions")
-            if correct >= 50: _users.unlock_achievement(user["id"], "prophecy_master")  # #47
-            if streak >= 5: _users.unlock_achievement(user["id"], "streak_5")
-            # Unstoppable (#47): max_streak ≥ 10 aciertos seguidos.
-            max_streak = pred_stats.get("max_streak", 0) or 0
-            if max_streak >= 10: _users.unlock_achievement(user["id"], "unstoppable")
-            # Tumor hunter / Veterano: usamos `total` (= partidas vistas con
-            # predicción registrada) como proxy de "partidas analizadas".
-            # Sin un counter dedicado de matches procesadas, es el mejor
-            # disponible y se incrementa naturalmente con uso.
-            if total >= 50: _users.unlock_achievement(user["id"], "tumor_hunter")
-            if total >= 200: _users.unlock_achievement(user["id"], "matches_200")
-        except Exception:
-            pass
+    pred_stats = _evaluate_prediction_achievements(user["id"], user.get("riot_puuid"))
 
     _users.evaluate_achievements(user["id"])
     achievements = _users.list_achievements(user["id"])
@@ -6364,6 +6376,21 @@ def resolve_prediction_endpoint():
                 new_balance = _users.add_currency(user_id, coins_awarded, f"prediction hit · {match_id}")
         except Exception:
             pass
+
+    # Trigger eager de los trofeos cross-db (first_prediction, ten_predictions,
+    # streak_5, prophecy_master, unstoppable, tumor_hunter, matches_200).
+    # Hasta ahora solo se evaluaban al abrir el tab de Logros (lazy), por lo
+    # que el user resolvía una predicción acertada y no le saltaba el badge
+    # hasta su próxima visita al modal. Reportado por user — fixed aquí. Se
+    # hace TANTO en acierto como en fallo: tumor_hunter / matches_200 cuentan
+    # `total` (predicciones registradas) no solo aciertos.
+    try:
+        cur3 = _users._exec("SELECT id FROM users WHERE riot_puuid=?", (viewer_puuid,))
+        urow2 = cur3.fetchone()
+        if urow2:
+            _evaluate_prediction_achievements(urow2[0], viewer_puuid)
+    except Exception:
+        pass
 
     return jsonify({
         "resolved": True,
