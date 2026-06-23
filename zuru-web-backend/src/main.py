@@ -2169,6 +2169,41 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
         for entry_out in executor.map(_process_with_progress, participants):
             players.append(entry_out)
 
+    # === Role override por POSICIÓN EN ARRAY (TOP/JUNGLE/MID/ADC/SUP) ===
+    # Desde 2024 el spectator-v5 devuelve participants EN ORDEN del loading
+    # screen de la partida en 5v5 ranked / normal: top, jungle, mid, adc,
+    # support por equipo. Esto es ground truth de qué rol JUEGA cada uno en
+    # ESTA partida (no en su historial), así que sobreescribe `likely_role`
+    # que venía del cache de partidas pasadas y a veces no coincidía con
+    # el rol del juego en curso (user reportó "el predictor de posición a
+    # veces no funciona").
+    #
+    # Solo aplicamos a queues 5v5 estándar. ARAM (450), Arena (1700), bots,
+    # etc. no tienen role fijo y el override no aplicaría.
+    game_queue_id = game.get("gameQueueConfigId") or 0
+    FIVE_V_FIVE_QUEUES = {
+        420, 440,       # SoloQ, Flex
+        400, 430,       # Normal Draft, Blind
+        700,            # Clash
+        720,            # ARAM clash (no aplica fija; lo dejamos fuera)
+        870, 880, 890,  # Co-op vs AI (sí tienen lanes fijos)
+    }
+    # 720 es ARAM-Clash → no aplica role-by-position. Lo quitamos del set.
+    FIVE_V_FIVE_QUEUES.discard(720)
+    ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+    if game_queue_id in FIVE_V_FIVE_QUEUES:
+        # Agrupa por team_id manteniendo el orden original (el participants
+        # array de spectator-v5 alterna o agrupa por team — depende del
+        # backend de Riot, así que separamos explícitamente).
+        for team_id in (100, 200):
+            team_players = [p for p in players if p.get("team_id") == team_id]
+            # Si por algún motivo el equipo no tiene 5, no overrideamos
+            # nada — mejor mantener likely_role del historial que asignar
+            # roles erróneos.
+            if len(team_players) == 5:
+                for idx, pl in enumerate(team_players):
+                    pl["role"] = ROLE_ORDER[idx]
+
     if cache_dirty:
         save_live_cache(cache)
 
