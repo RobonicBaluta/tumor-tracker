@@ -2046,11 +2046,17 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             mp = entry.get("mastery_points", 0) or 0
             ml = entry.get("mastery_level", 0) or 0
             cg = entry.get("champion_games", 0) or 0
+            # Umbral más estricto para "MAIN" — la versión antigua marcaba
+            # MAIN con UNA sola partida + 50k mastery (o solo ML7), lo que
+            # llenaba la UI de falsos positivos. Nuevas reglas:
+            #   - 5+ partidas en este champ Y al menos 100k mastery, O
+            #   - 300k+ mastery total (one-trick veterano puro).
+            # `mastery_level` solo ya no cuenta — ML7 se hace en ~10 games.
             entry["is_main"] = (
-                (mp >= 50000 and cg >= 1)
-                or mp >= 150000
-                or ml >= 7
+                (cg >= 5 and mp >= 100_000)
+                or mp >= 300_000
             )
+            _ = ml  # silenciar warning de unused; lo dejamos en scope por compat
             entry["smurf_signals"] = _detect_smurf_signals(entry)
             return entry
 
@@ -2111,10 +2117,12 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             "champion_total_sample": profile["champion_total_sample"] if profile else 0,
             "champion_pct": profile["champion_pct"] if profile else 0,
             "champion_winrate": profile["champion_winrate"] if profile else None,
+            # Mismo umbral estricto que arriba (ver comment). Sin esto MAIN
+            # se mostraba con 1 sola partida + 50k mastery o ML7 — muy
+            # generoso. Ahora pide 5+ partidas Y 100k, o 300k de mastery puro.
             "is_main": (
-                (mastery_points >= 50000 and (profile and profile.get("champion_games", 0) >= 1))
-                or mastery_points >= 150000
-                or mastery_level >= 7
+                (profile and profile.get("champion_games", 0) >= 5 and mastery_points >= 100_000)
+                or mastery_points >= 300_000
             ),
             "is_tilted": profile["is_tilted"] if profile else False,
             "is_hotstreak": profile.get("is_hotstreak", False) if profile else False,
