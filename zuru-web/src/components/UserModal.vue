@@ -211,8 +211,10 @@
                       </div>
                     </div>
                     <div v-else class="border border-white/10 bg-black/20 rounded-lg px-3 py-2">
-                      <p class="text-white/40 text-[10px] font-mono tracking-widest mb-0.5">🔒 BLOQUEADO</p>
-                      <p class="text-white/60 text-xs font-mono">Cumple la condición y se desbloquea automáticamente.</p>
+                      <p class="text-white/40 text-[10px] font-mono tracking-widest mb-1">🔒 BLOQUEADO · CÓMO CONSEGUIRLO</p>
+                      <p class="text-white/70 text-xs font-mono leading-relaxed">
+                        {{ selectedAch.how_to || 'Cumple la condición y se desbloquea automáticamente.' }}
+                      </p>
                     </div>
                   </div>
                 </div>

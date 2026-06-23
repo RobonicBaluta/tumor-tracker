@@ -2198,43 +2198,70 @@ def delete_room(room_id, owner_user_id):
 
 ACHIEVEMENT_DEFS = {
     # --- Onboarding ---
-    "first_login":      {"icon": "🎉", "name": "Bienvenido al hospital", "desc": "Primer login", "tier": "bronze"},
+    "first_login":      {"icon": "🎉", "name": "Bienvenido al hospital", "desc": "Primer login", "tier": "bronze",
+                         "how_to": "Inicia sesión con Discord. Se desbloquea automáticamente en tu primer login."},
     # --- Bets P2P (tier-stack) ---
-    "first_bet":        {"icon": "🎲", "name": "First Blood Apostada", "desc": "Crea tu primera apuesta", "tier": "bronze"},
-    "first_bet_won":    {"icon": "💰", "name": "Apostador Iniciado", "desc": "Gana tu primera apuesta", "tier": "bronze"},
-    "ten_bets_won":     {"icon": "🏆", "name": "Bookie", "desc": "Gana 10 apuestas", "tier": "silver"},
-    "fifty_bets_won":   {"icon": "👑", "name": "Casa de Apuestas", "desc": "Gana 50 apuestas", "tier": "gold"},
-    "bet_master":       {"icon": "💸", "name": "Bet Master", "desc": "Gana 100 apuestas", "tier": "platinum"},
-    "all_in":           {"icon": "🎰", "name": "All In", "desc": "Apuesta un stake ≥ 500 TC en una sola", "tier": "silver"},
-    "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Stake ≥500 TC en una apuesta ganada", "tier": "silver"},
+    "first_bet":        {"icon": "🎲", "name": "First Blood Apostada", "desc": "Crea tu primera apuesta", "tier": "bronze",
+                         "how_to": "Abre el live de una partida en curso, dale al botón 🎲 y crea una apuesta P2P contra otro user."},
+    "first_bet_won":    {"icon": "💰", "name": "Apostador Iniciado", "desc": "Gana tu primera apuesta", "tier": "bronze",
+                         "how_to": "Crea o acepta una apuesta P2P y acierta. Se cuenta al resolverse la partida."},
+    "ten_bets_won":     {"icon": "🏆", "name": "Bookie", "desc": "Gana 10 apuestas", "tier": "silver",
+                         "how_to": "Acumula 10 apuestas P2P ganadas (crear o aceptar, da igual)."},
+    "fifty_bets_won":   {"icon": "👑", "name": "Casa de Apuestas", "desc": "Gana 50 apuestas", "tier": "gold",
+                         "how_to": "Acumula 50 apuestas P2P ganadas en total."},
+    "bet_master":       {"icon": "💸", "name": "Bet Master", "desc": "Gana 100 apuestas", "tier": "platinum",
+                         "how_to": "Acumula 100 apuestas P2P ganadas en total."},
+    "all_in":           {"icon": "🎰", "name": "All In", "desc": "Stake ≥ 500 TC en una apuesta", "tier": "silver",
+                         "how_to": "Crea o acepta una apuesta P2P cuyo stake sea ≥ 500 TC. No hace falta ganarla."},
+    "comeback_kid":     {"icon": "🔄", "name": "Comeback Kid", "desc": "Stake ≥500 TC en una apuesta ganada", "tier": "silver",
+                         "how_to": "Gana una apuesta P2P con stake ≥ 500 TC (la misma que cuenta para All In, pero acertada)."},
     # --- Predicciones (tier-stack, cross-db: predictions.db) ---
-    "first_prediction": {"icon": "🔮", "name": "Vidente", "desc": "Primera predicción acertada", "tier": "bronze"},
-    "ten_predictions":  {"icon": "🎯", "name": "Predictor", "desc": "10 predicciones acertadas", "tier": "silver"},
-    "streak_5":         {"icon": "🔥", "name": "Racha de Fuego", "desc": "5 predicciones acertadas seguidas", "tier": "gold"},
+    "first_prediction": {"icon": "🔮", "name": "Vidente", "desc": "Primera predicción acertada", "tier": "bronze",
+                         "how_to": "Entra al live de cualquier partida en curso (botón 🟢 en una row) y pulsa BLUE o RED en el panel de predicción. Cuando la partida acabe, si acertaste suma."},
+    "ten_predictions":  {"icon": "🎯", "name": "Predictor", "desc": "10 predicciones acertadas", "tier": "silver",
+                         "how_to": "Acumula 10 predicciones live acertadas en total. Cada partida en la que entras al live cuenta como 1 predicción."},
+    "streak_5":         {"icon": "🔥", "name": "Racha de Fuego", "desc": "5 predicciones acertadas seguidas", "tier": "gold",
+                         "how_to": "Logra una racha de 5 predicciones live acertadas SIN fallar ninguna. Una fallada resetea la racha."},
     # --- Tumor / matches (cross-db: matches.db) ---
-    "tumor_hunter":     {"icon": "☢", "name": "Cazador de Tumores", "desc": "50 partidas analizadas", "tier": "silver"},
-    "matches_200":      {"icon": "🎮", "name": "Veterano del SoloQ", "desc": "200 partidas analizadas", "tier": "gold"},
+    "tumor_hunter":     {"icon": "☢", "name": "Cazador de Tumores", "desc": "50 partidas analizadas", "tier": "silver",
+                         "how_to": "Visualiza el live de 50 partidas distintas. Cada apertura del live cuenta como 1."},
+    "matches_200":      {"icon": "🎮", "name": "Veterano del SoloQ", "desc": "200 partidas analizadas", "tier": "gold",
+                         "how_to": "Visualiza el live de 200 partidas distintas. Cuenta el total acumulado, no necesita ser seguidas."},
     # --- Currency ---
-    "richie_rich":      {"icon": "💎", "name": "Richie Rich", "desc": "Acumula 1000 TC", "tier": "silver"},
+    "richie_rich":      {"icon": "💎", "name": "Richie Rich", "desc": "Acumula 1000 TC", "tier": "silver",
+                         "how_to": "Llega a 1000 TC en tu balance actual. Se desbloquea en cuanto el balance toca 1000."},
     # --- Daily streak (#48) ---
-    "daily_streak_7":   {"icon": "🔥", "name": "Hábito Semanal", "desc": "7 días seguidos reclamando daily", "tier": "silver"},
-    "daily_streak_30":  {"icon": "🔥", "name": "Inquebrantable", "desc": "30 días seguidos reclamando daily", "tier": "platinum"},
+    "daily_streak_7":   {"icon": "🔥", "name": "Hábito Semanal", "desc": "7 días seguidos reclamando daily", "tier": "silver",
+                         "how_to": "Reclama el daily reward (botón 🎁 en la navbar) 7 días seguidos sin saltarte ninguno. Si fallas un día, vuelve a 0."},
+    "daily_streak_30":  {"icon": "🔥", "name": "Inquebrantable", "desc": "30 días seguidos reclamando daily", "tier": "platinum",
+                         "how_to": "Lo mismo que Hábito Semanal pero 30 días seguidos. Un mes entero sin saltarte el daily."},
     # --- Platinum aspirational (#47 extension) ---
-    "prophecy_master":  {"icon": "🔮", "name": "Profeta Mayor", "desc": "50 predicciones acertadas en total", "tier": "platinum"},
-    "legendary_whale":  {"icon": "🐋", "name": "Legendary Whale", "desc": "Acumula 5000 TC en algún momento", "tier": "platinum"},
-    "unstoppable":      {"icon": "⚡", "name": "Imparable", "desc": "10 predicciones acertadas seguidas (max streak)", "tier": "platinum"},
+    "prophecy_master":  {"icon": "🔮", "name": "Profeta Mayor", "desc": "50 predicciones acertadas en total", "tier": "platinum",
+                         "how_to": "Acumula 50 predicciones live acertadas en total (no tienen que ser seguidas)."},
+    "legendary_whale":  {"icon": "🐋", "name": "Legendary Whale", "desc": "5000 TC en ganancias acumuladas", "tier": "platinum",
+                         "how_to": "Acumula 5000 TC en ganancias totales (suma de TODAS las ganancias positivas históricas: dailies, bets ganadas, missions, achievements, etc.)."},
+    "unstoppable":      {"icon": "⚡", "name": "Imparable", "desc": "Racha máxima de 10 aciertos seguidos", "tier": "platinum",
+                         "how_to": "Logra una racha de 10 predicciones live acertadas seguidas. Mide tu máxima histórica, no la actual."},
     # --- Social ---
-    "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos", "tier": "bronze"},
-    "friend_link":      {"icon": "🤝", "name": "Red Tóxica", "desc": "Añade 10 amigos", "tier": "silver"},
+    "social":           {"icon": "👥", "name": "Sociable", "desc": "Añade 3 amigos", "tier": "bronze",
+                         "how_to": "Añade 3 amigos desde Social → Amigos (por Riot ID o link de Discord). Cuentan las accepted por ambas partes."},
+    "friend_link":      {"icon": "🤝", "name": "Red Tóxica", "desc": "Añade 10 amigos", "tier": "silver",
+                         "how_to": "Igual que Sociable pero con 10 amigos accepted."},
     # --- Bravery ---
-    "first_bravery":    {"icon": "🎲", "name": "Bravo de Iniciación", "desc": "Lockea tu primer Bravery", "tier": "bronze"},
-    "bravery_winner":   {"icon": "⚡", "name": "Bravo Triunfal", "desc": "Gana TC en un Bravery", "tier": "silver"},
-    "bravery_triple":   {"icon": "🎭", "name": "Triple Riesgo", "desc": "Lockea un Bravery con champ + lane + items", "tier": "gold"},
+    "first_bravery":    {"icon": "🎲", "name": "Bravo de Iniciación", "desc": "Lockea tu primer Bravery", "tier": "bronze",
+                         "how_to": "En una sala (Social → Salas) o solo, dale al botón 🎲 Aleatorio y luego LOCK con un stake. Eso lockea tu primer Bravery."},
+    "bravery_winner":   {"icon": "⚡", "name": "Bravo Triunfal", "desc": "Gana TC en un Bravery", "tier": "silver",
+                         "how_to": "Lockea un Bravery y al resolverse el payout sea mayor que tu stake. La condición se cumple aunque sea por 1 TC."},
+    "bravery_triple":   {"icon": "🎭", "name": "Triple Riesgo", "desc": "Bravery con 3 dimensiones", "tier": "gold",
+                         "how_to": "Lockea un Bravery con las 3 dimensiones activas a la vez: champion + lane + items (sólo disponible en salas)."},
     # --- Challenges 1v1 ---
-    "first_challenge_won": {"icon": "⚔", "name": "Duelista", "desc": "Gana tu primer challenge 1v1", "tier": "bronze"},
-    "streak_winner":    {"icon": "🌟", "name": "Win Streaker", "desc": "Gana un challenge de Win Streak", "tier": "silver"},
+    "first_challenge_won": {"icon": "⚔", "name": "Duelista", "desc": "Gana tu primer challenge 1v1", "tier": "bronze",
+                         "how_to": "Acepta un challenge 1v1 contra otro user (Social → Challenges) y gánalo. Sale resuelto cuando la condición del challenge se cumpla."},
+    "streak_winner":    {"icon": "🌟", "name": "Win Streaker", "desc": "Gana un challenge de Win Streak", "tier": "silver",
+                         "how_to": "Acepta y gana un challenge cuyo formato sea 'Win Streak' (cadena de victorias)."},
     # --- Rooms ---
-    "first_room":       {"icon": "🏠", "name": "Anfitrión", "desc": "Crea tu primera sala", "tier": "bronze"},
+    "first_room":       {"icon": "🏠", "name": "Anfitrión", "desc": "Crea tu primera sala", "tier": "bronze",
+                         "how_to": "Crea una sala desde Social → Salas (botón 'Crear sala'). Se desbloquea al instante."},
 }
 
 
@@ -2360,6 +2387,11 @@ def list_achievements(user_id):
             "icon": info["icon"],
             "name": info["name"],
             "desc": info["desc"],
+            "tier": info.get("tier"),
+            # how_to: hint concreto sobre cómo desbloquear (mostrado en el
+            # detail modal del frontend en el estado locked, en lugar del
+            # genérico "Cumple la condición..." que no decía nada).
+            "how_to": info.get("how_to"),
             "unlocked": badge in unlocked,
             "unlocked_at": unlocked.get(badge),
             "progress": progress.get(badge),  # {current, target} | None si no aplica
