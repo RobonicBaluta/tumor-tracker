@@ -128,10 +128,24 @@ def _init_sqlite(conn):
             link TEXT,
             icon TEXT,
             created_at REAL NOT NULL,
-            read INTEGER DEFAULT 0
+            read INTEGER DEFAULT 0,
+            dedup_key TEXT
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_notif_unread ON user_notifications(user_id, read)")
+    # Migración dedup_key para schemas que ya existían sin esa columna.
+    notif_cols = {row[1] for row in conn.execute("PRAGMA table_info(user_notifications)").fetchall()}
+    if "dedup_key" not in notif_cols:
+        try:
+            conn.execute("ALTER TABLE user_notifications ADD COLUMN dedup_key TEXT")
+        except Exception:
+            pass
+    # Unique parcial sobre (user_id, dedup_key) — permite múltiples NULLs
+    # (notifs sin dedup) pero rechaza duplicates cuando dedup_key se setea.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_notif_dedup "
+        "ON user_notifications(user_id, dedup_key) WHERE dedup_key IS NOT NULL"
+    )
     # Friends list bidireccional con estados pending/accepted.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS friendships (
@@ -405,10 +419,18 @@ def _init_pg(conn):
             link TEXT,
             icon TEXT,
             created_at DOUBLE PRECISION NOT NULL,
-            read INTEGER DEFAULT 0
+            read INTEGER DEFAULT 0,
+            dedup_key TEXT
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_user_notif_unread ON user_notifications(user_id, read)")
+    # Idempotente: si la tabla ya existía sin dedup_key, la añade. PG soporta
+    # IF NOT EXISTS directamente sobre ADD COLUMN (Postgres 9.6+).
+    cur.execute("ALTER TABLE user_notifications ADD COLUMN IF NOT EXISTS dedup_key TEXT")
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_notif_dedup "
+        "ON user_notifications(user_id, dedup_key) WHERE dedup_key IS NOT NULL"
+    )
     cur.execute("""
         CREATE TABLE IF NOT EXISTS friendships (
             id SERIAL PRIMARY KEY,
@@ -1911,6 +1933,28 @@ def push_notification(user_id, notif_type, title, body=None, link=None, icon=Non
            VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
         (user_id, notif_type, title, body, link, icon, time.time()),
     )
+
+
+def push_notification_once(user_id, dedup_key, notif_type, title, body=None, link=None, icon=None):
+    """Notificación idempotente — si ya existe una con el mismo
+    (user_id, dedup_key), no inserta otra. Usado por el watch-list live
+    hit y similares hooks que se ejecutan en cada poll del endpoint y
+    spammearían sin dedup. Devuelve True si insertó, False si ya existía.
+    """
+    if not dedup_key:
+        # Fallback al push normal sin dedup si no se pasa key.
+        push_notification(user_id, notif_type, title, body, link, icon)
+        return True
+    # ON CONFLICT DO NOTHING — portable SQLite>=3.24 y Postgres. La unique
+    # parcial sobre (user_id, dedup_key) garantiza la idempotencia.
+    cur = _exec(
+        """INSERT INTO user_notifications
+             (user_id, type, title, body, link, icon, created_at, read, dedup_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+           ON CONFLICT DO NOTHING""",
+        (user_id, notif_type, title, body, link, icon, time.time(), dedup_key),
+    )
+    return bool(getattr(cur, "rowcount", 0))
 
 
 def get_unread_notifications(user_id, limit=20):
