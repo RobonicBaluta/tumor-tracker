@@ -176,7 +176,7 @@ const SIDES = [
             <div class="flex-1">
               <p class="text-red-300 font-mono text-sm font-bold">Champ en blacklist en tu equipo</p>
               <p class="text-red-400/70 text-[11px] font-mono">
-                {{ blacklistedInTeam.map(p => p.champion_name).join(', ') }} — históricamente pierdes con estos picks
+                {{ blacklistedInTeam.map(p => p.champion_display_name || p.champion_name).join(', ') }} — históricamente pierdes con estos picks
               </p>
             </div>
           </div>
@@ -201,7 +201,7 @@ const SIDES = [
                     :class="p.is_me ? 'text-yellow-300 font-bold' : 'text-white/80'">
                     {{ p.nombre.split('#')[0] }}
                   </p>
-                  <p class="text-white/40 text-[9px] font-mono truncate">{{ p.champion_name }} · {{ p.tier || '?' }}</p>
+                  <p class="text-white/40 text-[9px] font-mono truncate">{{ p.champion_display_name || p.champion_name }} · {{ p.tier || '?' }}</p>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                   <span v-if="p.is_tilted" title="Tilteado">🌋</span>
