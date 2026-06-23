@@ -2172,8 +2172,11 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
     if cache_dirty:
         save_live_cache(cache)
 
-    # Notificar al user logueado si algún jugador en watchlist aparece en partida.
-    # Solo se hace una vez por (match_id, watched_name) gracias al ID estable.
+    # Notificar al user logueado si algún jugador de su watch-list está en
+    # esta partida live. Idempotente por (match_id, watched_name) — sin dedup
+    # cada poll del live spammearía nuevas notifs. El user logueado tiene
+    # que ser el dueño de la cuenta cuya partida estamos viendo (me_puuid
+    # del live = riot_puuid del user en la DB).
     try:
         watched_in_game = [p for p in players if p.get("is_watched") and p.get("nombre") in watched]
         if watched_in_game:
@@ -2181,14 +2184,27 @@ def _compute_live_game(game_name, tag_line, job_id=None, force_refresh=False):
             urow = cur.fetchone()
             if urow:
                 user_id = urow[0]
+                # Link al perfil del viewer — desde ahí ve su live actual sin
+                # tener que escribir su nombre otra vez. Mismo slug que usa
+                # la UI: `Name#TAG` → `Name-TAG`.
+                viewer_slug = viewer_key.replace('#', '-')
+                profile_link = f"#/summoner/{viewer_slug}"
+                team_label = "🟦 azul" if watched_in_game[0].get("team_id") == 100 else "🟥 rojo"
+                game_id = game.get("gameId") or "?"
                 for w in watched_in_game:
-                    nid = f"watch-{game.get('gameId')}-{w['nombre']}"
-                    _users.push_notification(
+                    side = "🟦 azul" if w.get('team_id') == 100 else "🟥 rojo"
+                    relation = "tu equipo" if w.get('team_id') == watched_in_game[0].get('team_id') else "el otro equipo"
+                    _ = team_label  # silenciar lint; calculado arriba para legibilidad
+                    _ = relation
+                    dedup = f"watch-{game_id}-{w['nombre']}"
+                    _users.push_notification_once(
                         user_id,
+                        dedup,
                         notif_type="watchlist_alert",
                         title=f"☢ {w['nombre']} en tu partida",
-                        body=f"juega {w.get('champion_name', '?')} ({'azul' if w.get('team_id') == 100 else 'rojo'})",
-                        link="#/", icon="☢",
+                        body=f"juega {w.get('champion_name', '?')} ({side}) — abre tu live para verlo",
+                        link=profile_link,
+                        icon="☢",
                     )
     except Exception:
         pass
